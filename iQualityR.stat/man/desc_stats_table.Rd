@@ -4,12 +4,12 @@
 \alias{desc_stats_table}
 \title{Statistics table plot}
 \usage{
-desc_stats_table(s, theme = "prism")
+desc_stats_table(s, theme = "academic")
 }
 \arguments{
 \item{s}{Result returned by desc_calc}
 
-\item{theme}{Theme (default "prism")}
+\item{theme}{Theme (default "academic")}
 }
 \value{
 ggplot object

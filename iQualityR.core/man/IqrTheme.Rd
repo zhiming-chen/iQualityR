@@ -4,8 +4,23 @@
 \alias{IqrTheme}
 \title{iQualityR Theme Class}
 \description{
-Theme management class for iQualityR, providing unified access to theme configuration,
-plot styling, and export functionality.
+Theme management class for iQualityR, providing unified access to theme
+configuration, plot styling, and export functionality.
+
+The facade delegates to \code{ThemeConfig} for palette storage and
+\code{PlotTheme} for ggplot2 scale / theme construction. Users typically
+only need to:
+\enumerate{
+\item Construct an \code{IqrTheme} with a preset name
+(\code{"academic"}, \code{"workbench"}, \code{"tech"}) or an external
+theme name / function.
+\item Call \code{$plot$scale_*()} to obtain ggplot2 scales.
+\item Call \code{$plot$theme_iqr()} to obtain the ggplot2 theme.
+}
+
+All four palette types (discrete, sequential, diverging, semantic) are
+coordinated by the chosen theme, so downstream packages and end users do
+not need to pick colors manually.
 }
 \section{Public fields}{
 \if{html}{\out{<div class="r6-fields">}}
@@ -26,6 +41,12 @@ plot styling, and export functionality.
 \item \href{#method-IqrTheme-get_data_colors}{\code{IqrTheme$get_data_colors()}}
 \item \href{#method-IqrTheme-scale_fill_iqr}{\code{IqrTheme$scale_fill_iqr()}}
 \item \href{#method-IqrTheme-scale_color_iqr}{\code{IqrTheme$scale_color_iqr()}}
+\item \href{#method-IqrTheme-scale_fill_sequential}{\code{IqrTheme$scale_fill_sequential()}}
+\item \href{#method-IqrTheme-scale_color_sequential}{\code{IqrTheme$scale_color_sequential()}}
+\item \href{#method-IqrTheme-scale_fill_diverging}{\code{IqrTheme$scale_fill_diverging()}}
+\item \href{#method-IqrTheme-scale_color_diverging}{\code{IqrTheme$scale_color_diverging()}}
+\item \href{#method-IqrTheme-scale_fill_semantic}{\code{IqrTheme$scale_fill_semantic()}}
+\item \href{#method-IqrTheme-scale_color_semantic}{\code{IqrTheme$scale_color_semantic()}}
 \item \href{#method-IqrTheme-theme_iqr}{\code{IqrTheme$theme_iqr()}}
 \item \href{#method-IqrTheme-clone}{\code{IqrTheme$clone()}}
 }
@@ -42,7 +63,8 @@ Create a new IqrTheme instance.
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{theme_style}}{Character. Theme style (built-in "academic", "tech", or external name/function).}
+\item{\code{theme_style}}{Character. Theme style (built-in "academic", "tech",
+"workbench", or external name/function).}
 
 \item{\code{...}}{Additional arguments passed to ThemeConfig$new().}
 }
@@ -99,7 +121,7 @@ Get UI theme colors.
 \if{html}{\out{<a id="method-IqrTheme-get_data_colors"></a>}}
 \if{latex}{\out{\hypertarget{method-IqrTheme-get_data_colors}{}}}
 \subsection{Method \code{get_data_colors()}}{
-Get data colors.
+Get data colors. Legacy alias for \code{get_pal}.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{IqrTheme$get_data_colors(type = c("discrete", "continuous"), custom = NULL)}\if{html}{\out{</div>}}
 }
@@ -107,7 +129,8 @@ Get data colors.
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{type}}{Character. Either "discrete" or "continuous".}
+\item{\code{type}}{Character. Either "discrete" or "continuous" (legacy alias
+for "sequential").}
 
 \item{\code{custom}}{Optional custom color vector to use instead.}
 }
@@ -144,6 +167,108 @@ Create ggplot2 color scale (delegated to PlotTheme).
 \if{html}{\out{<div class="arguments">}}
 \describe{
 \item{\code{...}}{Arguments passed to PlotTheme$scale_color_iqr().}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrTheme-scale_fill_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrTheme-scale_fill_sequential}{}}}
+\subsection{Method \code{scale_fill_sequential()}}{
+Create ggplot2 sequential fill scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrTheme$scale_fill_sequential(...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{...}}{Arguments passed to PlotTheme$scale_fill_sequential().}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrTheme-scale_color_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrTheme-scale_color_sequential}{}}}
+\subsection{Method \code{scale_color_sequential()}}{
+Create ggplot2 sequential color scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrTheme$scale_color_sequential(...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{...}}{Arguments passed to PlotTheme$scale_color_sequential().}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrTheme-scale_fill_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrTheme-scale_fill_diverging}{}}}
+\subsection{Method \code{scale_fill_diverging()}}{
+Create ggplot2 diverging fill scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrTheme$scale_fill_diverging(...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{...}}{Arguments passed to PlotTheme$scale_fill_diverging().}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrTheme-scale_color_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrTheme-scale_color_diverging}{}}}
+\subsection{Method \code{scale_color_diverging()}}{
+Create ggplot2 diverging color scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrTheme$scale_color_diverging(...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{...}}{Arguments passed to PlotTheme$scale_color_diverging().}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrTheme-scale_fill_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrTheme-scale_fill_semantic}{}}}
+\subsection{Method \code{scale_fill_semantic()}}{
+Create ggplot2 semantic fill scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrTheme$scale_fill_semantic(...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{...}}{Arguments passed to PlotTheme$scale_fill_semantic().}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrTheme-scale_color_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrTheme-scale_color_semantic}{}}}
+\subsection{Method \code{scale_color_semantic()}}{
+Create ggplot2 semantic color scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrTheme$scale_color_semantic(...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{...}}{Arguments passed to PlotTheme$scale_color_semantic().}
 }
 \if{html}{\out{</div>}}
 }

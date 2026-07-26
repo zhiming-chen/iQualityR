@@ -83,25 +83,25 @@ create_anova_table <- function(anova_table,
     }
     
     # Get theme colors
-    iqr_theme <- as_iqr_theme_object(theme)
-    ui_colors <- iqr_theme$get_ui_colors()
-    
+    theme_obj <- as_iqr_theme_object(theme)
+
     # Create table theme
     base_theme <- gridExtra::ttheme_default(
         base_size = font_size,
-        base_colour = ui_colors$text %||% "black",
-        base_family = ui_colors$font_family %||% "sans",
+        base_colour = .iqr_plotter$.pal_ui(theme_obj, "text", default = "black") %||% "black",
+        base_family = .iqr_plotter$.pal_ui(theme_obj, "font_family", default = "sans") %||% "sans",
         padding = grid::unit(c(3, 5), "mm")
     )
-    
+
     # Override header style
     header_theme <- modifyList(base_theme, list(
         colhead = list(
-            fg_params = list(fontface = "bold", col = ui_colors$surface %||% "white"),
-            bg_params = list(fill = ui_colors$primary %||% "steelblue")
+            fg_params = list(fontface = "bold",
+                             col = .iqr_plotter$.pal_ui(theme_obj, "surface", default = "white") %||% "white"),
+            bg_params = list(fill = .iqr_plotter$.pal_ui(theme_obj, "primary", default = "#1F77B4"))
         )
     ))
-    
+
     # If highlighting, create custom cell backgrounds
     if (highlight_sig && length(p_col) > 0) {
         # Build a matrix of background colors
@@ -109,13 +109,13 @@ create_anova_table <- function(anova_table,
         p_col_idx <- which(names(anova_table) == p_col)
         for (i in seq_len(nrow(anova_table))) {
             if (!is.na(p_vals[i]) && p_vals[i] < sig_level) {
-                bg_colors[i, p_col_idx] <- ui_colors$danger_light %||% "#FDEBD0"
+                bg_colors[i, p_col_idx] <- .iqr_plotter$.pal_ui(theme_obj, "surface_soft", default = "#FDEBD0") %||% "#FDEBD0"
             }
         }
         # Create custom theme with cell background colors
         custom_theme <- modifyList(header_theme, list(
             core = list(
-                fg_params = list(col = ui_colors$text %||% "black"),
+                fg_params = list(col = .iqr_plotter$.pal_ui(theme_obj, "text", default = "black") %||% "black"),
                 bg_params = list(fill = bg_colors)
             )
         ))
@@ -170,7 +170,9 @@ plot_f_curve <- function(f_stat,
     if (!requireNamespace("ggplot2", quietly = TRUE)) {
         stop("ggplot2 is required.")
     }
-    
+
+    theme_obj <- as_iqr_theme_object(theme)
+
     # Calculate critical value
     crit <- stats::qf(1 - alpha, df1, df2)
     
@@ -192,34 +194,40 @@ plot_f_curve <- function(f_stat,
     
     # Build plot
     p <- base_plot(df_curve, ggplot2::aes(x = x, y = y), theme = theme) +
-        ggplot2::geom_line(color = "steelblue", linewidth = 1.2) +
+        ggplot2::geom_line(color = .iqr_plotter$.pal_discrete(theme_obj)[1], linewidth = 1.2) +
         ggplot2::geom_ribbon(
             data = df_reject,
             ggplot2::aes(x = x, ymin = 0, ymax = y),
-            fill = "red", alpha = 0.25
+            fill = .iqr_plotter$.pal_semantic(theme_obj, "fail"), alpha = 0.25
         ) +
         # Critical value line
-        ggplot2::geom_vline(xintercept = crit, color = "gray50", linetype = "dashed") +
+        ggplot2::geom_vline(xintercept = crit,
+                            color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666"),
+                            linetype = "dashed") +
         # F-statistic line
-        ggplot2::geom_vline(xintercept = f_stat, color = "blue", linewidth = 1.2) +
+        ggplot2::geom_vline(xintercept = f_stat,
+                            color = .iqr_plotter$.pal_ui(theme_obj, "primary"), linewidth = 1.2) +
         # Labels
         ggplot2::annotate("text",
                           x = f_stat,
                           y = stats::df(f_stat, df1, df2) * 1.1,
                           label = sprintf("F = %.2f", f_stat),
-                          color = "blue", hjust = 0.5, fontface = "bold"
+                          color = .iqr_plotter$.pal_ui(theme_obj, "primary"),
+                          hjust = 0.5, fontface = "bold"
         ) +
         ggplot2::annotate("text",
                           x = crit,
                           y = stats::df(crit, df1, df2) * 1.2,
                           label = sprintf("Critical = %.2f", crit),
-                          color = "gray50", hjust = 0.5
+                          color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666"),
+                          hjust = 0.5
         ) +
         ggplot2::annotate("text",
                           x = x_max * 0.7,
                           y = max(y_seq) * 0.8,
-                          label = sprintf("p = %s", format_p_value(p_value,context = "plot")),
-                          size = 4, color = "gray30"
+                          label = sprintf("p = %s", iQualityR.core::format_p_value(p_value, context = "plot")),
+                          size = 4,
+                          color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
         ) +
         ggplot2::labs(
             x = "F-value",
@@ -281,10 +289,8 @@ plot_anova_effects <- function(data = NULL,
         stop("ggplot2 is required.")
     }
     
-    iqr_theme <- as_iqr_theme_object(theme)
-    ui_colors <- iqr_theme$get_ui_colors()
-    data_colors <- iqr_theme$get_data_colors("discrete")
-    
+    theme_obj <- as_iqr_theme_object(theme)
+
     # Prepare means data
     if (is.null(means)) {
         if (is.null(data) || is.null(response_col) || is.null(factor_col)) {
@@ -306,8 +312,8 @@ plot_anova_effects <- function(data = NULL,
     means_df$group <- factor(means_df$group, levels = means_df$group)
     
     # Set colors
-    if (is.null(point_color)) point_color <- data_colors[1]
-    if (is.null(error_color)) error_color <- ui_colors$muted %||% "gray50"
+    if (is.null(point_color)) point_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
+    if (is.null(error_color)) error_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666") %||% "gray50"
     
     # Base plot
     p <- base_plot(means_df, ggplot2::aes(x = group, y = mean), theme = theme) +
@@ -339,7 +345,7 @@ plot_anova_effects <- function(data = NULL,
             ggplot2::aes(x = group, y = max(mean) + 0.1 * diff(range(mean)), label = letter),
             size = 4,
             fontface = "bold",
-            color = ui_colors$danger %||% "red"
+            color = .iqr_plotter$.pal_semantic(theme_obj, "fail") %||% "red"
         )
     }
     
@@ -432,10 +438,8 @@ plot_anova_comparison <- function(comparison_data,
         stop("ggplot2 is required.")
     }
     
-    iqr_theme <- as_iqr_theme_object(theme)
-    ui_colors <- iqr_theme$get_ui_colors()
-    data_colors <- iqr_theme$get_data_colors("discrete")
-    
+    theme_obj <- as_iqr_theme_object(theme)
+
     # Prepare data
     df <- comparison_data
     # Ensure required columns exist
@@ -472,18 +476,20 @@ plot_anova_comparison <- function(comparison_data,
     df$contrast <- factor(df$contrast, levels = df$contrast)
     
     # Set colors
-    if (is.null(point_color)) point_color <- data_colors[1]
+    if (is.null(point_color)) point_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
     if (is.null(error_color)) {
         error_color <- if (highlight_sig) {
-            c("TRUE" = ui_colors$danger %||% "red", "FALSE" = ui_colors$muted %||% "gray50")
+            c("TRUE" = .iqr_plotter$.pal_semantic(theme_obj, "fail") %||% "red",
+              "FALSE" = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666") %||% "gray50")
         } else {
-            ui_colors$muted %||% "gray50"
+            .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666") %||% "gray50"
         }
     }
-    
+
     # Build plot
     p <- base_plot(df, ggplot2::aes(x = contrast, y = estimate), theme = theme) +
-        ggplot2::geom_hline(yintercept = reference_line, linetype = "dashed", color = "gray50") +
+        ggplot2::geom_hline(yintercept = reference_line, linetype = "dashed",
+                            color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")) +
         ggplot2::geom_errorbar(
             ggplot2::aes(ymin = lower, ymax = upper, color = significant),
             width = 0.2,
@@ -559,23 +565,25 @@ plot_anova_residuals <- function(model,
         stop("patchwork is required for residual plots.")
     }
     
-    iqr_theme <- as_iqr_theme_object(theme)
-    
+    theme_obj <- as_iqr_theme_object(theme)
+
     # Extract residuals and fitted values
     res <- stats::residuals(model)
     fitted <- stats::fitted(model)
     std_res <- rstandard(model)
     n <- length(res)
-    
+
     # 1. Residuals vs Fitted
     df_rf <- data.frame(fitted = fitted, residual = res)
     p_rf <- base_plot(df_rf, ggplot2::aes(x = fitted, y = residual), theme = theme) +
-        ggplot2::geom_point(alpha = 0.6, color = "steelblue") +
-        ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-        ggplot2::geom_smooth(method = "loess", se = TRUE, color = "blue", alpha = 0.2) +
+        ggplot2::geom_point(alpha = 0.6, color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+        ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                            color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
+        ggplot2::geom_smooth(method = "loess", se = TRUE,
+                             color = .iqr_plotter$.pal_ui(theme_obj, "primary"), alpha = 0.2) +
         ggplot2::labs(x = "Fitted Values", y = "Residuals", title = "Residuals vs Fitted") +
         ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold"))
-    
+
     # 2. Normal Q-Q plot
     if (add_qq) {
         # Use existing plot_qq if available, else custom
@@ -590,26 +598,28 @@ plot_anova_residuals <- function(model,
                 ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold"))
         } else {
             p_qq <- ggplot2::ggplot(data.frame(res = res), ggplot2::aes(sample = res)) +
-                ggplot2::stat_qq(color = "steelblue", alpha = 0.6) +
-                ggplot2::stat_qq_line(color = "red", linetype = "dashed") +
+                ggplot2::stat_qq(color = .iqr_plotter$.pal_discrete(theme_obj)[1], alpha = 0.6) +
+                ggplot2::stat_qq_line(color = .iqr_plotter$.pal_semantic(theme_obj, "fail"),
+                                      linetype = "dashed") +
                 as_iqr_theme(theme) +
                 ggplot2::labs(x = "Theoretical Quantiles", y = "Sample Quantiles", title = "Normal Q-Q Plot") +
                 ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold"))
         }
     }
-    
+
     # 3. Scale-Location
     if (add_scale_location) {
         sqrt_abs_res <- sqrt(abs(std_res))
         df_sl <- data.frame(fitted = fitted, sqrt_abs_res = sqrt_abs_res)
         p_sl <- base_plot(df_sl, ggplot2::aes(x = fitted, y = sqrt_abs_res), theme = theme) +
-            ggplot2::geom_point(alpha = 0.6, color = "steelblue") +
-            ggplot2::geom_smooth(method = "loess", se = TRUE, color = "blue", alpha = 0.2) +
+            ggplot2::geom_point(alpha = 0.6, color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+            ggplot2::geom_smooth(method = "loess", se = TRUE,
+                                 color = .iqr_plotter$.pal_ui(theme_obj, "primary"), alpha = 0.2) +
             ggplot2::labs(x = "Fitted Values", y = "sqrt|Standardized Residuals|",
                           title = "Scale-Location") +
             ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold"))
     }
-    
+
     # 4. Residuals vs Factor or Observation Order
     if (!is.null(factor_col) && factor_col %in% names(model$model)) {
         # Residuals vs factor levels
@@ -618,9 +628,11 @@ plot_anova_residuals <- function(model,
             residual = res
         )
         p_factor <- base_plot(df_factor, ggplot2::aes(x = factor, y = residual), theme = theme) +
-            ggplot2::geom_boxplot(fill = "steelblue", alpha = 0.3) +
-            ggplot2::geom_jitter(width = 0.1, alpha = 0.4, color = "gray40") +
-            ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+            ggplot2::geom_boxplot(fill = .iqr_plotter$.pal_discrete(theme_obj)[1], alpha = 0.3) +
+            ggplot2::geom_jitter(width = 0.1, alpha = 0.4,
+                                 color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")) +
+            ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                                color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
             ggplot2::labs(x = factor_col, y = "Residuals", title = "Residuals by Factor") +
             ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold"),
                            axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
@@ -628,9 +640,11 @@ plot_anova_residuals <- function(model,
         # Residuals vs observation order
         df_seq <- data.frame(order = seq_along(res), residual = res)
         p_factor <- base_plot(df_seq, ggplot2::aes(x = order, y = residual), theme = theme) +
-            ggplot2::geom_point(alpha = 0.6, color = "steelblue") +
-            ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-            ggplot2::geom_smooth(method = "loess", se = TRUE, color = "blue", alpha = 0.2) +
+            ggplot2::geom_point(alpha = 0.6, color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+            ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                                color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
+            ggplot2::geom_smooth(method = "loess", se = TRUE,
+                                 color = .iqr_plotter$.pal_ui(theme_obj, "primary"), alpha = 0.2) +
             ggplot2::labs(x = "Observation Order", y = "Residuals", title = "Residuals vs Order") +
             ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold"))
     }
@@ -703,9 +717,9 @@ plot_anova_summary <- function(model,
     if (!requireNamespace("patchwork", quietly = TRUE)) {
         stop("patchwork is required for summary plots.")
     }
-    
-    iqr_theme <- as_iqr_theme_object(theme)
-    
+
+    theme_obj <- as_iqr_theme_object(theme)
+
     # Extract factors from model if not provided
     if (is.null(factor_cols)) {
         # Get factor columns from model terms
@@ -837,69 +851,80 @@ plot_anova_diagnostic <- function(x, ...) {
     if (!inherits(x, "iqr_anova")) {
         stop("x must be an iqr_anova object")
     }
-    
+
     if (!requireNamespace("ggplot2", quietly = TRUE)) {
         stop("ggplot2 package required")
     }
     if (!requireNamespace("patchwork", quietly = TRUE)) {
         stop("patchwork package required")
     }
-    
+
+    # Extract optional theme/title from ...
+    args <- list(...)
+    theme <- if (!is.null(args$theme)) args$theme else NULL
+    theme_obj <- as_iqr_theme_object(theme)
+
     model <- x$model
     res <- residuals(model)
     fit <- fitted(model)
     df <- x$data
     response_var <- x$response_var
-    
+
     # ---- Plot 1: Residuals vs Fitted ----
     df1 <- data.frame(fitted = fit, residual = res)
     p1 <- ggplot2::ggplot(df1, ggplot2::aes(x = fitted, y = residual)) +
-        ggplot2::geom_point(alpha = 0.6, color = "steelblue") +
-        ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-        ggplot2::geom_smooth(method = "loess", se = TRUE, color = "orange", alpha = 0.2) +
+        ggplot2::geom_point(alpha = 0.6, color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+        ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                            color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
+        ggplot2::geom_smooth(method = "loess", se = TRUE,
+                             color = .iqr_plotter$.pal_ui(theme_obj, "warning"), alpha = 0.2) +
         ggplot2::labs(x = "Fitted values", y = "Residuals", title = "Residuals vs Fitted") +
-        ggplot2::theme_minimal()
-    
+        as_iqr_theme(theme)
+
     # ---- Plot 2: QQ Plot ----
     df2 <- data.frame(residual = res)
     p2 <- ggplot2::ggplot(df2, ggplot2::aes(sample = residual)) +
-        ggplot2::stat_qq(color = "steelblue") +
-        ggplot2::stat_qq_line(color = "red") +
+        ggplot2::stat_qq(color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+        ggplot2::stat_qq_line(color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
         ggplot2::labs(x = "Theoretical Quantiles", y = "Sample Quantiles", title = "Normal Q-Q") +
-        ggplot2::theme_minimal()
-    
+        as_iqr_theme(theme)
+
     # ---- Plot 3: Scale-Location ----
     df3 <- data.frame(fitted = fit, sqrt_res = sqrt(abs(scale(res))))
     p3 <- ggplot2::ggplot(df3, ggplot2::aes(x = fitted, y = sqrt_res)) +
-        ggplot2::geom_point(alpha = 0.6, color = "steelblue") +
-        ggplot2::geom_smooth(method = "loess", se = TRUE, color = "orange", alpha = 0.2) +
+        ggplot2::geom_point(alpha = 0.6, color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+        ggplot2::geom_smooth(method = "loess", se = TRUE,
+                             color = .iqr_plotter$.pal_ui(theme_obj, "warning"), alpha = 0.2) +
         ggplot2::labs(x = "Fitted values", y = "sqrt|Standardized Residuals|", title = "Scale-Location") +
-        ggplot2::theme_minimal()
-    
+        as_iqr_theme(theme)
+
     # ---- Plot 4: Residuals vs Factor ----
     if (length(x$factors) >= 1 && !is.null(response_var)) {
         factor_name <- x$factors[1]
         df4 <- data.frame(factor = df[[factor_name]], residual = res)
         p4 <- ggplot2::ggplot(df4, ggplot2::aes(x = factor, y = residual)) +
-            ggplot2::geom_boxplot(fill = "steelblue", alpha = 0.3) +
+            ggplot2::geom_boxplot(fill = .iqr_plotter$.pal_discrete(theme_obj)[1], alpha = 0.3) +
             ggplot2::geom_jitter(width = 0.2, alpha = 0.5) +
-            ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+            ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                                color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
             ggplot2::labs(x = factor_name, y = "Residuals", title = "Residuals by Factor") +
-            ggplot2::theme_minimal()
+            as_iqr_theme(theme)
     } else {
         # By observation order
         df4 <- data.frame(index = seq_along(res), residual = res)
         p4 <- ggplot2::ggplot(df4, ggplot2::aes(x = index, y = residual)) +
-            ggplot2::geom_point(alpha = 0.6, color = "steelblue") +
-            ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+            ggplot2::geom_point(alpha = 0.6, color = .iqr_plotter$.pal_discrete(theme_obj)[1]) +
+            ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                                color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
             ggplot2::labs(x = "Observation Order", y = "Residuals", title = "Residuals vs Order") +
-            ggplot2::theme_minimal()
+            as_iqr_theme(theme)
     }
-    
+
     # ---- Combine ----
     p <- (p1 + p2) / (p3 + p4) +
-        patchwork::plot_annotation(title = "Residual Diagnostic Plots")
-    
+        patchwork::plot_annotation(title = "Residual Diagnostic Plots",
+                                   theme = as_iqr_theme(theme))
+
     print(p)
     invisible(p)
 }

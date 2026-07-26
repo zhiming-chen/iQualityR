@@ -4,12 +4,12 @@
 \alias{desc_plot}
 \title{Descriptive statistics combined plot}
 \usage{
-desc_plot(s, theme = "prism")
+desc_plot(s, theme = "academic")
 }
 \arguments{
 \item{s}{Result returned by desc_calc}
 
-\item{theme}{Theme (default "prism")}
+\item{theme}{Theme (default "academic")}
 }
 \value{
 patchwork object

@@ -91,9 +91,8 @@ plot_pareto_enhanced <- function(data,
   # Process input data
   processed_data <- process_pareto_input(data, category_col, count_col, group_col, weight_col)
 
-  # Create IqrTheme
-  # iqr_theme <- as_iqr_theme(theme)
-  iqr_theme <- IqrTheme$new(theme_style = theme)
+  # Create IqrTheme object via shared factory (used by .iqr_plotter toolbox)
+  theme_obj <- as_iqr_theme_object(theme)
   # Prepare data for plotting
   plot_data <- prepare_pareto_data(processed_data, category_col, count_col,
                                   group_col, weight_col, threshold)
@@ -105,7 +104,7 @@ plot_pareto_enhanced <- function(data,
     count_col = count_col,
     group_col = group_col,
     weight_col = weight_col,
-    iqr_theme = iqr_theme,
+    iqr_theme = theme_obj,
     title = title,
     subtitle = subtitle,
     ...
@@ -122,7 +121,7 @@ plot_pareto_enhanced <- function(data,
     count_col = count_col,
     group_col = group_col,
     weight_col = weight_col,
-    iqr_theme = iqr_theme
+    iqr_theme = theme_obj
   )
 
   # Combine plots
@@ -335,8 +334,8 @@ create_pareto_plot <- function(data,
 
   # Create base plot
   p <- ggplot2::ggplot(data, ggplot2::aes(x = category, y = value)) +
-    ggplot2::geom_col(fill = iqr_theme$config$get_pal("discrete")[1], ...) +
-    iqr_theme$scale_fill_iqr(discrete = TRUE) +
+    ggplot2::geom_col(fill = .iqr_plotter$.pal_discrete(iqr_theme)[1], ...) +
+    .iqr_plotter$.scale_fill_discrete(iqr_theme) +
     iqr_theme$theme_iqr()
 
   # Add cumulative line and points
@@ -344,14 +343,14 @@ create_pareto_plot <- function(data,
     ggplot2::geom_line(
       ggplot2::aes(y = cum_pct / 100 * max_value, group = 1),
       linewidth = 1,
-      color = iqr_theme$config$get_pal("discrete")[3]
+      color = .iqr_plotter$.pal_discrete(iqr_theme)[3]
     ) +
     ggplot2::geom_point(
       ggplot2::aes(y = cum_pct / 100 * max_value),
       size = 3,
-      color = iqr_theme$config$get_pal("discrete")[3]
+      color = .iqr_plotter$.pal_discrete(iqr_theme)[3]
     ) +
-    iqr_theme$scale_color_iqr(discrete = TRUE)
+    .iqr_plotter$.scale_color_discrete(iqr_theme)
 
   # Add data labels to points
   p <- p +
@@ -359,7 +358,7 @@ create_pareto_plot <- function(data,
       ggplot2::aes(y = cum_pct / 100 * max_value, label = scales::percent(cum_pct / 100)),
       vjust = -1,
       size = 3.5,
-      color = iqr_theme$config$get_pal("discrete")[3]
+      color = .iqr_plotter$.pal_discrete(iqr_theme)[3]
     )
 
   # Add secondary y-axis
@@ -481,7 +480,7 @@ create_pareto_table <- function(data, category_col = NULL, count_col = NULL, gro
   # Apply theme
   p <- p +
     ggplot2::scale_fill_manual(values = c("white",
-                                          iqr_theme$config$get_pal("discrete")[10]),
+                                          .iqr_plotter$.pal_discrete(iqr_theme)[10]),
                                guide = "none") +
     iqr_theme$theme_iqr() +
     ggplot2::theme(
@@ -609,9 +608,8 @@ plot_pareto_image_labels <- function(data,
   if (!requireNamespace("png", quietly = TRUE)) {
     stop("png package is required for image labels. Install with: install.packages('png')")
   }
-  iqr_theme_obj <- as_iqr_theme_object(theme)
-  iqr_theme <- iqr_theme_obj$theme_iqr()
-  ui_colors <- iqr_theme_obj$get_ui_colors()
+  theme_obj <- as_iqr_theme_object(theme)
+  iqr_theme <- theme_obj$theme_iqr()
   # Sort data
   df <- data[order(data[[count_col]], decreasing = TRUE), ]
   categories <- df[[category_col]]
@@ -628,13 +626,13 @@ plot_pareto_image_labels <- function(data,
     ggplot2::geom_line(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y, group = 1),
       linewidth = 1,
-      color = ui_colors$danger
+      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
     ) +
     ggplot2::geom_point(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y),
       shape = 19,
       size = 2,
-      color = ui_colors$danger
+      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
     )
   # Apply theme and styling
   p <- p +
@@ -729,9 +727,8 @@ plot_pareto_emoji_labels <- function(data,
     stop("ggplot2 is required.")
   }
 
-  iqr_theme_obj <- as_iqr_theme_object(theme)
-  iqr_theme <- iqr_theme_obj$theme_iqr()
-  ui_colors <- iqr_theme_obj$get_ui_colors()
+  theme_obj <- as_iqr_theme_object(theme)
+  iqr_theme <- theme_obj$theme_iqr()
 
   # Sort data
   df <- data[order(data[[count_col]], decreasing = TRUE), ]
@@ -757,13 +754,13 @@ plot_pareto_emoji_labels <- function(data,
     ggplot2::geom_line(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y, group = 1),
       linewidth = 1,
-      color = ui_colors$danger
+      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
     ) +
     ggplot2::geom_point(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y),
       shape = 19,
       size = 2,
-      color = ui_colors$danger
+      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
     )
 
   # Apply theme and styling

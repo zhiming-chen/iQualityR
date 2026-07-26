@@ -29,7 +29,7 @@ Imports:
     utils,
     stats
 Remotes:
-    YOUR_GITHUB_USER/iQualityR-foundation
+    zhiming-chen/iQualityR/iQualityR.core
 Suggests:
     testthat (>= 3.0.0),
     knitr,

@@ -25,16 +25,23 @@
 #' @importFrom grid unit
 #' @importFrom rlang .data
 #' @importFrom iQualityR.core IqrTheme
+#' @importFrom iQualityR.core IqrPlotterBase
 #' @name iQualityR.plot-package
 #' @keywords internal
 NULL
+
+# Shared IqrPlotterBase instance used as a stateless color/scale toolbox by
+# all plot_* functions. Keeps the function-style public API unchanged while
+# routing every color decision through the unified IqrPlotterBase helpers
+# (.pal_*, .scale_*, .contrast_text). The instance is created at load time.
+.iqr_plotter <- IqrPlotterBase$new()
 
 # Declare ggplot2 aes() column names used via non-standard evaluation.
 # These variables are never assigned in R code; they are evaluated inside
 # aes() against a data frame at plot-build time.
 utils::globalVariables(c(
   ".data", "Var1", "Var2", "angle", "category", "cl", "contrast", "count",
-  "cum_pct", "empirical", "estimate", "format_p_value", "fpr", "group",
+  "cum_pct", "empirical", "estimate", "fpr", "group",
   "importance", "index", "label", "label_pos", "lcl", "letter", "level",
   "line_width", "lower", "pct", "residual", "response", "se", "significant",
   "sqrt_res", "stat_name", "tpr", "ucl", "upper", "value", "variance_percent",
@@ -51,9 +58,19 @@ as_iqr_theme <- function(theme = NULL) {
   as_iqr_theme_object(theme)$theme_iqr()
 }
 
+#' Convert a Theme Specification to an IqrTheme Object
+#'
+#' Resolves a theme specification (NULL, character string, function, or
+#' IqrTheme object) into a concrete IqrTheme object. When NULL, falls back
+#' to the global \code{iqr.default_theme} option (default "academic").
+#'
+#' @param theme NULL, a theme name string (e.g. "academic"), a theme
+#'   generation function, or an IqrTheme object.
+#' @return An IqrTheme object.
+#' @export
 as_iqr_theme_object <- function(theme = NULL) {
   if (is.null(theme)) {
-    theme <- getOption("iqr.default_theme", "workbench")
+    theme <- getOption("iqr.default_theme", "academic")
   }
 
   if (is.character(theme)) {
@@ -186,9 +203,12 @@ plot_pp <- function(data, sample_col, theme = NULL,
   }
 
   # ----- 6. Plot (add test annotation) -----
+  theme_obj <- as_iqr_theme_object(theme)
+  line_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
+  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
   p <- ggplot2::ggplot(df, ggplot2::aes(x = theoretical, y = empirical)) +
     ggplot2::geom_point(alpha = 0.6) +
-    ggplot2::geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+    ggplot2::geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = line_color) +
     ggplot2::coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
     ggplot2::labs(
       x = "Theoretical Cumulative Probability",
@@ -202,7 +222,7 @@ plot_pp <- function(data, sample_col, theme = NULL,
       y = 0.95, x = 0.02,
       label = test_label,
       hjust = 0, vjust = 0.5,
-      size = 4, color = "gray30"
+      size = 4, color = muted_color
     )
   }
 
@@ -390,11 +410,14 @@ plot_qq <- function(data, sample_col, theme = NULL,
   }
 
   # ----- 7. Build plot (add step by step to avoid conflicts) -----
+  theme_obj <- as_iqr_theme_object(theme)
+  line_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
+  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
   p <- ggplot2::ggplot(df, ggplot2::aes(x = theoretical, y = sample)) +
     ggplot2::geom_point(alpha = 0.6) +
     ggplot2::geom_abline(
       intercept = line_intercept, slope = line_slope,
-      linetype = "dashed", color = "red"
+      linetype = "dashed", color = line_color
     ) +
     ggplot2::labs(x = "Theoretical Quantiles", y = "Sample Quantiles", ...)
 
@@ -403,7 +426,7 @@ plot_qq <- function(data, sample_col, theme = NULL,
     p <- p + ggplot2::geom_ribbon(
       data = band_df,
       ggplot2::aes(x = theoretical, ymin = lower, ymax = upper),
-      alpha = 0.2, fill = "gray30",
+      alpha = 0.2, fill = muted_color,
       inherit.aes = FALSE
     )
   }
@@ -416,7 +439,7 @@ plot_qq <- function(data, sample_col, theme = NULL,
       x = x_range[1] + 0.01 * diff(x_range),
       y = y_range[2] - 0.01 * diff(y_range),
       label = test_label,
-      hjust = 0, vjust = 1, size = 4, color = "gray30"
+      hjust = 0, vjust = 1, size = 4, color = muted_color
     )
   }
 
@@ -494,16 +517,9 @@ plot_interaction_line <- function(data, x_var, y_var, group_var,
     ggplot2::geom_point(size = 3) +
     ggplot2::labs(y = paste(fun, "of", y_var))
 
-  # Try to use theme's color scale, fall back to default on failure
-  tryCatch(
-    {
-      p <- p + IqrTheme$new(theme)$scale_color_iqr(discrete = TRUE)
-    },
-    error = function(e) {
-      p <- p + ggplot2::scale_color_brewer(palette = "Set1")
-    }
-  )
-  p
+  # Use the theme's discrete color scale via the shared toolbox.
+  theme_obj <- as_iqr_theme_object(theme)
+  p + .iqr_plotter$.scale_color_discrete(theme_obj)
 }
 
 #' Create a Correlation Heatmap
@@ -541,6 +557,7 @@ plot_correlation_heatmap <- function(data, theme = NULL,
   melted_cormat <- stats::na.omit(melted_cormat)
 
   # iqr_theme <- as_iqr_theme(theme)
+  theme_obj <- as_iqr_theme_object(theme)
   p <- base_plot(melted_cormat,
     ggplot2::aes(x = Var1, y = Var2, fill = value),
     theme = theme
@@ -549,20 +566,8 @@ plot_correlation_heatmap <- function(data, theme = NULL,
     ggplot2::geom_text(ggplot2::aes(label = value), color = "black", size = 3) +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, hjust = 1)) +
     ggplot2::coord_fixed() +
-    ggplot2::labs(fill = "Correlation")
-
-  # Try to add continuous color scale
-  tryCatch(
-    {
-      p <- p + IqrTheme$new(theme)$scale_fill_iqr(discrete = FALSE)
-    },
-    error = function(e) {
-      p <- p + ggplot2::scale_fill_gradient2(
-        low = "blue", mid = "white", high = "red",
-        midpoint = 0, limits = c(-1, 1)
-      )
-    }
-  )
+    ggplot2::labs(fill = "Correlation") +
+    .iqr_plotter$.scale_fill_diverging(theme_obj)
   p
 }
 
@@ -602,6 +607,10 @@ plot_acf <- function(data_vec,
   ci_val <- qnorm((1 + ci) / 2) / sqrt(n)
 
   # iqr_theme <- as_iqr_theme(theme)
+  theme_obj <- as_iqr_theme_object(theme)
+  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
+  sig_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
+  text_color <- .iqr_plotter$.pal_ui(theme_obj, "text")
   p <- base_plot(acf_df,
     ggplot2::aes(
       x = lag,
@@ -612,12 +621,12 @@ plot_acf <- function(data_vec,
     ggplot2::geom_hline(
       yintercept = 0,
       linetype = "solid",
-      color = "grey"
+      color = muted_color
     ) +
     ggplot2::geom_hline(
       yintercept = c(ci_val, -ci_val),
       linetype = "dashed",
-      color = "red"
+      color = sig_color
     )
 
   if (highlight_sig) {
@@ -625,8 +634,8 @@ plot_acf <- function(data_vec,
       ggplot2::aes(xend = lag, yend = 0, color = abs(acf) > ci_val)
     ) + ggplot2::scale_color_manual(
       values = c(
-        "FALSE" = "black",
-        "TRUE" = "red"
+        "FALSE" = text_color,
+        "TRUE" = sig_color
       ),
       guide = "none"
     )
@@ -676,6 +685,10 @@ plot_pacf <- function(data_vec,
   ci_val <- qnorm((1 + ci) / 2) / sqrt(n)
 
   # iqr_theme <- as_iqr_theme(theme)
+  theme_obj <- as_iqr_theme_object(theme)
+  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
+  sig_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
+  text_color <- .iqr_plotter$.pal_ui(theme_obj, "text")
   p <- base_plot(pacf_df,
     ggplot2::aes(
       x = lag,
@@ -686,12 +699,12 @@ plot_pacf <- function(data_vec,
     ggplot2::geom_hline(
       yintercept = 0,
       linetype = "solid",
-      color = "grey"
+      color = muted_color
     ) +
     ggplot2::geom_hline(
       yintercept = c(ci_val, -ci_val),
       linetype = "dashed",
-      color = "red"
+      color = sig_color
     )
 
   if (highlight_sig) {
@@ -703,8 +716,8 @@ plot_pacf <- function(data_vec,
       )
     ) + ggplot2::scale_color_manual(
       values = c(
-        "FALSE" = "black",
-        "TRUE" = "red"
+        "FALSE" = text_color,
+        "TRUE" = sig_color
       ),
       guide = "none"
     )
@@ -760,6 +773,9 @@ plot_roc_curve <- function(data, labels_var, predictions_var,
   )
 
   # iqr_theme <- as_iqr_theme(theme)
+  theme_obj <- as_iqr_theme_object(theme)
+  curve_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
+  ref_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
   p <- base_plot(roc_df,
     ggplot2::aes(
       x = fpr,
@@ -768,14 +784,14 @@ plot_roc_curve <- function(data, labels_var, predictions_var,
     theme = theme
   ) +
     ggplot2::geom_line(
-      color = "steelblue",
+      color = curve_color,
       linewidth = 1.2
     ) +
     ggplot2::geom_abline(
       intercept = 0,
       slope = 1,
       linetype = "dashed",
-      color = "gray50"
+      color = ref_color
     ) +
     ggplot2::coord_fixed() +
     ggplot2::labs(
@@ -869,16 +885,8 @@ plot_variance_components <- function(data,
     ggplot2::labs(fill = "Variance Source") +
     ggplot2::labs(title = "Variance Components", x = NULL, y = NULL)
 
-  tryCatch(
-    {
-      # p <- p + iqr_theme$plot$scale_fill_iqr(discrete = TRUE)
-      p <- p + IqrTheme$new(theme)$scale_fill_iqr(discrete = TRUE)
-    },
-    error = function(e) {
-      p <- p + ggplot2::scale_fill_brewer(palette = "Set2")
-    }
-  )
-  p
+  theme_obj <- as_iqr_theme_object(theme)
+  p + .iqr_plotter$.scale_fill_discrete(theme_obj)
 }
 
 # Keep old name for backward compatibility, but new name is recommended
@@ -938,7 +946,7 @@ combine_plots <- function(...,
 #' @param theme theme name (character) or theme object
 #' @return invisible NULL
 #' @export
-set_default_theme <- function(theme = "prism") {
+set_default_theme <- function(theme = "academic") {
   # Try to validate whether theme is available
   tryCatch(
     {

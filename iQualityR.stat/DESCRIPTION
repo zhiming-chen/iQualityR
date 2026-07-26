@@ -32,7 +32,8 @@ Imports:
     iQualityR.plot,
     iQualityR.core
 Remotes:
-    YOUR_GITHUB_USER/iQualityR-foundation
+    zhiming-chen/iQualityR/iQualityR.plot,
+    zhiming-chen/iQualityR/iQualityR.core
 Suggests:
     testthat (>= 3.0.0),
     knitr,

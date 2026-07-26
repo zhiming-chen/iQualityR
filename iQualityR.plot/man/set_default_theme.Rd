@@ -4,7 +4,7 @@
 \alias{set_default_theme}
 \title{Set Global Default Theme}
 \usage{
-set_default_theme(theme = "prism")
+set_default_theme(theme = "academic")
 }
 \arguments{
 \item{theme}{theme name (character) or theme object}

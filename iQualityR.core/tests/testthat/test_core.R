@@ -87,7 +87,234 @@ test_that("IqrTheme initialization and methods work", {
   expect_s3_class(theme$scale_color_iqr(), "ScaleDiscrete")
 
   expect_s3_class(theme$theme_iqr(), "theme")
+  # After set_theme("workbench"), primary must be workbench's primary (#2563EB),
+  # not academic's (#1F77B4).
   expect_equal(theme$get_ui_colors()$primary, "#2563EB")
+})
+
+test_that("Four palette types are exposed by every preset", {
+  for (style in c("academic", "workbench", "tech", "economist", "wsj",
+                  "gdocs", "tufte", "few", "solarized", "prism")) {
+    theme <- IqrTheme$new(style)
+    for (ptype in c("discrete", "sequential", "diverging", "semantic")) {
+      pal <- theme$get_pal(ptype)
+      expect_type(pal, "character")
+      expect_true(length(pal) >= 1L,
+                  label = paste(style, ptype, "has length >= 1"))
+    }
+  }
+})
+
+test_that("External theme presets carry distinct palettes (not academic)", {
+  # Each external theme must ship its own discrete palette, distinct from
+  # academic's Paul Tol palette -- the whole point of method B is that
+  # picking "economist" recolors plots to match the source publication.
+  academic_pal <- IqrTheme$new("academic")$get_pal("discrete")
+
+  for (style in c("economist", "wsj", "gdocs", "tufte", "few",
+                  "solarized", "prism")) {
+    pal <- IqrTheme$new(style)$get_pal("discrete")
+    # At least the first color must differ from academic's #4477AA
+    expect_false(pal[1] == academic_pal[1],
+                 label = paste(style, "first color is not academic #4477AA"))
+    # Palette length is 10 (matches the standard preset contract)
+    expect_length(pal, 10L)
+  }
+})
+
+test_that("External theme presets expose UI primary distinct from academic", {
+  academic_primary <- IqrTheme$new("academic")$get_ui_colors()$primary
+  for (style in c("economist", "wsj", "gdocs", "tufte", "few",
+                  "solarized", "prism")) {
+    primary <- IqrTheme$new(style)$get_ui_colors()$primary
+    expect_false(primary == academic_primary,
+                 label = paste(style, "UI primary is not academic #1F77B4"))
+  }
+})
+
+test_that("External theme presets carry semantic palettes with pass/fail/watch", {
+  for (style in c("economist", "wsj", "gdocs", "tufte", "few",
+                  "solarized", "prism")) {
+    theme <- IqrTheme$new(style)
+    full <- theme$get_pal("semantic")
+    expect_true(all(c("pass", "fail", "watch") %in% names(full)),
+                label = paste(style, "semantic has pass/fail/watch"))
+    # pass and fail must be different colors
+    expect_false(full[["pass"]] == full[["fail"]],
+                 label = paste(style, "pass and fail differ"))
+  }
+})
+
+test_that("External theme function is attached when package is installed", {
+  # Skip silently when neither external package is available
+  skip_if_not_installed("ggthemes")
+  theme <- IqrTheme$new("economist")
+  expect_false(is.null(theme$config$external_theme_fun))
+  # theme_iqr() must still produce a valid ggplot2 theme
+  expect_s3_class(theme$theme_iqr(), "theme")
+})
+
+test_that("External theme preset works even when package is absent", {
+  # Simulate the package being unavailable by constructing the preset
+  # directly through the style_presets dictionary. The preset must still
+  # resolve colors; only the theme function is skipped.
+  theme <- IqrTheme$new("academic")
+  # Force-select the economist preset entry without going through the
+  # external_map path
+  preset <- theme$config$style_presets[["economist"]]
+  expect_type(preset, "list")
+  expect_false(is.null(preset$data$discrete))
+  expect_false(is.null(preset$ui$primary))
+})
+
+test_that("Discrete palette auto-extends beyond base length", {
+  theme <- IqrTheme$new("academic")
+  base <- theme$get_pal("discrete")
+  expect_length(base, 10L)
+
+  extended <- theme$get_pal("discrete", n = 15L)
+  expect_length(extended, 15L)
+  # colorRampPalette interpolates, so the first color is preserved
+  expect_equal(extended[1], base[1])
+  expect_equal(extended[15], base[10])
+})
+
+test_that("Continuous is a legacy alias for sequential", {
+  theme <- IqrTheme$new("academic")
+  expect_equal(theme$get_pal("continuous"),
+               theme$get_pal("sequential"))
+  expect_equal(theme$get_data_colors("continuous"),
+               theme$get_pal("sequential"))
+})
+
+test_that("Semantic palette returns named vector or single color by name", {
+  theme <- IqrTheme$new("academic")
+  full <- theme$get_pal("semantic")
+  expect_type(full, "character")
+  expect_true(all(c("pass", "fail", "watch") %in% names(full)))
+
+  expect_equal(theme$get_pal("semantic", name = "pass"),
+               full[["pass"]])
+  expect_error(theme$get_pal("semantic", name = "nope"),
+               "Unknown semantic color name")
+})
+
+test_that("Palette resolution priority: custom > option > preset", {
+  theme <- IqrTheme$new("academic")
+  preset <- theme$get_pal("discrete")
+
+  # custom overrides preset
+  expect_equal(theme$get_pal("discrete", custom = c("#000000")),
+               c("#000000"))
+
+  # option overrides preset (but custom wins over option)
+  op <- options(iqr.custom_discrete = c("#111111", "#222222"))
+  on.exit(options(op), add = TRUE)
+  expect_equal(theme$get_pal("discrete"), c("#111111", "#222222"))
+  expect_equal(theme$get_pal("discrete", custom = c("#333333")),
+               c("#333333"))
+})
+
+test_that("style = 'paired' produces a working color scale", {
+  theme <- IqrTheme$new("academic")
+  fill_pal <- theme$get_pal("discrete")
+
+  color_scale <- theme$plot$scale_color_iqr(discrete = TRUE, style = "paired")
+  expect_s3_class(color_scale, "ScaleDiscrete")
+
+  # Calling the palette function should return a color vector of the right length
+  color_out <- color_scale$palette(length(fill_pal))
+  expect_length(color_out, length(fill_pal))
+
+  # With style = "same" (default), color matches fill
+  same_scale <- theme$plot$scale_color_iqr(discrete = TRUE, style = "same")
+  same_out <- same_scale$palette(length(fill_pal))
+  expect_equal(same_out, fill_pal)
+})
+
+test_that("scale_fill_sequential / scale_color_sequential return ScaleContinuous", {
+  theme <- IqrTheme$new("academic")
+  expect_s3_class(theme$plot$scale_fill_sequential(), "ScaleContinuous")
+  expect_s3_class(theme$plot$scale_color_sequential(), "ScaleContinuous")
+})
+
+test_that("scale_fill_diverging / scale_color_diverging return ScaleContinuous", {
+  theme <- IqrTheme$new("academic")
+  expect_s3_class(theme$plot$scale_fill_diverging(), "ScaleContinuous")
+  expect_s3_class(theme$plot$scale_color_diverging(), "ScaleContinuous")
+})
+
+test_that("scale_fill_semantic / scale_color_semantic bind semantic colors", {
+  theme <- IqrTheme$new("academic")
+  fill_scale <- theme$plot$scale_fill_semantic(labels = c("pass", "fail"))
+  expect_s3_class(fill_scale, "ScaleDiscrete")
+
+  pal <- theme$get_pal("semantic")
+  # The palette function should return the bound semantic colors
+  out <- fill_scale$palette(2)
+  expect_length(out, 2)
+
+  expect_error(theme$plot$scale_fill_semantic(labels = "nope"),
+               "Unknown semantic labels")
+})
+
+test_that("IqrTheme exposes new scale_* delegates", {
+  theme <- IqrTheme$new("academic")
+  expect_s3_class(theme$scale_fill_sequential(), "ScaleContinuous")
+  expect_s3_class(theme$scale_color_sequential(), "ScaleContinuous")
+  expect_s3_class(theme$scale_fill_diverging(), "ScaleContinuous")
+  expect_s3_class(theme$scale_color_diverging(), "ScaleContinuous")
+  expect_s3_class(theme$scale_fill_semantic(), "ScaleDiscrete")
+  expect_s3_class(theme$scale_color_semantic(), "ScaleDiscrete")
+})
+
+test_that("Color utility functions work", {
+  expect_equal(lighten("#000000", 1), "#FFFFFF")
+  expect_equal(lighten("#000000", 0), "#000000")
+  expect_equal(darken("#FFFFFF", 1), "#000000")
+  expect_equal(darken("#FFFFFF", 0), "#FFFFFF")
+  expect_equal(mix("#000000", "#FFFFFF", 0.5),
+               "#808080")
+  expect_true(is_dark("#000000"))
+  expect_false(is_dark("#FFFFFF"))
+  expect_equal(contrast_ratio("#FFFFFF", "#FFFFFF"), 1)
+  expect_equal(contrast_ratio("#FFFFFF", "#000000"), 21, tolerance = 0.1)
+  expect_error(lighten("#000000", 2), "amount must be")
+  expect_error(darken("#000000", -1), "amount must be")
+  expect_error(mix("#000000", "#FFFFFF", 2), "amount must be")
+  expect_error(hex_to_rgb("#ZZZ"), "Invalid hex color")
+})
+
+test_that("IqrPlotterBase exposes palette and scale toolbox", {
+  plotter <- IqrPlotterBase$new()
+  theme <- IqrTheme$new("academic")
+
+  # palette accessors
+  expect_length(plotter$.pal_discrete(theme), 10L)
+  expect_length(plotter$.pal_discrete(theme, n = 12L), 12L)
+  expect_length(plotter$.pal_sequential(theme), 3L)
+  expect_length(plotter$.pal_diverging(theme), 3L)
+  expect_true(is.character(plotter$.pal_semantic(theme)))
+  expect_true(is.character(plotter$.pal_semantic(theme, name = "pass")))
+
+  # scale factories
+  expect_s3_class(plotter$.scale_fill_discrete(theme), "ScaleDiscrete")
+  expect_s3_class(plotter$.scale_color_discrete(theme), "ScaleDiscrete")
+  expect_s3_class(plotter$.scale_fill_sequential(theme), "ScaleContinuous")
+  expect_s3_class(plotter$.scale_color_sequential(theme), "ScaleContinuous")
+  expect_s3_class(plotter$.scale_fill_diverging(theme), "ScaleContinuous")
+  expect_s3_class(plotter$.scale_color_diverging(theme), "ScaleContinuous")
+  expect_s3_class(plotter$.scale_fill_semantic(theme), "ScaleDiscrete")
+  expect_s3_class(plotter$.scale_color_semantic(theme), "ScaleDiscrete")
+
+  # paired fill/color returns a list of two scales
+  paired <- plotter$.scale_fill_color_paired(theme)
+  expect_type(paired, "list")
+  expect_s3_class(paired$fill, "ScaleDiscrete")
+  expect_s3_class(paired$color, "ScaleDiscrete")
+
+  # base render() still raises
+  expect_error(plotter$render(list(), theme), "Not implemented")
 })
 
 test_that("i18n helpers translate and interpolate messages", {

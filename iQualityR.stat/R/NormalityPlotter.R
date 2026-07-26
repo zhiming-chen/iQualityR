@@ -71,7 +71,7 @@ NormalityPlotter <- R6::R6Class("NormalityPlotter",
 
       layers <- layers_histogram_density(
         bins = bins,
-        fill = "steelblue",
+        fill = .iqr_plotter$.pal_discrete(self$theme_obj)[1],
         alpha = 0.6,
         color = "white"
       )
@@ -82,7 +82,7 @@ NormalityPlotter <- R6::R6Class("NormalityPlotter",
       df_norm <- data.frame(x = x_seq, y = stats::dnorm(x_seq, mean = mu, sd = sigma))
       p <- p + ggplot2::geom_line(
         data = df_norm, ggplot2::aes(x = x, y = y),
-        color = "red", linewidth = 1.2
+        color = .iqr_plotter$.pal_semantic(self$theme_obj, "fail"), linewidth = 1.2
       )
 
       p + ggplot2::labs(

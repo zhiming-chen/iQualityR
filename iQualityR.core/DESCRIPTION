@@ -12,6 +12,7 @@ Depends:
 Imports:
     R6,
     ggplot2,
+    grDevices,
     openxlsx,
     rmarkdown,
     utils,
@@ -21,6 +22,8 @@ Suggests:
     knitr,
     systemfonts,
     sysfonts,
-    showtext
+    showtext,
+    ggthemes,
+    ggprism
 Config/testthat/edition: 3
 VignetteBuilder: knitr

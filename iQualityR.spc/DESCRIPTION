@@ -30,7 +30,9 @@ Imports:
     stats,
     utils
 Remotes:
-    YOUR_GITHUB_USER/iQualityR-foundation
+    zhiming-chen/iQualityR/iQualityR.core,
+    zhiming-chen/iQualityR/iQualityR.stat,
+    zhiming-chen/iQualityR/iQualityR.plot
 Suggests:
     testthat,
     withr,

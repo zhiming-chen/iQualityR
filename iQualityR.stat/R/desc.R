@@ -58,26 +58,29 @@ desc_analyze <- function(data, vars = NULL, conf = 0.95) {
 
 # -----------------------------------------------------------------------------
 # Plotting functions - depends on iQualityR.plot base functions
+# All colors sourced from the IqrPlotterBase toolbox (.iqr_plotter singleton
+# defined in package.R) to ensure consistent theming.
 # -----------------------------------------------------------------------------
 
 #' @title Descriptive statistics histogram
 #' @param s Result returned by desc_calc
-#' @param theme Theme (default "prism")
+#' @param theme Theme (default "academic")
 #' @return ggplot object
 #' @export
-desc_hist <- function(s, theme = "prism") {
+desc_hist <- function(s, theme = "academic") {
+  theme_obj <- iQualityR.plot::as_iqr_theme_object(theme)
   df <- data.frame(v = s$raw)
   lims <- c(min(df$v) - diff(range(df$v)) * 0.15, max(df$v) + diff(range(df$v)) * 0.15)
 
   p <- base_plot(df, ggplot2::aes(x = v), theme = theme) +
     layers_histogram_density(
-      bins = 20,      
-      fill = "#1259aa",
-      color = "white", density_args = list(alpha = 0.6,fill = "#A9C4E3")
+      bins = 20,
+      fill = .iqr_plotter$.pal_discrete(theme_obj)[1],
+      color = "white", density_args = list(alpha = 0.6, fill = .iqr_plotter$.pal_discrete(theme_obj)[2])
     ) +
     ggplot2::stat_function(
       fun = dnorm, args = list(mean = s$mean, sd = s$stdev),
-      color = "red", linewidth = 1
+      color = .iqr_plotter$.pal_semantic(theme_obj, "fail"), linewidth = 1
     ) +
     ggplot2::scale_x_continuous(limits = lims) +
     ggplot2::labs(title = sprintf("Histogram: %s", s$var_name %||% "Variable"), x = NULL, y = "Density")
@@ -86,17 +89,19 @@ desc_hist <- function(s, theme = "prism") {
 
 #' @title Descriptive statistics boxplot
 #' @param s Result returned by desc_calc
-#' @param theme Theme (default "prism")
+#' @param theme Theme (default "academic")
 #' @return ggplot object
 #' @export
-desc_box <- function(s, theme = "prism") {
+desc_box <- function(s, theme = "academic") {
+  theme_obj <- iQualityR.plot::as_iqr_theme_object(theme)
   df <- data.frame(v = s$raw)
   lims <- c(min(df$v) - diff(range(df$v)) * 0.15, max(df$v) + diff(range(df$v)) * 0.15)
 
   p <- base_plot(df, ggplot2::aes(x = v, y = ""), theme = theme) +
     layers_boxplot(
       add_jitter = TRUE,
-      boxplot_args = list(fill = "#F2F2F2", outlier.color = "red", width = 0.6)
+      boxplot_args = list(fill = .iqr_plotter$.pal_ui(theme_obj, "table_stripe", default = "#F5F5F5"),
+                          outlier.color = .iqr_plotter$.pal_semantic(theme_obj, "fail"), width = 0.6)
     ) +
     ggplot2::scale_x_continuous(limits = lims) +
     ggplot2::labs(title = sprintf("Boxplot: %s", s$var_name %||% "Variable"), x = "Value", y = NULL) +
@@ -108,10 +113,11 @@ desc_box <- function(s, theme = "prism") {
 
 #' @title Descriptive statistics boxplot (with statistics table)
 #' @param s Result returned by desc_calc
-#' @param theme Theme (default "prism")
+#' @param theme Theme (default "academic")
 #' @return ggplot object
 #' @export
-desc_box_with_stats <- function(s, theme = "prism") {
+desc_box_with_stats <- function(s, theme = "academic") {
+  theme_obj <- iQualityR.plot::as_iqr_theme_object(theme)
   df <- data.frame(v = s$raw)
   lims <- c(min(df$v) - diff(range(df$v)) * 0.15, max(df$v) + diff(range(df$v)) * 0.15)
 
@@ -134,7 +140,7 @@ desc_box_with_stats <- function(s, theme = "prism") {
     rows = NULL,
     theme = gridExtra::ttheme_default(
       base_size = 9,
-      base_colour = "gray30",
+      base_colour = .iqr_plotter$.pal_ui(theme_obj, "text", default = "gray30"),
       padding = grid::unit(c(3, 5), "mm")
     )
   )
@@ -142,8 +148,10 @@ desc_box_with_stats <- function(s, theme = "prism") {
   p <- base_plot(df, ggplot2::aes(x = 1, y = v), theme = theme) +
     layers_boxplot(
       add_jitter = TRUE,
-      jitter_args = list(width = 0.08, alpha = 0.3, size = 0.8, color = "gray40"),
-      boxplot_args = list(fill = "#A9C4E3", width = 0.3, outlier.color = "red")
+      jitter_args = list(width = 0.08, alpha = 0.3, size = 0.8,
+                         color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "gray40")),
+      boxplot_args = list(fill = .iqr_plotter$.pal_discrete(theme_obj)[2],
+                          width = 0.3, outlier.color = .iqr_plotter$.pal_semantic(theme_obj, "fail"))
     ) +
     ggplot2::scale_x_continuous(limits = c(0.5, 2.0), breaks = NULL) +
     ggplot2::labs(title = "Boxplot", x = NULL, y = "Value") +
@@ -159,10 +167,10 @@ desc_box_with_stats <- function(s, theme = "prism") {
 
 #' @title Descriptive statistics combined plot
 #' @param s Result returned by desc_calc
-#' @param theme Theme (default "prism")
+#' @param theme Theme (default "academic")
 #' @return patchwork object
 #' @export
-desc_plot <- function(s, theme = "prism") {
+desc_plot <- function(s, theme = "academic") {
   p_hist <- desc_hist(s, theme)
   p_box_stats <- desc_box_with_stats(s, theme)
   p_hist + p_box_stats + patchwork::plot_layout(widths = c(1, 1.3)) +
@@ -171,10 +179,10 @@ desc_plot <- function(s, theme = "prism") {
 
 #' @title Statistics table plot
 #' @param s Result returned by desc_calc
-#' @param theme Theme (default "prism")
+#' @param theme Theme (default "academic")
 #' @return ggplot object
 #' @export
-desc_stats_table <- function(s, theme = "prism") {
+desc_stats_table <- function(s, theme = "academic") {
   stats_data <- data.frame(
     metric = c("N", "Mean", "SD", "Median", "CV(%)", "Skewness", "Kurtosis", "AD", "P-value"),
     value = c(s$n, sprintf("%.4f", s$mean), sprintf("%.4f", s$stdev),
@@ -280,10 +288,10 @@ desc_to_excel <- function(results, path = NULL, excel_exporter = NULL) {
 #' @param conf Confidence level
 #' @param plot Whether to plot
 #' @param report Whether to generate report
-#' @param theme Theme
+#' @param theme Theme (default "academic")
 #' @return Invisibly returns results list, or outputs plots and report simultaneously
 #' @export
-iqr_desc <- function(data, vars = NULL, conf = 0.95, plot = FALSE, report = FALSE, theme = "prism") {
+iqr_desc <- function(data, vars = NULL, conf = 0.95, plot = FALSE, report = FALSE, theme = "academic") {
   if (is.numeric(data) && length(data) > 1) {
     data <- data.frame(Val = data, stringsAsFactors = FALSE)
   }
@@ -305,5 +313,3 @@ iqr_desc <- function(data, vars = NULL, conf = 0.95, plot = FALSE, report = FALS
 
   invisible(results)
 }
-
-

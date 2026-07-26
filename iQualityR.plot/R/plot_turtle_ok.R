@@ -72,28 +72,22 @@ plot_turtle_diagram <- function(process_name,
   direction <- match.arg(direction)
   output_type <- match.arg(output_type)
 
-  iqr_theme_obj <- if (is.null(iqr_theme)) {
-    as_iqr_theme_object(theme_style)
-  } else {
-    as_iqr_theme_object(iqr_theme)
-  }
-  ui_colors <- iqr_theme_obj$get_ui_colors()
-  data_colors <- iqr_theme_obj$get_data_colors("discrete")
-  data_colors <- rep(data_colors, length.out = 6)
+  theme_obj <- as_iqr_theme_object(iqr_theme %||% theme_style)
+  ui_colors <- theme_obj$get_ui_colors()
   theme_fontname <- ui_colors$font_family %||% "sans"
   theme_fontsize_body <- ui_colors$fontsize_base %||% 16
   theme_fontsize_title <- ui_colors$fontsize_title %||% 20
-  bgcolor <- ui_colors$bg %||% "#FFFFFF"
-  theme_preset_fontcolor <- ui_colors$text %||% NULL
+  bgcolor <- .iqr_plotter$.pal_ui(theme_obj, "bg", default = "#FFFFFF")
+  theme_preset_fontcolor <- .iqr_plotter$.pal_ui(theme_obj, "text", default = "black")
 
   default_fills <- c(
-    process = ui_colors$primary,
-    inputs = data_colors[[1]],
-    outputs = data_colors[[2]],
-    resources = data_colors[[3]],
-    procedures = data_colors[[4]],
-    metrics = data_colors[[5]],
-    responsibilities = data_colors[[6]]
+    process = .iqr_plotter$.pal_ui(theme_obj, "primary"),
+    inputs = .iqr_plotter$.pal_discrete(theme_obj)[1],
+    outputs = .iqr_plotter$.pal_discrete(theme_obj)[2],
+    resources = .iqr_plotter$.pal_discrete(theme_obj)[3],
+    procedures = .iqr_plotter$.pal_discrete(theme_obj)[4],
+    metrics = .iqr_plotter$.pal_discrete(theme_obj)[5],
+    responsibilities = .iqr_plotter$.pal_discrete(theme_obj)[6]
   )
 
   # ---- Escape functions ----
@@ -111,21 +105,6 @@ plot_turtle_diagram <- function(process_name,
     x <- gsub("<", "&lt;", x)
     x <- gsub(">", "&gt;", x)
     x
-  }
-
-  get_contrast_color <- function(hex_color) {
-    if (is.null(hex_color) || hex_color == "") {
-      return("black")
-    }
-    if (grepl("^#[0-9A-Fa-f]{6}$", hex_color)) {
-      r <- strtoi(substr(hex_color, 2, 3), 16)
-      g <- strtoi(substr(hex_color, 4, 5), 16)
-      b <- strtoi(substr(hex_color, 6, 7), 16)
-      brightness <- (r * 299 + g * 587 + b * 114) / 1000
-      return(if (brightness > 128) "black" else "white")
-    } else {
-      return("black")
-    }
   }
 
   # Theme colors - support both named vectors and lists
@@ -326,13 +305,13 @@ plot_turtle_diagram <- function(process_name,
     if (!is.null(theme_preset_fontcolor)) {
       process_fc <- inputs_fc <- outputs_fc <- resources_fc <- procedures_fc <- metrics_fc <- responsibilities_fc <- theme_preset_fontcolor
     } else {
-      process_fc <- get_contrast_color(theme_colors["process"])
-      inputs_fc <- get_contrast_color(theme_colors["inputs"])
-      outputs_fc <- get_contrast_color(theme_colors["outputs"])
-      resources_fc <- get_contrast_color(theme_colors["resources"])
-      procedures_fc <- get_contrast_color(theme_colors["procedures"])
-      metrics_fc <- get_contrast_color(theme_colors["metrics"])
-      responsibilities_fc <- get_contrast_color(theme_colors["responsibilities"])
+      process_fc <- .iqr_plotter$.contrast_text(theme_colors["process"])
+      inputs_fc <- .iqr_plotter$.contrast_text(theme_colors["inputs"])
+      outputs_fc <- .iqr_plotter$.contrast_text(theme_colors["outputs"])
+      resources_fc <- .iqr_plotter$.contrast_text(theme_colors["resources"])
+      procedures_fc <- .iqr_plotter$.contrast_text(theme_colors["procedures"])
+      metrics_fc <- .iqr_plotter$.contrast_text(theme_colors["metrics"])
+      responsibilities_fc <- .iqr_plotter$.contrast_text(theme_colors["responsibilities"])
     }
   }
 
@@ -341,7 +320,7 @@ plot_turtle_diagram <- function(process_name,
   } else if (!is.null(theme_preset_fontcolor)) {
     title_fontcolor <- theme_preset_fontcolor
   } else {
-    title_fontcolor <- get_contrast_color(bgcolor)
+    title_fontcolor <- .iqr_plotter$.contrast_text(bgcolor)
   }
 
   node_attrs <- sprintf(

@@ -28,15 +28,17 @@ knitr::opts_chunk$set(
 The `iQualityR.core` package provides the foundational infrastructure
 for the iQualityR quality engineering framework. It defines R6 abstract
 base classes for plans, tasks, analyzers, plotters, and reporters; a
-unified ggplot2 theme system; Excel export utilities; metadata
-management following a 4M1E convention (Man, Machine, Material, Method,
-Environment); simple internationalization (en-US, zh-CN); and utility
-functions for validation, formatting, and configuration.
+unified ggplot2 theme system with four coordinated palette classes;
+Excel export utilities; metadata management following a 4M1E convention
+(Man, Machine, Material, Method, Environment); simple
+internationalization (en-US, zh-CN); and utility functions for
+validation, formatting, and configuration.
 
-Downstream packages such as `iQualityR.plot`, `iQualityR.stat`, and
-`iQualityR.msa` build on these components. Users of those packages do
-not need to interact with `iQualityR.core` directly, but understanding
-the architecture helps when extending or customizing analyses.
+Downstream packages such as `iQualityR.plot`, `iQualityR.stat`,
+`iQualityR.msa`, `iQualityR.spc`, and `iQualityR.doe` build on these
+components. Users of those packages do not need to interact with
+`iQualityR.core` directly, but understanding the theme system helps
+when customizing analyses or building new plotter subclasses.
 
 # Base classes
 
@@ -95,37 +97,621 @@ str(analyzer$get_results(), max.level = 2)
 
 - `IqrTaskBase` is the high-level coordinator. A subclass wires
   together a plan, data, an analyzer, a plotter, and a reporter.
-- `IqrPlotterBase` is the abstract interface for plot rendering.
+- `IqrPlotterBase` is the abstract interface for plot rendering. It
+  also exposes a toolbox of palette / scale accessors that subclasses
+  inherit, so downstream plotters do not have to know the internals of
+  `IqrTheme` (see the *Plotter toolbox* section).
 - `IqrReporter` handles Excel and R Markdown export.
 
-# Theme and plots
+# Theme system
 
-`IqrTheme` exposes three built-in visual styles (`academic`,
-`workbench`, `tech`) and ggplot2 scales.
+The theme system is the single point of control for visual consistency
+across the entire framework. The design goal is that **users only need
+to pick a theme preset**; every downstream package, every plot type,
+and every analysis module then obtains a coordinated color scheme
+automatically.
 
-```{r theme-ggplot, message = FALSE}
-library(ggplot2)
+## Four palette classes
 
-theme <- IqrTheme$new(theme_style = "tech")
+Every theme preset bundles four palette classes, each covering a
+distinct visual scenario:
 
-ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width,
-                 color = Species)) +
-  geom_point() +
-  theme$theme_iqr() +
-  theme$scale_color_iqr() +
-  labs(title = "Sepal dimensions by species")
+| Class | Type | Typical use | Example |
+|-------|------|-------------|---------|
+| `discrete` | Qualitative | Categorical grouping variables | SPC chart with multiple operators, DOE factor levels |
+| `sequential` | Ordered gradient | Non-negative continuous magnitudes | Capability density, heatmaps, contour surfaces |
+| `diverging` | Signed gradient | Values centered on a neutral midpoint | Residuals, standardized effects, correlations |
+| `semantic` | Verdict-bound | Pass / fail / watch / good / bad / neutral | MSA verdict charts, capability traffic lights |
+
+Using the right palette class for the right scenario is what produces a
+coherent look across heterogeneous plots. A control chart (discrete),
+a residual histogram (diverging), and a verdict bar (semantic) all
+share the same theme even though they draw from different palette
+classes.
+
+## Three built-in presets
+
+Three built-in presets are shipped with the package:
+
+```{r presets-list}
+names(IqrTheme$new("academic")$config$style_presets)
 ```
 
-Switch styles at any time:
+The first three are pure-built-in (no external dependencies):
+
+- `"academic"` -- publication-ready, colorblind-safe qualitative palette
+  (Paul Tol), ColorBrewer Blues / RdBu gradients, black axes. Default
+  for reports and papers.
+- `"workbench"` -- higher-saturation UI palette for interactive apps
+  and dashboards; blue / teal / amber / red accents.
+- `"tech"` -- GitHub-inspired cool palette with strong contrast;
+  suitable for technical documentation and demos.
+
+The remaining seven (`economist` / `wsj` / `gdocs` / `tufte` / `few` /
+`solarized` / `prism`) are external theme presets -- see the next
+section.
+
+Switch presets at any time with `$set_theme()`:
 
 ```{r theme-switch, message = FALSE}
+library(ggplot2)
+
+theme <- IqrTheme$new("academic")
+
+ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
+  geom_bar(show.legend = FALSE) +
+  theme$theme_iqr() +
+  theme$scale_fill_iqr() +
+  labs(title = "Academic preset")
+
 theme$set_theme("workbench")
 
 ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
   geom_bar(show.legend = FALSE) +
   theme$theme_iqr() +
   theme$scale_fill_iqr() +
-  labs(title = "Engine cylinder distribution")
+  labs(title = "Workbench preset")
+```
+
+## External theme presets
+
+In addition to the three built-in presets, `iQualityR.core` ships seven
+external theme presets that mirror the look-and-feel of well-known
+publications and tools. Each external preset is a **full preset** --
+it carries its own UI colors and all four data palette classes
+(discrete / sequential / diverging / semantic), so picking
+`"economist"` recolors every plot to match *The Economist* style,
+not just the axis frame.
+
+The external ggplot2 theme function (e.g. `ggthemes::theme_economist`)
+is layered on top of the preset's color configuration inside
+`theme_iqr()`, so the final plot inherits both the publication's
+typography / gridlines and its color palette.
+
+| Preset | Source package | Look-and-feel | Discrete first 3 colors |
+|--------|----------------|---------------|--------------------------|
+| `economist` | ggthemes | *The Economist*: deep teal + slate blue + cyan | `#6794A7 #014D64 #7AD2F6` |
+| `wsj` | ggthemes | *Wall Street Journal*: red + blue + gold on white | `#C72E29 #016392 #BE9C2E` |
+| `gdocs` | ggthemes | Google Docs: Material Design blue / red / yellow / green | `#4285F4 #EA4335 #FBBC04` |
+| `tufte` | ggthemes | Tufte minimal ink: grayscale only | `#000000 #595959 #8C8C8C` |
+| `few` | ggthemes | Stephen Few's qualitative palette | `#5DA5DA #FAA43A #60BD68` |
+| `solarized` | ggthemes | Solarized (Ethan Schoonover): 16-color perceptual scheme | `#268BD2 #B58900 #CB4B16` |
+| `prism` | ggprism | GraphPad Prism "winter_bright" | `#077E97 #800080 #000080` |
+
+External presets are available when the corresponding package is
+installed (`ggthemes` and/or `ggprism`, declared in `Suggests`). When
+the package is absent, the preset's color configuration is still
+applied -- only the ggplot2 theme function is skipped, so the plots
+still get the right colors with a fallback `academic` frame.
+
+### Switching to an external preset
+
+```{r external-switch, message = FALSE}
+theme <- IqrTheme$new("economist")
+
+ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
+  geom_bar(show.legend = FALSE) +
+  theme$theme_iqr() +
+  theme$scale_fill_iqr() +
+  labs(title = "Economist preset (full palette + theme)")
+```
+
+Note how both the bar colors and the axis / gridline style change
+together -- this is the difference between the new full-preset
+behavior and the old "external theme only" behavior, which left the
+data colors on the academic palette.
+
+### Comparing external palettes side by side
+
+The four palette classes are coordinated within each preset, so the
+same scenario plot looks coherent regardless of which external
+preset is active:
+
+```{r external-compare, fig.show = "hold", out.width = "33%"}
+data(mtcars)
+mtcars$cyl <- factor(mtcars$cyl)
+
+for (style in c("wsj", "few", "solarized")) {
+  theme <- IqrTheme$new(style)
+  print(
+    ggplot(mtcars, aes(x = wt, y = mpg, color = cyl)) +
+      geom_point(size = 3) +
+      theme$theme_iqr() +
+      theme$scale_color_iqr() +
+      labs(title = paste0(style, " preset"))
+  )
+}
+```
+
+### External preset palettes under the hood
+
+You can inspect any preset's full color configuration directly:
+
+```{r external-inspect}
+theme <- IqrTheme$new("prism")
+
+# Discrete palette (GraphPad Prism winter_bright)
+theme$get_pal("discrete")
+
+# Sequential gradient (single-hue cyan)
+theme$get_pal("sequential")
+
+# Diverging gradient (magenta -> white -> cyan)
+theme$get_pal("diverging")
+
+# Semantic verdict colors (pass / fail / watch)
+theme$get_pal("semantic")
+```
+
+### Soft dependency behavior
+
+`ggthemes` and `ggprism` are declared in `Suggests`, not `Imports`, so
+the package installs cleanly even when they are absent. The runtime
+contract has three tiers:
+
+- **Package installed** (the common case): full preset + external
+  ggplot2 theme function. The plot inherits both the publication's
+  typography / gridlines and its color palette. This is the intended
+  publication-quality look.
+- **Package absent but preset name requested**: the preset's color
+  configuration is still applied (the preset lives in `style_presets`,
+  not in the external package); only the external ggplot2 theme
+  function is skipped. The plot gets the right colors with a fallback
+  `academic` frame.
+- **Preset name not recognized at all**: `set_theme()` raises an
+  error listing all valid names.
+
+```{r external-soft-dep}
+# Preset entry is always present in style_presets, regardless of
+# whether ggthemes is installed:
+"economist" %in% names(IqrTheme$new("academic")$config$style_presets)
+```
+
+
+## Accessing palettes directly
+
+`get_pal(type, n, name, custom)` returns the raw color vector. This is
+the lowest-level entry point, useful when a downstream plotter needs to
+pass colors to a non-ggplot2 function (e.g. `plotly`, `openxlsx`).
+
+```{r get-pal}
+theme <- IqrTheme$new("academic")
+
+# Discrete palette (base length = 10)
+theme$get_pal("discrete")
+
+# Sequential and diverging palettes (3-stop)
+theme$get_pal("sequential")
+theme$get_pal("diverging")
+
+# Semantic palette (named vector)
+theme$get_pal("semantic")
+
+# Single semantic color by name
+theme$get_pal("semantic", name = "pass")
+```
+
+### Discrete palette auto-extension
+
+When the number of categories exceeds the base palette length, the
+discrete palette is automatically interpolated via
+`grDevices::colorRampPalette`:
+
+```{r pal-extend}
+theme <- IqrTheme$new("academic")
+base <- theme$get_pal("discrete")
+extended <- theme$get_pal("discrete", n = 15L)
+
+length(base)
+length(extended)
+extended[1]   # first color is preserved
+extended[15]  # last color matches the last base color
+```
+
+This is what every `scale_*_iqr()` call uses internally, so plots with
+many categories stay readable without manual color picking.
+
+### Resolution priority: custom > option > preset
+
+`get_pal()` resolves colors in three layers, which lets users override
+the preset globally (via `options()`) or per-call (via `custom`):
+
+```{r pal-priority}
+theme <- IqrTheme$new("academic")
+
+# 1. Default: preset
+head(theme$get_pal("discrete"), 3)
+
+# 2. option() overrides preset globally
+op <- options(iqr.custom_discrete = c("#111111", "#222222", "#333333"))
+head(theme$get_pal("discrete"), 3)
+
+# 3. custom argument overrides everything per-call
+theme$get_pal("discrete", custom = c("#AAAAAA", "#BBBBBB"))
+
+options(op)  # restore
+```
+
+## ggplot2 scales
+
+`IqrTheme` exposes one scale family per palette class. All scales
+return ready-to-add ggplot2 scale objects.
+
+| Method | Returns | Use when |
+|--------|---------|----------|
+| `scale_fill_iqr()` / `scale_color_iqr()` | `ScaleDiscrete` or `ScaleContinuous` | General discrete or sequential, controlled by `discrete` flag |
+| `scale_fill_sequential()` / `scale_color_sequential()` | `ScaleContinuous` | Continuous non-negative magnitudes |
+| `scale_fill_diverging()` / `scale_color_diverging()` | `ScaleContinuous` | Signed continuous values around a midpoint |
+| `scale_fill_semantic()` / `scale_color_semantic()` | `ScaleDiscrete` | Verdict / status factors (pass / fail / watch) |
+
+### Discrete fill and color
+
+```{r scale-discrete}
+theme <- IqrTheme$new("academic")
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point(size = 3) +
+  theme$theme_iqr() +
+  theme$scale_color_iqr() +
+  labs(title = "Discrete color scale (academic preset)")
+```
+
+### Paired fill and color
+
+By default, `scale_fill_iqr()` and `scale_color_iqr()` use the same
+colors, so a bar's fill and its legend key match exactly. For plots
+where the fill has an outline (bars with `color = ...` mapped to the
+same variable), use `style = "paired"` on **both** scales -- the color
+scale becomes a darkened variant of the fill scale so edges stay
+visible against the fill:
+
+```{r scale-paired}
+theme <- IqrTheme$new("workbench")
+
+ggplot(iris, aes(x = Species, y = Sepal.Length,
+                 fill = Species, color = Species)) +
+  geom_boxplot(linewidth = 0.6, outlier.size = 1.5) +
+  theme$theme_iqr() +
+  theme$scale_fill_iqr(style = "paired") +
+  theme$scale_color_iqr(style = "paired") +
+  labs(title = "Paired fill and outline (workbench preset)")
+```
+
+Using `style = "paired"` on only one of the two scales has no visible
+effect -- the pairing is a coordination contract between the fill and
+color scales.
+
+### Sequential gradient
+
+For continuous non-negative magnitudes such as density, frequency, or
+process capability:
+
+```{r scale-sequential}
+theme <- IqrTheme$new("academic")
+
+ggplot(faithfuld, aes(x = waiting, y = eruptions)) +
+  geom_raster(aes(fill = density)) +
+  theme$theme_iqr() +
+  theme$scale_fill_sequential(name = "Density") +
+  labs(title = "Sequential gradient (density)")
+```
+
+### Diverging gradient
+
+For signed values centered on a neutral midpoint, e.g. residuals from
+a fitted model or standardized effects in a DOE:
+
+```{r scale-diverging}
+theme <- IqrTheme$new("academic")
+
+set.seed(1)
+df <- data.frame(
+  x = seq(-3, 3, length.out = 60),
+  y = seq(-3, 3, length.out = 60)
+)
+df$z <- with(df, sin(x) * cos(y))
+
+ggplot(df, aes(x = x, y = y, fill = z)) +
+  geom_raster() +
+  theme$theme_iqr() +
+  theme$scale_fill_diverging(midpoint = 0, name = "Effect") +
+  labs(title = "Diverging gradient (signed effect)")
+```
+
+### Semantic verdict scale
+
+For categorical outcomes that carry a verdict -- typical in MSA,
+capability, and SPC acceptance charts:
+
+```{r scale-semantic}
+theme <- IqrTheme$new("academic")
+
+verdicts <- data.frame(
+  part = factor(1:6),
+  result = factor(c("pass", "pass", "watch", "fail", "pass", "watch"),
+                  levels = c("pass", "watch", "fail"))
+)
+
+ggplot(verdicts, aes(x = part, y = 1, fill = result)) +
+  geom_col(width = 0.7) +
+  theme$theme_iqr() +
+  theme$scale_fill_semantic(labels = c("pass", "watch", "fail")) +
+  labs(title = "Semantic verdict scale (MSA-style)") +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+```
+
+The labels passed to `scale_fill_semantic()` must be a subset of the
+semantic palette names (`pass`, `fail`, `watch`, `good`, `bad`,
+`neutral`, `green`, `yellow`, `red`).
+
+## Color utility functions
+
+The package exports a small set of dependency-free color utilities so
+downstream packages can derive coordinated shades from the same
+primitives:
+
+```{r color-utils}
+# Lighten / darken a base color
+lighten("#2563EB", 0.2)
+darken("#2563EB", 0.3)
+
+# Linear interpolation between two colors
+mix("#FF0000", "#0000FF", 0.5)
+
+# Luminance checks (WCAG-based)
+is_dark("#000000")
+is_dark("#FFFFFF")
+contrast_ratio("#FFFFFF", "#000000")
+```
+
+These are useful when a plotter needs to derive, for example, a
+lighter ribbon color from the discrete palette without reaching for
+another package.
+
+# Plotter toolbox for downstream packages
+
+The most important architectural piece for downstream package authors
+is `IqrPlotterBase`. It exposes a toolbox of palette accessors and
+scale factories with a leading-dot naming convention (private by
+convention, inheritable via R6). Subclasses call these helpers from
+inside `render()` and never touch `IqrTheme` internals directly.
+
+```{r plotter-toolbox}
+plotter <- IqrPlotterBase$new()
+theme   <- IqrTheme$new("academic")
+
+# Palette accessors
+plotter$.pal_discrete(theme)              # 10 colors
+plotter$.pal_discrete(theme, n = 12L)     # auto-extended to 12
+plotter$.pal_sequential(theme)            # 3-stop gradient
+plotter$.pal_diverging(theme)             # 3 stops
+plotter$.pal_semantic(theme)              # full named vector
+plotter$.pal_semantic(theme, name = "fail")
+
+# Scale factories
+plotter$.scale_fill_discrete(theme)
+plotter$.scale_color_discrete(theme)
+plotter$.scale_fill_sequential(theme)
+plotter$.scale_color_sequential(theme)
+plotter$.scale_fill_diverging(theme)
+plotter$.scale_color_diverging(theme)
+plotter$.scale_fill_semantic(theme, labels = c("pass", "fail"))
+plotter$.scale_color_semantic(theme, labels = c("pass", "fail"))
+
+# Paired fill + color (returns a list of two scales)
+paired <- plotter$.scale_fill_color_paired(theme)
+names(paired)
+```
+
+The benefit is that switching the active theme at the task level is
+enough to recolor every plot consistently -- the plotter code does
+not change.
+
+## Example: a minimal subpackage plotter
+
+The pattern below is what a downstream plotter (e.g. in
+`iQualityR.msa` or `iQualityR.spc`) looks like. It inherits
+`IqrPlotterBase`, calls the toolbox helpers, and stays agnostic of the
+active theme:
+
+```{r minimal-plotter}
+MyPlotter <- R6::R6Class("MyPlotter",
+  inherit = IqrPlotterBase,
+  public = list(
+    render = function(results, theme_obj, type = "full", ...) {
+      ggplot(results$data, aes(x = group, y = value, fill = group)) +
+        geom_col() +
+        theme_obj$theme_iqr() +
+        self$.scale_fill_discrete(theme_obj) +
+        labs(title = results$title)
+    }
+  )
+)
+
+# Simulate an SPC-style result
+spc_results <- list(
+  title = "Operator means (Type 1 study)",
+  data  = data.frame(
+    group = factor(c("Op A", "Op B", "Op C")),
+    value = c(10.02, 10.08, 9.98)
+  )
+)
+
+MyPlotter$new()$render(spc_results, IqrTheme$new("workbench"))
+```
+
+# Typical subpackage application scenarios
+
+This section shows how the four palette classes map onto the standard
+plot families used across the iQualityR subpackages. Every example
+below uses only `iQualityR.core` plus `ggplot2`, so the same patterns
+apply verbatim in `iQualityR.msa`, `iQualityR.spc`, `iQualityR.doe`,
+and `iQualityR.stat`.
+
+## Scenario 1 -- MSA verdict chart (semantic)
+
+Measurement System Analysis produces explicit verdicts (pass / watch /
+fail). Bind them to the semantic palette so a verdict is always the
+same color, regardless of plot type:
+
+```{r scenario-msa}
+theme <- IqrTheme$new("academic")
+
+msa_summary <- data.frame(
+  characteristic = factor(c("Bias", "Linearity", "GRR", "NDC"),
+                          levels = c("Bias", "Linearity", "GRR", "NDC")),
+  verdict = factor(c("pass", "watch", "fail", "fail"),
+                   levels = c("pass", "watch", "fail"))
+)
+
+ggplot(msa_summary, aes(x = characteristic, y = 1, fill = verdict)) +
+  geom_col(width = 0.6) +
+  theme$theme_iqr() +
+  theme$scale_fill_semantic(labels = c("pass", "watch", "fail")) +
+  labs(title = "MSA study verdicts (semantic palette)") +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+        axis.title.y = element_blank())
+```
+
+The same `scale_fill_semantic()` call is reused by capability verdicts
+and SPC stability flags, so a green bar always means the same thing.
+
+## Scenario 2 -- SPC control chart with operators (discrete, paired)
+
+When a control chart is faceted or colored by operator / machine, use
+the discrete palette with `style = "paired"` so the point fill and
+its connecting line stay legible:
+
+```{r scenario-spc}
+theme <- IqrTheme$new("workbench")
+
+set.seed(7)
+spc <- data.frame(
+  run     = rep(1:20, times = 3),
+  value   = c(rnorm(20, 10, 0.3),
+              rnorm(20, 10.1, 0.3),
+              rnorm(20, 9.95, 0.3)),
+  operator = rep(c("A", "B", "C"), each = 20)
+)
+
+ggplot(spc, aes(x = run, y = value,
+                color = operator, fill = operator)) +
+  geom_hline(yintercept = 10, linetype = 2, color = "grey50") +
+  geom_line(linewidth = 0.6) +
+  geom_point(shape = 21, color = "black", size = 2) +
+  theme$theme_iqr() +
+  theme$scale_color_iqr(discrete = TRUE, style = "paired") +
+  theme$scale_fill_iqr(discrete = TRUE, style = "paired") +
+  labs(title = "SPC run chart by operator (discrete, paired)")
+```
+
+## Scenario 3 -- Capability density (sequential)
+
+Process capability histograms overlay a density curve; the density
+fill uses the sequential gradient so the bulk of the distribution
+reads as the deepest color:
+
+```{r scenario-cap}
+theme <- IqrTheme$new("academic")
+
+set.seed(3)
+meas <- rnorm(500, mean = 10, sd = 0.5)
+cap_df <- data.frame(value = meas)
+
+ggplot(cap_df, aes(x = value)) +
+  geom_histogram(aes(y = after_stat(density),
+                     fill = after_stat(count)),
+                 bins = 30, color = "white", linewidth = 0.2) +
+  geom_density(aes(y = after_stat(density)),
+               color = theme$get_pal("discrete")[1],
+               linewidth = 0.8, fill = NA) +
+  theme$theme_iqr() +
+  theme$scale_fill_sequential(name = "Count") +
+  labs(title = "Capability histogram with density (sequential)")
+```
+
+## Scenario 4 -- DOE residuals (diverging)
+
+Residuals from a fitted DOE model are signed; the diverging gradient
+makes the sign and magnitude immediately readable:
+
+```{r scenario-doe}
+theme <- IqrTheme$new("academic")
+
+set.seed(11)
+doe_res <- data.frame(
+  run = 1:24,
+  residual = rnorm(24, 0, 1.2)
+)
+
+ggplot(doe_res, aes(x = run, y = residual, fill = residual)) +
+  geom_col(width = 0.7) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
+  theme$theme_iqr() +
+  theme$scale_fill_diverging(midpoint = 0, name = "Residual") +
+  labs(title = "DOE residuals (diverging palette)")
+```
+
+## Scenario 5 -- DOE main effects with paired outlines (discrete, paired)
+
+Main-effects plots group runs by factor level. The paired style keeps
+the level color consistent across the fill (bar) and the outline /
+point:
+
+```{r scenario-doe-main}
+theme <- IqrTheme$new("tech")
+
+main_eff <- data.frame(
+  level = factor(c("Low", "Center", "High"),
+                 levels = c("Low", "Center", "High")),
+  mean  = c(8.2, 10.1, 11.8)
+)
+
+ggplot(main_eff, aes(x = level, y = mean, fill = level)) +
+  geom_col(color = "black", linewidth = 0.4, width = 0.6) +
+  theme$theme_iqr() +
+  theme$scale_fill_iqr(style = "paired") +
+  labs(title = "DOE main effects (discrete, paired)",
+       x = "Factor level", y = "Mean response")
+```
+
+## Scenario 6 -- Multi-response heatmap (sequential)
+
+When a DOE or capability study reports a continuous response across a
+two-dimensional grid, the sequential gradient gives a single
+perceptually uniform axis:
+
+```{r scenario-heatmap}
+theme <- IqrTheme$new("workbench")
+
+grid <- expand.grid(x = seq(0, 1, 0.05), y = seq(0, 1, 0.05))
+grid$response <- with(grid, 30 + 10 * x - 8 * y + 4 * x * y)
+
+ggplot(grid, aes(x = x, y = y, fill = response)) +
+  geom_raster() +
+  theme$theme_iqr() +
+  theme$scale_fill_sequential(name = "Response") +
+  labs(title = "Response surface heatmap (sequential)")
 ```
 
 # Internationalization
@@ -191,8 +777,23 @@ file.exists(out)
 - All base classes are R6 reference classes. Subclasses typically
   override a small set of private methods (e.g. `.run_logic`) and
   inherit the rest.
-- Dependencies are kept minimal: R6, ggplot2, openxlsx, and rmarkdown
-  are the only heavy imports. Optional packages (`systemfonts`,
-  `sysfonts`, `showtext`) provide on-demand CJK font handling.
+- The theme system follows a three-layer architecture:
+  `ThemeConfig` (palette storage and resolution) -> `PlotTheme`
+  (ggplot2 scale and theme factories) -> `IqrTheme` (unified facade).
+  Downstream code only touches `IqrTheme`.
+- The package ships **ten theme presets**: three built-in
+  (`academic` / `workbench` / `tech`) and seven external
+  (`economist` / `wsj` / `gdocs` / `tufte` / `few` / `solarized` /
+  `prism`). Each preset is a full configuration covering UI colors
+  and all four data palette classes; external presets additionally
+  layer the source publication's ggplot2 theme function on top.
+- `IqrPlotterBase` exposes a private-by-convention toolbox
+  (`.pal_*`, `.scale_*`) so downstream plotters stay decoupled from
+  the theme implementation. Switching the active theme at the task
+  level recolors every plot consistently.
+- Dependencies are kept minimal: R6, ggplot2, grDevices, openxlsx, and
+  rmarkdown are the only heavy imports. Optional packages
+  (`systemfonts`, `sysfonts`, `showtext`, `ggthemes`, `ggprism`)
+  provide on-demand CJK font handling and external theme presets.
 - Result objects are plain lists so they serialize to JSON, Excel,
   or R Markdown without friction.

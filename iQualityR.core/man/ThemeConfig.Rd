@@ -4,8 +4,21 @@
 \alias{ThemeConfig}
 \title{Theme Configuration Class}
 \description{
-Manages built-in ggplot2 themes, color palettes, and UI settings for the iQualityR framework.
-Supports external themes from ggthemes and prism packages.
+Manages built-in ggplot2 themes and four classes of color palettes
+(discrete, sequential, diverging, semantic) for the iQualityR framework.
+Supports external themes from ggthemes and ggprism packages.
+
+Palette types:
+\describe{
+\item{discrete}{Qualitative palette for categorical variables. Auto-extends
+beyond its base length via \code{colorRampPalette} when \code{n} is requested.}
+\item{sequential}{Single-hue or ordered multi-stop palette for continuous
+non-negative magnitudes (heatmaps, contours, density).}
+\item{diverging}{Three-stop palette running from a negative hue through a
+neutral midpoint to a positive hue (correlations, residuals, effects).}
+\item{semantic}{Named colors mapped to domain verdicts (pass / fail /
+watch / good / bad / neutral) and traffic-light roles.}
+}
 }
 \section{Public fields}{
 \if{html}{\out{<div class="r6-fields">}}
@@ -67,6 +80,13 @@ when external packages such as ggthemes or ggprism are installed.
 \if{latex}{\out{\hypertarget{method-ThemeConfig-set_theme}{}}}
 \subsection{Method \code{set_theme()}}{
 Select and configure a theme preset or external theme.
+
+External themes (economist / wsj / gdocs / tufte / few / solarized /
+prism) are now full presets: they carry their own UI colors and
+four-class data palettes, and the external ggplot2 theme function is
+layered on top in \code{theme_iqr()}. When the external package is
+not installed but the preset name is recognized, the preset's color
+configuration is still applied (only the theme function is skipped).
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{ThemeConfig$set_theme(style, ...)}\if{html}{\out{</div>}}
 }
@@ -102,7 +122,7 @@ Retrieve UI configuration.
 \if{html}{\out{<a id="method-ThemeConfig-get_data"></a>}}
 \if{latex}{\out{\hypertarget{method-ThemeConfig-get_data}{}}}
 \subsection{Method \code{get_data()}}{
-Retrieve data palette.
+Retrieve data palette. Legacy alias for \code{get_pal}.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{ThemeConfig$get_data(type = c("discrete", "continuous"), custom = NULL)}\if{html}{\out{</div>}}
 }
@@ -110,7 +130,8 @@ Retrieve data palette.
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{type}}{Character. Either "discrete" or "continuous".}
+\item{\code{type}}{Character. Either "discrete" or "continuous" (legacy alias
+for "sequential").}
 
 \item{\code{custom}}{Optional custom palette to return instead of the preset.}
 }
@@ -122,16 +143,36 @@ Retrieve data palette.
 \if{latex}{\out{\hypertarget{method-ThemeConfig-get_pal}{}}}
 \subsection{Method \code{get_pal()}}{
 Retrieve a color palette.
+
+Resolution order: \code{custom} argument, then \code{options("iqr.custom_<type>")},
+then preset. For \code{type = "discrete"}, the palette is auto-extended to
+\code{n} colors via \code{colorRampPalette} when \code{n} exceeds the
+base length. For \code{type = "semantic"}, a single color or named
+vector is returned depending on \code{name}.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{ThemeConfig$get_pal(type = c("discrete", "continuous"), custom = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{ThemeConfig$get_pal(
+  type = c("discrete", "sequential", "diverging", "semantic", "continuous"),
+  n = NULL,
+  name = NULL,
+  custom = NULL
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{type}}{Character. Either "discrete" or "continuous".}
+\item{\code{type}}{Character. One of "discrete", "sequential", "diverging",
+"semantic", or the legacy alias "continuous" (mapped to "sequential").}
 
-\item{\code{custom}}{Optional custom palette to return instead of the preset.}
+\item{\code{n}}{Integer. Desired length of the discrete palette. Ignored for
+non-discrete types unless explicitly meaningful.}
+
+\item{\code{name}}{Character. For \code{type = "semantic"}, the name of the
+semantic slot (e.g. "pass", "fail", "watch", "good", "bad", "neutral",
+"green", "yellow", "red"). If NULL, the full named vector is returned.}
+
+\item{\code{custom}}{Optional custom palette (vector or list) to return instead
+of the preset.}
 }
 \if{html}{\out{</div>}}
 }

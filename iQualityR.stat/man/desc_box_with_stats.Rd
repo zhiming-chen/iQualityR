@@ -4,12 +4,12 @@
 \alias{desc_box_with_stats}
 \title{Descriptive statistics boxplot (with statistics table)}
 \usage{
-desc_box_with_stats(s, theme = "prism")
+desc_box_with_stats(s, theme = "academic")
 }
 \arguments{
 \item{s}{Result returned by desc_calc}
 
-\item{theme}{Theme (default "prism")}
+\item{theme}{Theme (default "academic")}
 }
 \value{
 ggplot object

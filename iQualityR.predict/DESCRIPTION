@@ -19,7 +19,7 @@ Imports:
     utils,
     iQualityR.core (>= 0.1.0)
 Remotes:
-    YOUR_GITHUB_USER/iQualityR-foundation
+    zhiming-chen/iQualityR/iQualityR.core
 Suggests:
     testthat,
     knitr,

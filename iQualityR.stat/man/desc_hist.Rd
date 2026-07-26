@@ -4,12 +4,12 @@
 \alias{desc_hist}
 \title{Descriptive statistics histogram}
 \usage{
-desc_hist(s, theme = "prism")
+desc_hist(s, theme = "academic")
 }
 \arguments{
 \item{s}{Result returned by desc_calc}
 
-\item{theme}{Theme (default "prism")}
+\item{theme}{Theme (default "academic")}
 }
 \value{
 ggplot object

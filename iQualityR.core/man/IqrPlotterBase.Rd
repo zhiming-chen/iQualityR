@@ -4,12 +4,34 @@
 \alias{IqrPlotterBase}
 \title{iQualityR Plotter Base Class}
 \description{
-Abstract plotter base class. Defines the interface for rendering plots.
+Abstract plotter base class. Defines the interface for rendering plots and
+provides a toolbox of palette / scale accessors that subclasses inherit so
+they do not have to know the internals of \code{IqrTheme}.
+
+Subclasses typically override \code{render()} and call the \code{.pal_*} /
+\code{.scale_*} helpers from within. This keeps downstream plotters
+decoupled from the theme implementation: switching the active theme at the
+task level is enough to recolor every plot consistently.
 }
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
 \item \href{#method-IqrPlotterBase-render}{\code{IqrPlotterBase$render()}}
+\item \href{#method-IqrPlotterBase-.pal_discrete}{\code{IqrPlotterBase$.pal_discrete()}}
+\item \href{#method-IqrPlotterBase-.pal_sequential}{\code{IqrPlotterBase$.pal_sequential()}}
+\item \href{#method-IqrPlotterBase-.pal_diverging}{\code{IqrPlotterBase$.pal_diverging()}}
+\item \href{#method-IqrPlotterBase-.pal_semantic}{\code{IqrPlotterBase$.pal_semantic()}}
+\item \href{#method-IqrPlotterBase-.pal_ui}{\code{IqrPlotterBase$.pal_ui()}}
+\item \href{#method-IqrPlotterBase-.contrast_text}{\code{IqrPlotterBase$.contrast_text()}}
+\item \href{#method-IqrPlotterBase-.scale_fill_discrete}{\code{IqrPlotterBase$.scale_fill_discrete()}}
+\item \href{#method-IqrPlotterBase-.scale_color_discrete}{\code{IqrPlotterBase$.scale_color_discrete()}}
+\item \href{#method-IqrPlotterBase-.scale_fill_color_paired}{\code{IqrPlotterBase$.scale_fill_color_paired()}}
+\item \href{#method-IqrPlotterBase-.scale_fill_sequential}{\code{IqrPlotterBase$.scale_fill_sequential()}}
+\item \href{#method-IqrPlotterBase-.scale_color_sequential}{\code{IqrPlotterBase$.scale_color_sequential()}}
+\item \href{#method-IqrPlotterBase-.scale_fill_diverging}{\code{IqrPlotterBase$.scale_fill_diverging()}}
+\item \href{#method-IqrPlotterBase-.scale_color_diverging}{\code{IqrPlotterBase$.scale_color_diverging()}}
+\item \href{#method-IqrPlotterBase-.scale_fill_semantic}{\code{IqrPlotterBase$.scale_fill_semantic()}}
+\item \href{#method-IqrPlotterBase-.scale_color_semantic}{\code{IqrPlotterBase$.scale_color_semantic()}}
 \item \href{#method-IqrPlotterBase-clone}{\code{IqrPlotterBase$clone()}}
 }
 }
@@ -32,6 +54,311 @@ Render plot (virtual method, must be implemented by subclass).
 \item{\code{type}}{Character. Plot type selector, default "full".}
 
 \item{\code{...}}{Additional parameters passed to subclass implementations.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.pal_discrete"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.pal_discrete}{}}}
+\subsection{Method \code{.pal_discrete()}}{
+Return the discrete palette, auto-extended to \code{n}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.pal_discrete(theme_obj, n = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{n}}{Integer. Desired length. If greater than the base length, the
+palette is interpolated via \code{colorRampPalette}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.pal_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.pal_sequential}{}}}
+\subsection{Method \code{.pal_sequential()}}{
+Return the sequential palette (3-stop gradient).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.pal_sequential(theme_obj)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.pal_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.pal_diverging}{}}}
+\subsection{Method \code{.pal_diverging()}}{
+Return the diverging palette (3 stops: low / mid / high).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.pal_diverging(theme_obj)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.pal_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.pal_semantic}{}}}
+\subsection{Method \code{.pal_semantic()}}{
+Return semantic color(s).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.pal_semantic(theme_obj, name = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{name}}{Optional character. If supplied, return a single color by
+name (e.g. "pass", "fail", "watch"). If NULL, return the full named
+vector.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.pal_ui"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.pal_ui}{}}}
+\subsection{Method \code{.pal_ui()}}{
+Return a UI color by name (primary / success / warning /
+danger / muted / ...). Falls back to \code{default} when the slot
+is missing.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.pal_ui(theme_obj, name, default = "#888888")}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{name}}{Character. UI slot name (e.g. "primary", "danger").}
+
+\item{\code{default}}{Character. Fallback hex color when the slot is absent.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.contrast_text"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.contrast_text}{}}}
+\subsection{Method \code{.contrast_text()}}{
+Pick a readable text color (black or white) for a given
+background color, using WCAG luminance. Promoted from the legacy
+\code{get_contrast_color()} local helper so all subpackages share
+one implementation.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.contrast_text(bg)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{bg}}{Character. Background hex color (e.g. "#1F77B4").}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Character. "#000000" or "#FFFFFF".
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_fill_discrete"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_fill_discrete}{}}}
+\subsection{Method \code{.scale_fill_discrete()}}{
+Build a discrete fill scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_fill_discrete(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_fill_iqr()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_color_discrete"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_color_discrete}{}}}
+\subsection{Method \code{.scale_color_discrete()}}{
+Build a discrete color scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_color_discrete(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_color_iqr()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_fill_color_paired"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_fill_color_paired}{}}}
+\subsection{Method \code{.scale_fill_color_paired()}}{
+Build a discrete fill + color pair, where the color is a
+darkened variant of the fill so edges remain visible (boxplots, bars).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_fill_color_paired(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_*_iqr(style = "paired")}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_fill_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_fill_sequential}{}}}
+\subsection{Method \code{.scale_fill_sequential()}}{
+Build a sequential fill gradient.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_fill_sequential(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_fill_sequential()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_color_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_color_sequential}{}}}
+\subsection{Method \code{.scale_color_sequential()}}{
+Build a sequential color gradient.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_color_sequential(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_color_sequential()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_fill_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_fill_diverging}{}}}
+\subsection{Method \code{.scale_fill_diverging()}}{
+Build a diverging fill gradient.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_fill_diverging(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_fill_diverging()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_color_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_color_diverging}{}}}
+\subsection{Method \code{.scale_color_diverging()}}{
+Build a diverging color gradient.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_color_diverging(theme_obj, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_color_diverging()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_fill_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_fill_semantic}{}}}
+\subsection{Method \code{.scale_fill_semantic()}}{
+Build a semantic fill scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_fill_semantic(
+  theme_obj,
+  labels = c("pass", "fail", "watch"),
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{labels}}{Character vector of semantic names.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_fill_semantic()}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-IqrPlotterBase-.scale_color_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-IqrPlotterBase-.scale_color_semantic}{}}}
+\subsection{Method \code{.scale_color_semantic()}}{
+Build a semantic color scale.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{IqrPlotterBase$.scale_color_semantic(
+  theme_obj,
+  labels = c("pass", "fail", "watch"),
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{labels}}{Character vector of semantic names.}
+
+\item{\code{...}}{Passed to \code{PlotTheme$scale_color_semantic()}.}
 }
 \if{html}{\out{</div>}}
 }

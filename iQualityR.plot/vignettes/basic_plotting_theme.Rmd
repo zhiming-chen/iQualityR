@@ -79,18 +79,30 @@ getOption("iqr.default_theme", "Not set")
 options(iqr.default_theme = "academic")
 ```
 
-### Theme Fallback Mechanism
+### Theme Error Behavior
 
-If the specified theme is unavailable, the system automatically falls back to `theme_minimal()`:
+If the specified theme is not recognized, `as_iqr_theme()` raises an
+error listing all valid theme names. There is **no silent fallback to
+`theme_minimal()`** -- this is intentional, so that typos or missing
+external packages surface immediately rather than producing visually
+inconsistent plots.
 
-```{r fallback_demo, eval=FALSE}
-# If IqrTheme is unavailable, it will fall back to theme_minimal()
-p <- ggplot(mtcars, aes(x = hp, y = mpg)) +
-  geom_point() +
-  as_iqr_theme("nonexistent_theme")  # Will issue a warning and use theme_minimal()
-
-# throw out a error message,we need give a right style, can not fallback to theme_minimal()
+```{r fallback_demo, error = TRUE}
+# An unknown theme name raises an error:
+tryCatch(
+  as_iqr_theme("nonexistent_theme"),
+  error = function(e) cat("Error:", conditionMessage(e), "\n")
+)
 ```
+
+For a robustness-oriented fallback, wrap the call yourself:
+
+```{r fallback_safe, eval = FALSE}
+safe_theme <- function(style) {
+  tryCatch(as_iqr_theme(style), error = function(e) as_iqr_theme("academic"))
+}
+```
+
 
 ## Base Plotting: base_plot()
 
@@ -283,12 +295,124 @@ p1 <- base_plot(data1, aes(x, y), theme = report_theme) + ...
 p2 <- base_plot(data2, aes(a, b), theme = report_theme) + ...
 ```
 
+## The IqrPlotterBase Toolbox (Unified Color Pipeline)
+
+Behind every `plot_*` function in this package is a shared
+`IqrPlotterBase` instance (an internal singleton) that routes all color
+decisions through the active theme. This means:
+
+- **No hardcoded colors** in plot functions -- every color comes from
+  the active `IqrTheme` preset's four-class palette system.
+- **One theme switch recolors everything** -- calling
+  `options(iqr.default_theme = "prism")` (or passing `theme = "prism"`
+  to any `plot_*` function) updates bar fills, line colors, reference
+  lines, reject regions, and significance markers consistently.
+- **The four palette classes** (discrete / sequential / diverging /
+  semantic) are matched to the right visual job automatically:
+  - categorical variables -> discrete
+  - continuous magnitudes (density, count) -> sequential
+  - signed values (correlations, residuals) -> diverging
+  - verdict status (pass / fail / watch, significant / not) -> semantic
+
+### How plot functions pick colors
+
+Internally, each `plot_*` function does roughly this:
+
+```{r toolbox_intro, eval = FALSE}
+# 1. Resolve the theme spec (string / function / IqrTheme) to an IqrTheme object
+theme_obj <- as_iqr_theme_object(theme)
+
+# 2. Pull colors or ready-to-add ggplot2 scales from the toolbox:
+.iqr_plotter$.pal_discrete(theme_obj)[1]              # first categorical color
+.iqr_plotter$.pal_semantic(theme_obj, "fail")         # red, for reject regions
+.iqr_plotter$.pal_ui(theme_obj, "primary")            # primary UI accent
+.iqr_plotter$.scale_fill_discrete(theme_obj)          # full discrete fill scale
+.iqr_plotter$.scale_fill_diverging(theme_obj)         # 3-stop diverging gradient
+.iqr_plotter$.contrast_text("#014D64")                # readable text on a bg
+```
+
+`.iqr_plotter` is the package-internal `IqrPlotterBase` instance. You
+do not normally touch it directly -- but it is the reason every `plot_*`
+function looks visually consistent with every other.
+
+### Worked example: theme switch recolors everything
+
+The same plot, three different themes:
+
+```{r toolbox_recolor, fig.show = "hold", out.width = "33%"}
+df <- data.frame(category = c("A", "B", "C", "D"),
+                 count = c(40, 30, 20, 10))
+
+for (style in c("academic", "economist", "prism")) {
+  print(
+    plot_pareto_enhanced(df, category_col = "category",
+                         count_col = "count", theme = style) +
+      labs(title = paste0("theme = '", style, "'"))
+  )
+}
+```
+
+Notice how the bar color, the cumulative line color, and the overall
+frame change together -- nothing is hardcoded.
+
+### Semantic colors for verdicts
+
+Tests and quality checks use the semantic palette so that "pass / fail
+/ watch" always means the same thing visually, regardless of the active
+theme:
+
+```{r toolbox_semantic}
+# A small hypothesis test plot -- the reject region and statistic marker
+# pull their colors from the active theme's semantic palette.
+set.seed(1)
+x <- rnorm(30, mean = 5.2)
+
+p_academic <- plot_hypothesis_box(x, mu = 5, theme = "academic") +
+  labs(title = "academic: green pass / red fail")
+p_prism     <- plot_hypothesis_box(x, mu = 5, theme = "prism") +
+  labs(title = "prism: theme-specific pass / fail")
+
+print(p_academic)
+print(p_prism)
+```
+
+### Color contrast for annotations
+
+The toolbox also provides `.contrast_text(bg)`, which returns black or
+white text for a given background. This is used internally by
+`plot_turtle_diagram` to keep node labels readable on any fill color,
+and is available to your own plotting code via the same toolbox.
+
+### Summary of the toolbox API
+
+If you build your own plotting functions on top of `iQualityR.plot`,
+you can use the same toolbox. Obtain the internal plotter with
+`iQualityR.plot:::.iqr_plotter` (or instantiate your own
+`IqrPlotterBase$new()` from `iQualityR.core`):
+
+| Method | Returns | Typical use |
+|--------|---------|-------------|
+| `.pal_discrete(theme_obj, n)` | character vector | Categorical fills / colors |
+| `.pal_sequential(theme_obj)` | 3-stop vector | Continuous >= 0 fills |
+| `.pal_diverging(theme_obj)` | 3-stop vector | Signed continuous fills |
+| `.pal_semantic(theme_obj, name)` | single color or named vector | pass / fail / watch |
+| `.pal_ui(theme_obj, name)` | single color | primary / danger / muted / ... |
+| `.scale_fill_discrete(theme_obj)` | ScaleDiscrete | Bar / box fills |
+| `.scale_color_discrete(theme_obj)` | ScaleDiscrete | Line / point colors |
+| `.scale_fill_sequential(theme_obj)` | ScaleContinuous | Density / heatmap |
+| `.scale_fill_diverging(theme_obj)` | ScaleContinuous | Correlation / residuals |
+| `.scale_fill_semantic(theme_obj, labels)` | ScaleDiscrete | Verdict coloring |
+| `.scale_fill_color_paired(theme_obj)` | list(fill, color) | Boxplots needing visible edges |
+| `.contrast_text(bg)` | "#000000" or "#FFFFFF" | Label color on a fill |
+
+
 ## Summary
 
 - `as_iqr_theme()` provides a flexible theme conversion mechanism, supporting multiple input types
 - `base_plot()` is the unified entry point of the iQualityR plotting system, ensuring theme consistency
 - Through theme functions and objects, you can easily create and reuse custom themes
 - It is recommended to set a default theme at the start of a project to ensure consistent style across all plots
+- Internally, every `plot_*` function routes colors through a shared `IqrPlotterBase` toolbox, so switching the active theme recolors all plots consistently
 
 ## Further Reading
 

@@ -31,6 +31,9 @@ Imports:
     reshape2,
     rlang,
     utils
+Remotes:
+    zhiming-chen/iQualityR/iQualityR.core,
+    zhiming-chen/iQualityR/iQualityR.stat
 Suggests:
     testthat,
     knitr,

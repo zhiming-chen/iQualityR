@@ -5,6 +5,19 @@
 \title{Plot Theme Class}
 \description{
 Provides ggplot2 scales and theme components based on a ThemeConfig object.
+
+Scales cover four palette types:
+\itemize{
+\item \code{scale_fill_iqr} / \code{scale_color_iqr} -- discrete or
+sequential, controlled by \code{discrete} flag. Supports the \code{style}
+argument ("same" or "paired") to derive a coordinated fill/color pair.
+\item \code{scale_fill_sequential} / \code{scale_color_sequential} --
+multi-stop sequential gradient for continuous magnitudes.
+\item \code{scale_fill_diverging} / \code{scale_color_diverging} --
+three-stop diverging gradient for signed values.
+\item \code{scale_fill_semantic} / \code{scale_color_semantic} --
+discrete scale bound to the theme's semantic palette (pass / fail / etc.).
+}
 }
 \section{Public fields}{
 \if{html}{\out{<div class="r6-fields">}}
@@ -19,6 +32,12 @@ Provides ggplot2 scales and theme components based on a ThemeConfig object.
 \item \href{#method-PlotTheme-new}{\code{PlotTheme$new()}}
 \item \href{#method-PlotTheme-scale_fill_iqr}{\code{PlotTheme$scale_fill_iqr()}}
 \item \href{#method-PlotTheme-scale_color_iqr}{\code{PlotTheme$scale_color_iqr()}}
+\item \href{#method-PlotTheme-scale_fill_sequential}{\code{PlotTheme$scale_fill_sequential()}}
+\item \href{#method-PlotTheme-scale_color_sequential}{\code{PlotTheme$scale_color_sequential()}}
+\item \href{#method-PlotTheme-scale_fill_diverging}{\code{PlotTheme$scale_fill_diverging()}}
+\item \href{#method-PlotTheme-scale_color_diverging}{\code{PlotTheme$scale_color_diverging()}}
+\item \href{#method-PlotTheme-scale_fill_semantic}{\code{PlotTheme$scale_fill_semantic()}}
+\item \href{#method-PlotTheme-scale_color_semantic}{\code{PlotTheme$scale_color_semantic()}}
 \item \href{#method-PlotTheme-theme_iqr}{\code{PlotTheme$theme_iqr()}}
 \item \href{#method-PlotTheme-clone}{\code{PlotTheme$clone()}}
 }
@@ -44,17 +63,35 @@ Create a PlotTheme from a ThemeConfig.
 \if{html}{\out{<a id="method-PlotTheme-scale_fill_iqr"></a>}}
 \if{latex}{\out{\hypertarget{method-PlotTheme-scale_fill_iqr}{}}}
 \subsection{Method \code{scale_fill_iqr()}}{
-Build a ggplot2 discrete or continuous fill scale.
+Build a ggplot2 discrete or sequential fill scale.
+
+When \code{discrete = TRUE} and \code{style = "paired"}, the fill
+uses the discrete palette and the matching color scale uses a darkened
+variant of each fill color, so that bar / boxplot edges remain visible.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_fill_iqr(discrete = TRUE, values = NULL, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_fill_iqr(
+  discrete = TRUE,
+  values = NULL,
+  style = c("same", "paired"),
+  n = NULL,
+  ...
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{discrete}}{Logical. If TRUE, discrete; if FALSE, continuous.}
+\item{\code{discrete}}{Logical. If TRUE, use the discrete palette; if FALSE,
+use the sequential palette as a gradient.}
 
-\item{\code{values}}{Optional custom color vector.}
+\item{\code{values}}{Optional custom color vector overriding the preset.}
+
+\item{\code{style}}{Character. Either "same" (default, backward compatible) or
+"paired" (fill and color are coordinated, requires adding both
+\code{scale_fill_iqr} and \code{scale_color_iqr} with the same style).}
+
+\item{\code{n}}{Integer. Desired length of the discrete palette. Auto-extends
+via \code{colorRampPalette} when greater than the base length.}
 
 \item{\code{...}}{Additional arguments forwarded to the underlying scale.}
 }
@@ -65,19 +102,178 @@ Build a ggplot2 discrete or continuous fill scale.
 \if{html}{\out{<a id="method-PlotTheme-scale_color_iqr"></a>}}
 \if{latex}{\out{\hypertarget{method-PlotTheme-scale_color_iqr}{}}}
 \subsection{Method \code{scale_color_iqr()}}{
-Build a ggplot2 discrete or continuous color scale.
+Build a ggplot2 discrete or sequential color scale.
+
+When \code{style = "paired"}, the color uses a darkened variant of
+the discrete fill palette, so it visually pairs with
+\code{scale_fill_iqr(style = "paired")}.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_color_iqr(discrete = TRUE, values = NULL, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_color_iqr(
+  discrete = TRUE,
+  values = NULL,
+  style = c("same", "paired"),
+  n = NULL,
+  ...
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{discrete}}{Logical. If TRUE, discrete; if FALSE, continuous.}
+\item{\code{discrete}}{Logical. If TRUE, use the discrete palette; if FALSE,
+use the sequential palette as a gradient.}
 
-\item{\code{values}}{Optional custom color vector.}
+\item{\code{values}}{Optional custom color vector overriding the preset.}
+
+\item{\code{style}}{Character. Either "same" (default) or "paired".}
+
+\item{\code{n}}{Integer. Desired length of the discrete palette.}
 
 \item{\code{...}}{Additional arguments forwarded to the underlying scale.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-PlotTheme-scale_fill_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-PlotTheme-scale_fill_sequential}{}}}
+\subsection{Method \code{scale_fill_sequential()}}{
+Build a sequential fill gradient for continuous magnitudes.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_fill_sequential(name = ggplot2::waiver(), reverse = FALSE, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{name}}{Character. Optional scale title.}
+
+\item{\code{reverse}}{Logical. If TRUE, reverse the palette direction.}
+
+\item{\code{...}}{Additional arguments forwarded to \code{scale_fill_gradientn}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-PlotTheme-scale_color_sequential"></a>}}
+\if{latex}{\out{\hypertarget{method-PlotTheme-scale_color_sequential}{}}}
+\subsection{Method \code{scale_color_sequential()}}{
+Build a sequential color gradient for continuous magnitudes.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_color_sequential(
+  name = ggplot2::waiver(),
+  reverse = FALSE,
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{name}}{Character. Optional scale title.}
+
+\item{\code{reverse}}{Logical. If TRUE, reverse the palette direction.}
+
+\item{\code{...}}{Additional arguments forwarded to \code{scale_color_gradientn}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-PlotTheme-scale_fill_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-PlotTheme-scale_fill_diverging}{}}}
+\subsection{Method \code{scale_fill_diverging()}}{
+Build a diverging fill gradient for signed continuous values.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_fill_diverging(name = ggplot2::waiver(), midpoint = 0, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{name}}{Character. Optional scale title.}
+
+\item{\code{midpoint}}{Numeric. The value mapped to the palette midpoint
+(default 0).}
+
+\item{\code{...}}{Additional arguments forwarded to \code{scale_fill_gradient2}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-PlotTheme-scale_color_diverging"></a>}}
+\if{latex}{\out{\hypertarget{method-PlotTheme-scale_color_diverging}{}}}
+\subsection{Method \code{scale_color_diverging()}}{
+Build a diverging color gradient for signed continuous values.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_color_diverging(name = ggplot2::waiver(), midpoint = 0, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{name}}{Character. Optional scale title.}
+
+\item{\code{midpoint}}{Numeric. The value mapped to the palette midpoint
+(default 0).}
+
+\item{\code{...}}{Additional arguments forwarded to \code{scale_color_gradient2}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-PlotTheme-scale_fill_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-PlotTheme-scale_fill_semantic}{}}}
+\subsection{Method \code{scale_fill_semantic()}}{
+Build a discrete fill scale bound to the semantic palette.
+
+Maps factor levels to semantic colors (pass / fail / watch / etc.).
+Pass \code{labels} to control level order and labelling.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_fill_semantic(
+  labels = c("pass", "fail", "watch"),
+  name = ggplot2::waiver(),
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{labels}}{Character vector of semantic names to use, in order. Must
+be a subset of names in the semantic palette. Default \code{c("pass", "fail", "watch")}.}
+
+\item{\code{name}}{Character. Optional scale title.}
+
+\item{\code{...}}{Additional arguments forwarded to \code{scale_fill_manual}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-PlotTheme-scale_color_semantic"></a>}}
+\if{latex}{\out{\hypertarget{method-PlotTheme-scale_color_semantic}{}}}
+\subsection{Method \code{scale_color_semantic()}}{
+Build a discrete color scale bound to the semantic palette.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{PlotTheme$scale_color_semantic(
+  labels = c("pass", "fail", "watch"),
+  name = ggplot2::waiver(),
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{labels}}{Character vector of semantic names to use, in order.}
+
+\item{\code{name}}{Character. Optional scale title.}
+
+\item{\code{...}}{Additional arguments forwarded to \code{scale_color_manual}.}
 }
 \if{html}{\out{</div>}}
 }

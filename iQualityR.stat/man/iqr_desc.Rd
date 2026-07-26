@@ -10,7 +10,7 @@ iqr_desc(
   conf = 0.95,
   plot = FALSE,
   report = FALSE,
-  theme = "prism"
+  theme = "academic"
 )
 }
 \arguments{
@@ -24,7 +24,7 @@ iqr_desc(
 
 \item{report}{Whether to generate report}
 
-\item{theme}{Theme}
+\item{theme}{Theme (default "academic")}
 }
 \value{
 Invisibly returns results list, or outputs plots and report simultaneously
