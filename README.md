@@ -1,91 +1,99 @@
 # iQualityR
 
-> R 语言集成质量工程框架
+> Integrated Quality Engineering Framework for R
 
-`iQualityR` 是一个元包（meta-package），整合了九个协同工作的 R 子包，
-覆盖质量工程的完整工作流：核心基础设施、统计基础、可视化、测量系统
-分析、过程能力、实验设计、抽样方案、可靠性分析以及预测质量建模。
+[English](README.md) | [中文](README.zh-CN.md)
 
-加载 `iQualityR` 会自动 attach 全部成员包，使其 API 立即可用，遵循
-tidyverse 的约定。
+`iQualityR` is a meta-package that bundles nine cooperating R packages covering
+the full quality engineering workflow: core infrastructure, statistical
+foundations, visualization, measurement system analysis, process capability,
+design of experiments, sampling plans, reliability analysis, and predictive
+quality modeling.
 
-## 仓库结构
+Loading `iQualityR` attaches every member package so their APIs are immediately
+available, mirroring the tidyverse convention.
 
-本仓库为 **Monorepo**：每个成员包是仓库根目录下的一个独立文件夹，
-元包 `iQualityR/` 将它们串联起来。
+## Repository layout
+
+This is a **monorepo**: every member package lives as a top-level folder, and
+the meta-package `iQualityR/` ties them together.
 
 ```
-iQualityR/                  # 元包：一次性安装/加载全部成员包
-iQualityR.core/             # R6 基类、主题系统、i18n、工具函数
-iQualityR.plot/             # ggplot2 图层、帕累托图、鱼骨图、乌龟图、方差分析图
-iQualityR.stat/             # 描述统计、假设检验、分布拟合、SPC 规则
-iQualityR.msa/              # Type 1、线性、量具 R&R（交叉/嵌套）、属性一致性
-iQualityR.capa/             # 正态/非正态/非参数过程能力分析
-iQualityR.doe/              # 因子设计、RSM、田口、贝叶斯优化、时间效应建模
-iQualityR.sampling/         # 单次/二次/多次抽样方案、OC 曲线、ASN
-iQualityR.reliability/      # Kaplan-Meier、Cox 模型、参数可靠性
-iQualityR.predict/          # 机器学习建模、诊断、可解释性（SHAP）
-iQualityR.spc/              # Shewhart、时间加权、多元、稀有事件、ML 增强控制图
+iQualityR/                  # Meta-package: install/load all members at once
+iQualityR.core/             # R6 base classes, theme system, i18n, utilities
+iQualityR.plot/             # ggplot2 layers, Pareto, fishbone, turtle, ANOVA plots
+iQualityR.stat/             # Descriptive stats, hypothesis tests, distributions, SPC rules
+iQualityR.msa/              # Type 1, Linearity, Gage R&R (crossed/nested), attribute agreement
+iQualityR.capa/             # Normal / non-normal / nonparametric capability analysis
+iQualityR.doe/              # Factorial, RSM, Taguchi, Bayesian optimization, time-effect modeling
+iQualityR.sampling/         # Single / double / multiple sampling plans, OC curves, ASN
+iQualityR.reliability/      # Kaplan-Meier, Cox model, parametric reliability
+iQualityR.predict/          # ML model training, diagnostics, explainability (SHAP)
+iQualityR.spc/              # Shewhart, time-weighted, multivariate, rare-event, ML-enhanced charts
 ```
 
-## 环境要求
+## Requirements
 
 - R >= 4.1.0
-- 源码包编译工具链（Windows 需 Rtools；Linux/macOS 需 gcc/clang）
-- 各子包 `DESCRIPTION` 中声明的 CRAN 依赖
+- System toolchain for source packages (Rtools on Windows; gcc/clang on Linux/macOS)
+- CRAN dependencies declared in each package's `DESCRIPTION`
 
-## 安装方式
+## Installation
 
-由于成员包之间存在相互依赖，推荐通过元包安装，这样依赖顺序会自动
-解析。`iQualityR/DESCRIPTION` 的 `Remotes:` 字段已将
-`remotes::install_github()` 指向本仓库中各成员包对应的子目录。
+Because the member packages depend on each other, install them through the
+meta-package so the dependency order is resolved automatically. The
+`Remotes:` field in `iQualityR/DESCRIPTION` points `remotes::install_github()`
+at the correct subdirectory of this repository for each member.
 
 ```r
 # install.packages("remotes")
 remotes::install_github(
   "zhiming-chen/iQualityR",
-  subdir = "iQualityR"        # 元包所在子目录
+  subdir = "iQualityR"        # the meta-package folder
 )
 ```
 
-此命令会：
+This single call will:
 
-1. 根据 `Remotes:` 字段从对应子目录拉取每个成员包
-   （如 `iQualityR.core`、`iQualityR.stat` 等）。
-2. 按依赖顺序构建并安装。
-3. 最后安装元包 `iQualityR` 本身。
+1. Fetch every member package from its `subdir` (e.g. `iQualityR.core`,
+   `iQualityR.stat`, ...) thanks to the `Remotes:` field.
+2. Build and install them in dependency order.
+3. Install the meta-package `iQualityR` itself.
 
-安装完成后：
+After installation:
 
 ```r
 library(iQualityR)
-iQualityR_packages()   # 列出已 attach 的成员包及其版本
+iQualityR_packages()   # list attached member packages and versions
 ```
 
-### 单独安装某个成员包
+### Installing individual member packages
 
-如果只需要某一个成员包，可直接指定其 `subdir`：
+If you only need one member package, install it directly by specifying its
+`subdir`:
 
 ```r
 remotes::install_github("zhiming-chen/iQualityR", subdir = "iQualityR.msa")
 ```
 
-注意：每个成员包已在其 `DESCRIPTION` 中声明对其他 `iQualityR.*` 包的
-依赖，因此 `remotes` / `pak` 会自动拉取所需的兄弟包。
+Note: every member package already declares its `iQualityR.*` dependencies in
+its own `DESCRIPTION`, so `remotes` / `pak` will pull the required siblings
+automatically.
 
-## 使用说明
+## Usage
 
-各成员包导出各自的 API，详情参见包级帮助和 vignette：
+Each member package exports its own API. See the package-level help and
+vignettes for details:
 
 ```r
 help(package = "iQualityR.msa")
 vignette(package = "iQualityR.doe")
 ```
 
-## 许可证
+## License
 
-MIT + file LICENSE，详见各子包目录下的 `LICENSE` 文件。
+MIT + file LICENSE. See `LICENSE` in each package folder.
 
-## 作者
+## Author
 
 Zhiming Chen <zhimingc383@gmail.com>
