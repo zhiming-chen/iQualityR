@@ -1,0 +1,335 @@
+---
+title: "DOE Experiment Design Report"
+subtitle: "`r params$plan$design_type` design"
+date: "`r params$report_date`"
+output:
+  html_document:
+    theme: readable
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    number_sections: true
+params:
+  results: NULL
+  plan: NULL
+  report_date: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = "center"
+)
+
+results <- params$results
+plan <- params$plan
+pkg_version <- tryCatch(
+  as.character(utils::packageVersion("iQualityR.doe")),
+  error = function(e) "unknown"
+)
+```
+
+---
+
+## 1. Experiment Overview
+
+### 1.1 Basic Information
+
+| Item | Value |
+|------|-------|
+| **Design type** | `r plan$design_type` |
+| **Number of factors** | `r length(plan$factors)` |
+| **Replications** | `r plan$replication` |
+| **Center points** | `r plan$center_points` |
+| **Total runs** | `r if (!is.null(results$design_info)) nrow(results$design_info) else "N/A"` |
+| **Resolution** | `r if (!is.null(plan$resolution)) plan$resolution else "N/A"` |
+| **Randomized** | `r if (plan$randomize) "Yes" else "No"` |
+
+### 1.2 Factor Configuration
+
+```{r factor-config}
+factor_df <- do.call(rbind, lapply(plan$factors, function(f) {
+  data.frame(
+    Factor = f$name,
+    Type = if (f$type == "continuous") "Continuous" else "Categorical",
+    N_Levels = length(f$levels),
+    Levels = paste(f$levels, collapse = ", "),
+    stringsAsFactors = FALSE
+  )
+}))
+
+knitr::kable(factor_df, caption = "Factor configuration", align = "c")
+```
+
+---
+
+## 2. Design Table
+
+### 2.1 Experiment Plan
+
+```{r design-table}
+if (!is.null(results$design_info)) {
+  design_display <- results$design_info
+  # Show at most the first 20 rows to avoid an overly long table.
+  if (nrow(design_display) > 20) {
+    knitr::kable(head(design_display, 20), caption = "Design table (first 20 rows)")
+    cat(sprintf("\n... %d runs in total", nrow(design_display)))
+  } else {
+    knitr::kable(design_display, caption = "Design table")
+  }
+}
+```
+
+---
+
+## 3. Analysis of Variance
+
+### 3.1 ANOVA Table
+
+```{r anova-results}
+if (!is.null(results$anova_results) && length(results$anova_results) > 0) {
+  for (response_name in names(results$anova_results)) {
+    cat(sprintf("\n### Response variable: %s\n\n", response_name))
+
+    anova_res <- results$anova_results[[response_name]]
+
+    if (!is.null(anova_res$anova)) {
+      anova_df <- as.data.frame(anova_res$anova)
+      anova_df$Term <- rownames(anova_df)
+      anova_df <- anova_df[, c("Term", "Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)")]
+
+      knitr::kable(anova_df,
+                   caption = sprintf("ANOVA table for %s", response_name),
+                   digits = 4, align = "c")
+
+      # Significance assessment.
+      significant <- anova_df[!is.na(anova_df$`Pr(>F)`) & anova_df$`Pr(>F)` < 0.05, ]
+      if (nrow(significant) > 0) {
+        cat(sprintf("\n**Significant factors (alpha = 0.05)**: %s\n",
+                    paste(significant$Term, collapse = ", ")))
+      } else {
+        cat("\n**No significant factors** (alpha = 0.05)\n")
+      }
+    }
+  }
+} else {
+  cat("No response data provided; analysis of variance skipped.")
+}
+```
+
+### 3.2 Model Fit Statistics
+
+```{r model-fit}
+if (!is.null(results$anova_results) && length(results$anova_results) > 0) {
+  for (response_name in names(results$anova_results)) {
+    fit <- results$anova_results[[response_name]]$model_fit
+
+    if (!is.null(fit)) {
+      cat(sprintf("\n#### %s\n\n", response_name))
+
+      fit_df <- data.frame(
+        Statistic = c("R-squared", "Adjusted R-squared", "Lack-of-fit p-value"),
+        Value = c(
+          sprintf("%.4f", fit$r_squared),
+          sprintf("%.4f", fit$adj_r_squared),
+          if (is.na(fit$lack_of_fit_p)) "N/A" else sprintf("%.4f", fit$lack_of_fit_p)
+        ),
+        stringsAsFactors = FALSE
+      )
+
+      knitr::kable(fit_df, align = "c")
+    }
+  }
+}
+```
+
+---
+
+## 4. Effect Estimates
+
+### 4.1 Main Effects
+
+```{r main-effects}
+if (!is.null(results$anova_results)) {
+  for (response_name in names(results$anova_results)) {
+    effects <- results$anova_results[[response_name]]$effects
+
+    if (!is.null(effects$main) && length(effects$main) > 0) {
+      cat(sprintf("\n#### %s\n\n", response_name))
+
+      effects_df <- data.frame(
+        Factor = names(effects$main),
+        Effect = unlist(effects$main),
+        stringsAsFactors = FALSE
+      )
+
+      # Sort by absolute effect size.
+      effects_df <- effects_df[order(abs(effects_df$Effect), decreasing = TRUE), ]
+
+      knitr::kable(effects_df, digits = 4, align = "c",
+                   caption = sprintf("Main effect estimates for %s", response_name))
+    }
+  }
+}
+```
+
+### 4.2 Interaction Effects
+
+```{r interaction-effects}
+if (!is.null(results$anova_results)) {
+  for (response_name in names(results$anova_results)) {
+    effects <- results$anova_results[[response_name]]$effects
+
+    if (!is.null(effects$interaction) && length(effects$interaction) > 0) {
+      cat(sprintf("\n#### %s\n\n", response_name))
+
+      int_df <- data.frame(
+        Interaction = names(effects$interaction),
+        Effect = unlist(effects$interaction),
+        stringsAsFactors = FALSE
+      )
+
+      int_df <- int_df[order(abs(int_df$Effect), decreasing = TRUE), ]
+
+      knitr::kable(int_df, digits = 4, align = "c",
+                   caption = sprintf("Interaction effect estimates for %s", response_name))
+    }
+  }
+}
+```
+
+---
+
+## 5. Graphical Analysis
+
+### 5.1 Main Effects Plot
+
+*The main effects plot shows the average influence of each factor on the response variable.*
+
+```{r main-effects-plot, fig.width=9, fig.height=5}
+if (!is.null(results$effects) && !is.null(results$effects$main) &&
+    length(results$effects$main) > 0) {
+  effects_data <- data.frame(
+    Factor = names(results$effects$main),
+    Effect = unlist(results$effects$main)
+  )
+  effects_data <- effects_data[order(abs(effects_data$Effect), decreasing = TRUE), ]
+  effects_data$Factor <- factor(effects_data$Factor, levels = effects_data$Factor)
+
+  p <- ggplot2::ggplot(effects_data, ggplot2::aes(x = Factor, y = Effect)) +
+    ggplot2::geom_bar(stat = "identity", fill = "#2C7BB6") +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    ggplot2::labs(
+      title = "Main Effects Plot",
+      x = "Factor",
+      y = "Effect Estimate"
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+
+  print(p)
+} else {
+  cat("No effect estimates available for plotting.")
+}
+```
+
+### 5.2 Residual Diagnostic Plots
+
+*Residual plots are used to validate model assumptions (normality, homoscedasticity, independence).*
+
+```{r residual-plot, fig.width=9, fig.height=5}
+if (!is.null(results$model)) {
+  model <- results$model
+  diag_df <- data.frame(
+    Fitted    = fitted(model),
+    Residuals = resid(model)
+  )
+
+  p_res <- ggplot2::ggplot(diag_df, ggplot2::aes(x = Fitted, y = Residuals)) +
+    ggplot2::geom_point() +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    ggplot2::labs(
+      title = "Residuals vs Fitted",
+      x = "Fitted Values",
+      y = "Residuals"
+    ) +
+    ggplot2::theme_minimal()
+
+  print(p_res)
+} else {
+  cat("No fitted model available for residual diagnostics.")
+}
+```
+
+---
+
+## 6. Conclusions and Recommendations
+
+### 6.1 Key Findings
+
+```{r key-findings}
+if (!is.null(results$anova_results) && length(results$anova_results) > 0) {
+  for (response_name in names(results$anova_results)) {
+    cat(sprintf("\n**%s**:\n\n", response_name))
+
+    effects <- results$anova_results[[response_name]]$effects
+    fit <- results$anova_results[[response_name]]$model_fit
+
+    if (!is.null(effects$main)) {
+      # Identify the most important factor.
+      main_effects_sorted <- sort(abs(unlist(effects$main)), decreasing = TRUE)
+      if (length(main_effects_sorted) > 0) {
+        most_important <- names(main_effects_sorted)[1]
+        cat(sprintf("- **Most critical factor**: %s (effect: %.4f)\n",
+                    most_important, main_effects_sorted[1]))
+      }
+    }
+
+    if (!is.null(fit)) {
+      cat(sprintf("- **Model explanatory power**: R^2 = %.2f%%\n",
+                  fit$r_squared * 100))
+    }
+  }
+}
+```
+
+### 6.2 Optimization Recommendations
+
+- **Factor screening**: For non-significant factors, fix them at any level to reduce cost.
+- **Interactions**: For significant interactions, investigate further in subsequent experiments.
+- **Response optimization**: Consider using response surface methodology (RSM) to further optimize the key factors.
+- **Confirmation trials**: The optimal condition should be validated with 3-5 confirmation runs.
+
+---
+
+## 7. Appendix
+
+### 7.1 Statistical Methods
+
+**Analysis of Variance (ANOVA)**:
+- Used to test the significance of each factor's main effect and interaction effects.
+- F-test: $F_0 = MS_{\text{Effect}} / MS_{\text{Error}}$.
+- Significance level: alpha = 0.05.
+
+**R-squared**:
+- Represents the proportion of total variation explained by the model.
+- Adjusted R-squared applies a degrees-of-freedom correction.
+- Values closer to 1 indicate a better fit.
+
+### 7.2 References
+
+- Montgomery, D. C. (2019). *Design and Analysis of Experiments* (10th ed.).
+- Box, G. E. P., Hunter, W. G., & Hunter, J. S. (2005). *Statistics for Experimenters* (2nd ed.).
+
+### 7.3 Report Generation Information
+
+- **Generated on**: `r params$report_date`
+- **Software version**: iQualityR.doe `r pkg_version`
+
+---
+
+*This report was generated automatically by iQualityR.doe.*

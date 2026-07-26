@@ -1,0 +1,16 @@
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.Rhistory$
+^\.RData$
+^\.RDataTmp$
+^\.vscode$
+^\.claude$
+^\.trae$
+^temp$
+^temp_reports$
+^vignettes/.*\.html$
+^.*_files$
+^.*\.docx$
+^.*\.xlsx$
+^Rplots\.pdf$
+^test.*\.png$

@@ -1,0 +1,275 @@
+---
+title: "Parametric Reliability Analysis with Weibull, Exponential, and Lognormal Distributions"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Parametric Reliability Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.reliability)
+library(ggplot2)
+```
+
+## 1. Introduction
+
+Reliability engineering quantifies how long a component or system performs
+its intended function without failure. The cornerstone of parametric
+reliability analysis is the **lifetime distribution**: a probability model
+that describes the time-to-failure of a population of units. By fitting a
+distribution to observed failure times, the analyst obtains estimates of
+key metrics such as:
+
+- **MTTF** (Mean Time To Failure): the expected lifetime.
+- **B10 life**: the time by which 10% of the population has failed.
+- **B50 life** (median life): the time by which 50% has failed.
+- **Reliability function** $R(t)$: the probability of survival past time $t$.
+- **Hazard function** $h(t)$: the instantaneous failure rate at time $t$.
+
+This vignette demonstrates how `iQualityR.reliability` fits the three most
+common lifetime distributions --- Weibull, exponential, and lognormal ---
+using the [ReliabilityAnalyzer] class. All fitting is delegated to
+`iQualityR.stat::fit_distribution()`, ensuring consistency with the rest
+of the `iQualityR` ecosystem.
+
+## 2. The Three Lifetime Distributions
+
+### 2.1 Weibull Distribution
+
+The Weibull is the **workhorse of reliability engineering** because its
+shape parameter $\beta$ (often denoted $k$) lets it model all three phases
+of the bathtub curve:
+
+$$R(t) = \exp\left[-\left(\frac{t}{\eta}\right)^{\beta}\right]$$
+
+- $\beta < 1$: decreasing failure rate (early-life / infant mortality).
+- $\beta = 1$: constant failure rate (random failures); reduces to exponential.
+- $\beta > 1$: increasing failure rate (wear-out failures).
+
+The scale parameter $\eta$ is the **characteristic life**: the time by
+which 63.2% of the population has failed.
+
+### 2.2 Exponential Distribution
+
+The exponential is the simplest lifetime model, with a constant hazard
+rate $h(t) = \lambda$:
+
+$$R(t) = e^{-\lambda t}, \qquad \mathrm{MTTF} = \frac{1}{\lambda}$$
+
+It is the **memoryless** distribution: the residual lifetime of a surviving
+unit is independent of its current age. This makes it suitable for
+electronic components that fail randomly, but inappropriate for mechanical
+components that wear out.
+
+### 2.3 Lognormal Distribution
+
+The lognormal models lifetimes whose logarithm is normally distributed. It
+is common in fatigue, crack-growth, and repair-time studies:
+
+$$R(t) = 1 - \Phi\left(\frac{\ln t - \mu}{\sigma}\right)$$
+
+The hazard rises to a peak and then slowly declines, which can model
+processes with a "burn-in" of weak subpopulations.
+
+| Distribution | Parameters | Hazard shape | Typical use |
+|:------------|:-----------|:--------------|:------------|
+| Weibull | shape $\beta$, scale $\eta$ | flexible (beta < 1, = 1, > 1) | Mechanical, electronic, mixed |
+| Exponential | rate $\lambda$ | constant | Electronic, random failures |
+| Lognormal | meanlog $\mu$, sdlog $\sigma$ | unimodal (rises then falls) | Fatigue, repair times |
+
+## 3. Fitting a Weibull Distribution
+
+### 3.1 Simulated Failure Data
+
+We simulate 80 failure times from a Weibull with $\beta = 2$ and $\eta = 100$
+hours, representing a wear-out failure mode.
+
+```{r simulate-weibull}
+set.seed(42)
+times <- rweibull(80, shape = 2, scale = 100)
+data <- data.frame(time = times)
+head(data, 5)
+```
+
+### 3.2 Build a Plan and Analyze
+
+A `ReliabilityPlan` holds the analysis configuration; the
+`ReliabilityAnalyzer` performs the computation.
+
+```{r weibull-analyze}
+plan <- ReliabilityPlan$new(
+  time_var     = "time",
+  distribution = "weibull",
+  method       = "parametric"
+)
+
+analyzer <- ReliabilityAnalyzer$new()
+result  <- analyzer$analyze(data, plan)
+
+# Estimated parameters
+result$distribution_fit$parameters
+
+# Goodness of fit
+result$distribution_fit$goodness_of_fit
+```
+
+### 3.3 Reliability Metrics
+
+```{r weibull-metrics}
+metrics <- result$reliability_metrics
+metrics
+```
+
+Compare the estimated characteristic life with the true value of 100 hours.
+
+### 3.4 Diagnostic Recommendations
+
+The analyzer returns recommendations based on the shape parameter and
+goodness-of-fit.
+
+```{r weibull-recs}
+result$diagnostics$recommendations
+```
+
+## 4. Visualizing the Weibull Fit
+
+The `ReliabilityPlotter` class produces publication-quality plots. The
+`"full"` layout combines a Weibull probability plot, the survival curve,
+the hazard curve, and a metrics summary.
+
+```{r weibull-full-panel, fig.cap = "Full reliability panel for the Weibull fit"}
+plotter <- ReliabilityPlotter$new()
+theme   <- iQualityR.core::IqrTheme$new("academic")
+p <- plotter$render(result, theme, type = "full")
+print(p)
+```
+
+### 4.1 Weibull Probability Plot
+
+The Weibull probability plot linearizes the survival function on
+$\ln(t)$ vs $\ln(-\ln(R(t)))$ axes. A straight line indicates a good
+Weibull fit.
+
+```{r weibull-prob, fig.cap = "Weibull probability plot"}
+plotter$render(result, theme, type = "probability")
+```
+
+### 4.2 Survival Curve with Confidence Band
+
+```{r weibull-surv, fig.cap = "Reliability (survival) curve with 95% confidence band"}
+plotter$render(result, theme, type = "survival")
+```
+
+### 4.3 Hazard Rate Curve
+
+```{r weibull-hazard, fig.cap = "Hazard rate curve"}
+plotter$render(result, theme, type = "hazard")
+```
+
+## 5. Comparing Distributions
+
+When the Weibull fit is poor, the analyst should try alternative
+distributions. Here we fit all three and compare.
+
+```{r compare-fits}
+fit_results <- list(
+  weibull     = reliability_analysis(data, "time", distribution = "weibull"),
+  exponential = reliability_analysis(data, "time", distribution = "exponential"),
+  lognormal   = reliability_analysis(data, "time", distribution = "lognormal")
+)
+
+# Compare AIC (lower is better)
+sapply(fit_results, function(r) r$distribution_fit$aic)
+```
+
+The Weibull should have the lowest AIC because the data were simulated
+from a Weibull.
+
+## 6. Exponential Distribution: The Constant-Hazard Case
+
+```{r exponential-fit}
+set.seed(7)
+exp_times <- rexp(100, rate = 0.01)
+exp_data  <- data.frame(time = exp_times)
+
+exp_result <- reliability_analysis(exp_data, "time",
+                                   distribution = "exponential")
+exp_result$distribution_fit$parameters
+exp_result$reliability_metrics
+```
+
+The MTTF should be close to 100 (= 1 / 0.01).
+
+## 7. Lognormal Distribution
+
+```{r lognormal-fit}
+set.seed(11)
+lnorm_times <- rlnorm(100, meanlog = log(80), sdlog = 0.4)
+lnorm_data  <- data.frame(time = lnorm_times)
+
+lnorm_result <- reliability_analysis(lnorm_data, "time",
+                                     distribution = "lognormal")
+lnorm_result$distribution_fit$parameters
+lnorm_result$reliability_metrics
+```
+
+## 8. Using the Task Coordinator
+
+For a complete workflow (analysis + plot + report), use
+[IqrReliabilityTask]:
+
+```{r task-workflow}
+set.seed(13)
+data <- data.frame(time = rweibull(60, shape = 2, scale = 100))
+plan <- ReliabilityPlan$new(time_var = "time", distribution = "weibull")
+
+task <- IqrReliabilityTask$new(data, plan)
+task$compute()
+task$summary()
+```
+
+```{r task-plot, fig.cap = "Task-level survival curve"}
+task$plot(type = "survival")
+```
+
+### 8.1 Excel Report Export
+
+```{r task-excel, eval = FALSE}
+# Export to Excel (requires the 'openxlsx' package)
+tmp <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = tmp)
+```
+
+## 9. Theoretical Summary
+
+| Distribution | $R(t)$ | $h(t)$ | MTTF |
+|:------------|:-------|:-------|:-----|
+| Weibull | $\exp[-(t/\eta)^\beta]$ | $(\beta/\eta)(t/\eta)^{\beta-1}$ | $\eta\,\Gamma(1+1/\beta)$ |
+| Exponential | $e^{-\lambda t}$ | $\lambda$ | $1/\lambda$ |
+| Lognormal | $1-\Phi((\ln t - \mu)/\sigma)$ | $f(t)/R(t)$ | $\exp(\mu + \sigma^2/2)$ |
+
+## 10. References
+
+- Lawless, J. F. (2003). *Statistical Models and Methods for Lifetime
+  Data*, 2nd ed. Wiley.
+- Meeker, W. Q., & Escobar, L. A. (1998). *Statistical Methods for
+  Reliability Data*. Wiley.
+- Nelson, W. (2004). *Applied Life Data Analysis*. Wiley-Interscience.

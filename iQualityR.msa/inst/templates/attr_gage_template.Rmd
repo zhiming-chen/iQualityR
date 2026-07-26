@@ -1,0 +1,450 @@
+---
+title: "Attribute Agreement Analysis Report"
+subtitle: "`r params$study_type %||% 'Attribute agreement study'`"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M:%S')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_width: 9
+    fig_height: 5.5
+params:
+  results: NULL
+  plan: NULL
+  theme_obj: NULL
+  timestamp: NULL
+  statistics: NULL
+  diagnostics: NULL
+  data_tables: NULL
+  raw_output: NULL
+  plan_name: NULL
+  study_type: NULL
+  kappa_results: NULL
+  detection_results: NULL
+  plots: NULL
+  report_date: NULL
+---
+
+```{r attr-report-setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+`%||%` <- function(x, y) if (is.null(x)) y else x
+scalar <- function(x, default = NA_real_) {
+  if (is.null(x) || length(x) == 0) return(default)
+  x[[1]]
+}
+fmt_num <- function(x, digits = 4) {
+  x <- suppressWarnings(as.numeric(scalar(x)))
+  if (is.na(x)) return("NA")
+  sprintf(paste0("%.", digits, "f"), x)
+}
+fmt_pct <- function(x, digits = 2) {
+  x <- suppressWarnings(as.numeric(scalar(x)))
+  if (is.na(x)) return("NA")
+  sprintf(paste0("%.", digits, "f%%"), x * 100)
+}
+fmt_pct100 <- function(x, digits = 2) {
+  x <- suppressWarnings(as.numeric(scalar(x)))
+  if (is.na(x)) return("NA")
+  sprintf(paste0("%.", digits, "f%%"), x)
+}
+fmt_p <- function(x, digits = 4) {
+  x <- suppressWarnings(as.numeric(scalar(x)))
+  if (is.na(x)) return("NA")
+  if (x < 10^-digits) return(paste0("<", sprintf(paste0("%.", digits, "f"), 10^-digits)))
+  sprintf(paste0("%.", digits, "f"), x)
+}
+fmt_ci <- function(x, digits = 4) {
+  if (is.null(x) || length(x) < 2 || any(is.na(x[1:2]))) return("NA")
+  paste0("[", fmt_num(x[1], digits), ", ", fmt_num(x[2], digits), "]")
+}
+fmt_ci_pct <- function(x, digits = 2) {
+  if (is.null(x) || length(x) < 2 || any(is.na(x[1:2]))) return("NA")
+  paste0("[", fmt_pct(x[1], digits), ", ", fmt_pct(x[2], digits), "]")
+}
+fmt_chr <- function(x, default = "NA") {
+  if (is.null(x) || length(x) == 0 || is.na(x[[1]])) return(default)
+  as.character(x[[1]])
+}
+round_df <- function(x, digits = 4) {
+  if (is.null(x) || !is.data.frame(x) || nrow(x) == 0) return(x)
+  for (nm in names(x)) if (is.numeric(x[[nm]])) x[[nm]] <- round(x[[nm]], digits)
+  x
+}
+kappa_raw <- params$kappa_results$raw_output %||% NULL
+detection_raw <- params$detection_results$raw_output %||% NULL
+plots <- params$plots %||% list()
+```
+
+<style>
+:root {
+  --iqr-ink: #1f2933;
+  --iqr-muted: #5f6b7a;
+  --iqr-line: #d9e2ec;
+  --iqr-band: #f5f8fb;
+  --iqr-header: #102a43;
+  --iqr-accent: #2f80ed;
+}
+
+body {
+  color: var(--iqr-ink);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.main-container {
+  max-width: 1160px;
+}
+
+h1, h2, h3 {
+  color: var(--iqr-header);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+h1 {
+  border-bottom: 2px solid var(--iqr-line);
+  padding-bottom: 0.35rem;
+  margin-top: 2.2rem;
+}
+
+h2 {
+  border-left: 4px solid var(--iqr-accent);
+  padding-left: 0.65rem;
+  margin-top: 1.8rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.85rem 0 1.35rem 0;
+  font-size: 0.94rem;
+  border: 1px solid var(--iqr-line);
+}
+
+caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--iqr-header);
+  font-weight: 650;
+  padding: 0 0 0.35rem 0;
+}
+
+thead th {
+  background: var(--iqr-header);
+  color: #ffffff;
+  border: 1px solid var(--iqr-header);
+  padding: 0.58rem 0.7rem;
+  font-weight: 650;
+}
+
+tbody td {
+  border: 1px solid var(--iqr-line);
+  padding: 0.5rem 0.7rem;
+  vertical-align: middle;
+}
+
+tbody tr:nth-child(even) {
+  background: var(--iqr-band);
+}
+
+tbody tr:hover {
+  background: #eef6ff;
+}
+
+td:last-child,
+th:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+pre, code {
+  background-color: #f7fafc;
+}
+
+.conclusion-panel {
+  border: 1px solid var(--iqr-line);
+  border-left: 4px solid var(--iqr-accent);
+  background: #f8fbff;
+  padding: 1rem 1.1rem;
+  margin: 1rem 0 1.4rem 0;
+}
+
+.conclusion-panel h3 {
+  margin-top: 0;
+  color: var(--iqr-header);
+}
+
+.conclusion-panel ol {
+  margin-bottom: 0;
+}
+</style>
+
+# Study Overview
+
+```{r attr-report-overview-table}
+overview_tbl <- data.frame(
+  Item = c("Plan", "Study mode", "Scale type", "Report date"),
+  Value = c(
+    params$plan_name %||% "Attr_Gage_Study",
+    params$study_type %||% "attribute agreement",
+    fmt_chr(kappa_raw$scale_type %||% "nominal", "nominal"),
+    format(Sys.time(), "%Y-%m-%d")
+  )
+)
+knitr::kable(overview_tbl, align = c("l", "r"), caption = "Study overview")
+```
+
+Attribute agreement analysis evaluates whether appraisers classify parts consistently, whether appraisers agree with each other, and, when a known reference is available, whether each appraiser agrees with the standard. Kappa corrects the observed agreement for agreement expected by chance, so it is more informative than percent agreement alone.
+
+When repeated trials and a known standard are supplied, appraiser-vs-standard Kappa is calculated by comparing each appraiser-trial stream with the standard and then combining the trial-level Kappa estimates. This preserves the repeated-trial structure of the study instead of treating every rating event as an independent pooled comparison. Response-level Kappa is also reported by collapsing each response into "this response" versus "all other responses"; this helps identify categories that are harder to classify consistently.
+
+# Kappa Analysis
+
+```{r attr-report-kappa-summary}
+if (!is.null(kappa_raw)) {
+  ci <- kappa_raw$ci %||% c(NA_real_, NA_real_)
+  summary_tbl <- data.frame(
+    Metric = c("Method", "Kappa", "SE Kappa", "Z", "P(vs > 0)", "95% CI", "Observed agreement", "Expected agreement", "Interpretation"),
+    Value = c(
+      kappa_raw$method %||% "N/A",
+      fmt_num(kappa_raw$kappa %||% kappa_raw$V %||% NA_real_, 4),
+      fmt_num(kappa_raw$se %||% kappa_raw$se_V %||% NA_real_, 4),
+      fmt_num(kappa_raw$z %||% NA_real_, 4),
+      fmt_p(kappa_raw$p_value %||% NA_real_),
+      fmt_ci(ci, 4),
+      fmt_pct(kappa_raw$Po %||% NA_real_, 2),
+      fmt_pct(kappa_raw$Pe %||% NA_real_, 2),
+      fmt_chr(kappa_raw$interpretation %||% kappa_raw$grade, "N/A")
+    )
+  )
+  knitr::kable(summary_tbl, caption = "Overall kappa statistics")
+} else {
+  cat("Kappa analysis was not requested or no kappa result is available.")
+}
+```
+
+```{r attr-report-kappa-benchmark, fig.height=3.4}
+if (!is.null(plots$kappa_benchmark)) print(plots$kappa_benchmark)
+```
+
+## Between Appraisers
+
+```{r attr-report-pairwise-table}
+if (!is.null(kappa_raw$pairwise_appraisers) && nrow(kappa_raw$pairwise_appraisers) > 0) {
+  knitr::kable(round_df(kappa_raw$pairwise_appraisers, 4), caption = "Pairwise appraiser agreement")
+} else {
+  cat("Pairwise appraiser agreement is not available for this data structure.")
+}
+```
+
+```{r attr-report-pairwise-plot, fig.height=4.5}
+if (!is.null(plots$pairwise_agreement)) print(plots$pairwise_agreement)
+```
+
+## Each Appraiser vs Standard
+
+```{r attr-report-standard-table}
+if (!is.null(kappa_raw$appraiser_vs_standard) && nrow(kappa_raw$appraiser_vs_standard) > 0) {
+  knitr::kable(round_df(kappa_raw$appraiser_vs_standard, 4), caption = "Each appraiser compared with standard")
+} else {
+  cat("No standard/reference column was supplied, so appraiser-vs-standard agreement is not available.")
+}
+```
+
+```{r attr-report-standard-plot, fig.height=4.5}
+if (!is.null(plots$appraiser_standard)) print(plots$appraiser_standard)
+```
+
+## Within Appraiser Repeatability
+
+```{r attr-report-within-table}
+if (!is.null(kappa_raw$within_appraiser) && nrow(kappa_raw$within_appraiser) > 0) {
+  knitr::kable(round_df(kappa_raw$within_appraiser, 4), caption = "Within-appraiser repeatability by repeated trials")
+} else {
+  cat("Repeated trial data was not supplied, so within-appraiser repeatability is not available.")
+}
+```
+
+## Ordinal Kendall Statistics
+
+```{r attr-report-kendall-intro, results='asis'}
+if (!is.null(kappa_raw$ordinal)) {
+  cat("<p>Ordinal ratings were supplied, so Kendall statistics are reported in addition to Kappa. Kappa evaluates exact agreement, while Kendall coefficients account for the order of rating levels.</p>")
+} else {
+  cat("Ordinal Kendall statistics are shown only when scale_type is set to 'ordinal' and ordered categories are supplied or inferred.")
+}
+```
+
+```{r attr-report-kendall-tables}
+if (!is.null(kappa_raw$ordinal)) {
+  if (!is.null(kappa_raw$ordinal$within_appraiser) && nrow(kappa_raw$ordinal$within_appraiser) > 0) {
+    knitr::kable(round_df(kappa_raw$ordinal$within_appraiser, 4), caption = "Kendall's coefficient of concordance within appraiser")
+  }
+  if (!is.null(kappa_raw$ordinal$between_appraisers) && nrow(kappa_raw$ordinal$between_appraisers) > 0) {
+    knitr::kable(round_df(kappa_raw$ordinal$between_appraisers, 4), caption = "Kendall's coefficient of concordance between appraisers")
+  }
+  if (!is.null(kappa_raw$ordinal$appraiser_vs_standard) && nrow(kappa_raw$ordinal$appraiser_vs_standard) > 0) {
+    knitr::kable(round_df(kappa_raw$ordinal$appraiser_vs_standard, 4), caption = "Kendall's correlation coefficient: each appraiser vs standard")
+  }
+  if (!is.null(kappa_raw$ordinal$all_appraisers_vs_standard) && nrow(kappa_raw$ordinal$all_appraisers_vs_standard) > 0) {
+    knitr::kable(round_df(kappa_raw$ordinal$all_appraisers_vs_standard, 4), caption = "Kendall's correlation coefficient: all appraisers vs standard")
+  }
+}
+```
+
+```{r attr-report-kendall-plot, fig.height=4.8}
+if (!is.null(plots$kendall_ordinal)) print(plots$kendall_ordinal)
+```
+
+## Response-Level Agreement
+
+```{r attr-report-response-table}
+if (!is.null(kappa_raw$response_table) && nrow(kappa_raw$response_table) > 0) {
+  knitr::kable(round_df(kappa_raw$response_table, 4), caption = "Response-level agreement summary")
+}
+```
+
+```{r attr-report-response-kappa-table}
+if (!is.null(kappa_raw$response_kappa) && nrow(kappa_raw$response_kappa) > 0) {
+  knitr::kable(
+    round_df(kappa_raw$response_kappa, 4),
+    caption = "Response-level Fleiss Kappa"
+  )
+}
+```
+
+```{r attr-report-response-kappa-standard-table}
+if (!is.null(kappa_raw$response_kappa_vs_standard) && nrow(kappa_raw$response_kappa_vs_standard) > 0) {
+  knitr::kable(
+    round_df(kappa_raw$response_kappa_vs_standard, 4),
+    caption = "Response-level Kappa compared with standard"
+  )
+}
+```
+
+```{r attr-report-response-plot, fig.height=4.4}
+if (!is.null(plots$response_agreement)) print(plots$response_agreement)
+```
+
+## Sample-Level Disagreement Diagnostics
+
+Sample-level heatmaps are intentionally not used as the main report graphic for large studies. When many samples are present, a full rating matrix compresses too many sample labels into a small vertical space and becomes unreadable. The table and plot below focus on the samples with the highest disagreement.
+
+```{r attr-report-sample-disagreement-table}
+if (!is.null(kappa_raw$sample_disagreement) && nrow(kappa_raw$sample_disagreement) > 0) {
+  knitr::kable(
+    round_df(utils::head(kappa_raw$sample_disagreement, 12), 4),
+    caption = "Top samples by disagreement"
+  )
+}
+```
+
+```{r attr-report-sample-disagreement-plot, fig.height=4.8}
+if (!is.null(plots$sample_disagreement)) print(plots$sample_disagreement)
+```
+
+# Detection Performance
+
+```{r attr-report-detection-summary}
+if (!is.null(detection_raw)) {
+  det_tbl <- data.frame(
+    Metric = c("Sensitivity", "False negative rate", "Specificity", "False positive rate", "Youden index", "LR+", "LR-", "Prevalence"),
+    Estimate = c(
+      fmt_pct(detection_raw$detection_rate, 2),
+      fmt_pct(detection_raw$false_negative_rate, 2),
+      fmt_pct(detection_raw$specificity, 2),
+      fmt_pct(detection_raw$false_positive_rate, 2),
+      fmt_num(detection_raw$youden_index, 4),
+      fmt_num(detection_raw$LR_positive, 4),
+      fmt_num(detection_raw$LR_negative, 4),
+      fmt_pct(detection_raw$prevalence, 2)
+    ),
+    CI = c(
+      fmt_ci_pct(c(detection_raw$detection_ci$lower, detection_raw$detection_ci$upper), 2),
+      "",
+      fmt_ci_pct(c(detection_raw$specificity_ci$lower, detection_raw$specificity_ci$upper), 2),
+      "", "", "", "", ""
+    )
+  )
+  knitr::kable(det_tbl, caption = "Detection performance")
+} else {
+  cat("Detection analysis was not requested or no detection result is available.")
+}
+```
+
+```{r attr-report-detection-tables}
+if (!is.null(detection_raw$confusion_matrix_table)) {
+  knitr::kable(detection_raw$confusion_matrix_table, caption = "Detection confusion matrix")
+}
+if (!is.null(detection_raw$risk_table)) {
+  knitr::kable(round_df(detection_raw$risk_table, 4), caption = "Classification risk summary")
+}
+```
+
+```{r attr-report-detection-plots, fig.height=4.5}
+if (!is.null(plots$detection_ci)) print(plots$detection_ci)
+if (!is.null(plots$detection_metrics)) print(plots$detection_metrics)
+```
+
+# Conclusion
+
+```{r attr-report-conclusion, results='asis'}
+if (!is.null(kappa_raw)) {
+  kappa_value <- kappa_raw$kappa %||% kappa_raw$V %||% NA_real_
+  kappa_interpretation <- kappa_raw$interpretation %||% kappa_raw$grade %||% "N/A"
+  kappa_action <- if (!is.na(kappa_value) && kappa_value < 0.75) {
+    "Review appraiser training, classification criteria, and borderline samples before relying on these classifications for final release decisions."
+  } else {
+    "The appraiser system shows strong agreement for the supplied study data."
+  }
+  cat("<div class='conclusion-panel'>\n")
+  cat("<h3>Conclusion</h3>\n")
+  cat("<ol>\n")
+  cat(sprintf("<li><strong>Overall agreement:</strong> Kappa is <strong>%s</strong>, interpreted as <strong>%s</strong>.</li>\n", fmt_num(kappa_value, 4), kappa_interpretation))
+  if (!is.null(kappa_raw$ordinal)) {
+    kendall_between <- if (!is.null(kappa_raw$ordinal$between_appraisers) && nrow(kappa_raw$ordinal$between_appraisers) > 0) kappa_raw$ordinal$between_appraisers$Coef[[1]] else NA_real_
+    kendall_standard <- if (!is.null(kappa_raw$ordinal$all_appraisers_vs_standard) && nrow(kappa_raw$ordinal$all_appraisers_vs_standard) > 0) kappa_raw$ordinal$all_appraisers_vs_standard$Coef[[1]] else NA_real_
+    cat(sprintf(
+      "<li><strong>Ordinal agreement:</strong> Kendall between-appraiser coefficient is <strong>%s</strong>%s.</li>\n",
+      fmt_num(kendall_between, 4),
+      if (!is.na(kendall_standard)) sprintf(", and Kendall vs standard is <strong>%s</strong>", fmt_num(kendall_standard, 4)) else ""
+    ))
+  }
+  cat(sprintf("<li><strong>Appraiser decision:</strong> %s</li>\n", kappa_action))
+  if (!is.null(detection_raw)) {
+    cat(sprintf(
+      "<li><strong>Detection performance:</strong> Sensitivity is <strong>%s</strong>, specificity is <strong>%s</strong>, and Youden index is <strong>%s</strong>. False negatives and false positives should be reviewed against business risk and inspection cost.</li>\n",
+      fmt_pct(detection_raw$detection_rate, 2),
+      fmt_pct(detection_raw$specificity, 2),
+      fmt_num(detection_raw$youden_index, 4)
+    ))
+  }
+  cat("</ol>\n")
+  cat("</div>\n")
+} else if (!is.null(detection_raw)) {
+  cat("<div class='conclusion-panel'>\n")
+  cat("<h3>Conclusion</h3>\n")
+  cat("<ol>\n")
+  cat(sprintf(
+    "<li><strong>Detection performance:</strong> Sensitivity is <strong>%s</strong>, specificity is <strong>%s</strong>, and Youden index is <strong>%s</strong>.</li>\n",
+    fmt_pct(detection_raw$detection_rate, 2),
+    fmt_pct(detection_raw$specificity, 2),
+    fmt_num(detection_raw$youden_index, 4)
+  ))
+  cat("<li><strong>Risk review:</strong> False negatives and false positives should be reviewed against business risk and inspection cost.</li>\n")
+  cat("</ol>\n")
+  cat("</div>\n")
+} else {
+  cat("<div class='conclusion-panel'>\n")
+  cat("<h3>Conclusion</h3>\n")
+  cat("<p>No Kappa or detection result was available for conclusion generation.</p>\n")
+  cat("</div>\n")
+}
+```
+
+---
+
+Report generated by iQualityR.msa.

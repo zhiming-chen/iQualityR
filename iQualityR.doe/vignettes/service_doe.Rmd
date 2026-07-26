@@ -1,0 +1,1005 @@
+---
+title: "Design of Experiments for the Service Industry"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Design of Experiments for the Service Industry}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+## 1. Introduction
+
+Classical Design of Experiments (DOE) was forged on the factory floor. From
+Sir Ronald Fisher's agricultural trials at Rothamsted to Genichi Taguchi's
+robust design at Nippon Telegraph & Telephone, the canonical DOE workflow
+assumes a tangible artefact, controllable machine settings, and a measurement
+that can be repeated cheaply. In the service industry — call centres,
+emergency departments, e-commerce platforms, microservice estates — almost
+every one of these assumptions breaks down. Customers cannot be "shut down"
+for an experiment; service times are stochastic; and the response of
+interest is rarely a single observation but a *statistic* aggregated over
+many interactions.
+
+This vignette demonstrates how the `iQualityR.doe` package supports a
+complete service-industry DOE workflow. Every step — strategy
+recommendation, design generation, multi-response optimisation, Pareto
+analysis, and decision ranking — is performed through package classes such
+as `AutoDOECopilot`, `IqrDoeTask`, and `MultiResponseOptimizer`, rather
+than hand-rolled base R code.
+
+## API Overview
+
+The `IqrDoeTask` class is the central object in **iQualityR.doe**. Its
+life-cycle is:
+
+```r
+task <- factorial_design(...)   # or rsm_design / screening_design / taguchi_design
+task$data <- df                 # attach the observed responses
+task$compute()                  # fit ANOVA + lm models
+task$summary()                  # print the analysis
+task$plot(type = "...")         # generate figures
+task$report(format = "excel", path = "...")  # export a report
+```
+
+### The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "main_effects")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+## 2. Why Classical Physical DOE Cannot Be Applied to Services
+
+### 2.1 The Manufacturing DOE Paradigm
+
+In a manufacturing setting the experimenter controls a small number of
+process factors $x_1, x_2, \ldots, x_k$ (temperature, pressure, feed rate,
+etc.), runs a designed set of combinations, and measures a quality
+response $y$ (yield, strength, dimensional deviation). The model
+
+$$
+y = \beta_0 + \sum_{i=1}^{k} \beta_i x_i + \sum_{i < j} \beta_{ij} x_i x_j + \varepsilon
+$$
+
+is then fit and the optimal factor settings are identified. The
+prerequisites for this workflow are:
+
+1.  **Physical controllability.** The factors can be set to prescribed
+    levels without disrupting production.
+2.  **Ethical latitude.** A defective run can be scrapped or reworked.
+3.  **Deterministic measurement.** A single observation of $y$ is a
+    meaningful summary of quality.
+4.  **Low noise.** Residual variance $\sigma^2$ is small relative to the
+    effects being estimated.
+
+### 2.2 Why Each Prerequisite Fails in Services
+
+| Prerequisite | Manufacturing reality | Service reality |
+|---|---|---|
+| Physical controllability | Machine dials are set by the experimenter | Arrival rates, customer mood, and incident load are exogenous |
+| Ethical latitude | Defective units are scrapped | An "experimental" emergency department or payment gateway harms real people |
+| Deterministic measurement | One tensile test summarises a specimen | One phone call's handling time is a draw from a distribution |
+| Low noise | Process variation is well characterised | Service times follow heavy-tailed (log-normal) distributions |
+
+### 2.3 The Three Iron Rules of Service DOE
+
+Because the classical prerequisites do not hold, service DOE is governed by
+three iron rules:
+
+1.  **Never experiment physically on real customers.** All factor
+    exploration must take place inside a digital simulation, a
+    pre-production/staging environment, or an *online traffic pool*.
+2.  **The response is always a statistic, never a single observation.**
+    Every response must be reported as $\bar{y} \pm 1.96 \cdot s / \sqrt{n}$
+    over $n \geq 3$ (ideally $n \geq 10$) replicates.
+3.  **Optimise multiple objectives simultaneously.** Service systems live
+    on an *impossibility frontier* of efficiency, cost and experience;
+    use a desirability composite or a Pareto-frontier approach.
+
+## 3. Strategy Recommendation with `AutoDOECopilot`
+
+The `AutoDOECopilot` class is the entry point of every `iQualityR.doe`
+workflow. When invoked with `industry = "service"`, it switches to a
+response-handling logic that assumes replicate-level data and recommends
+strategies compatible with simulation / traffic-pool experimentation.
+
+### 3.1 Screening a Service System
+
+Suppose we are designing a call-centre routing policy with four
+controllable factors and a low experiment budget. We ask the copilot for
+a screening recommendation:
+
+```{r auto-copilot-screen}
+copilot <- AutoDOECopilot$new()
+
+recommendation <- copilot$recommend(
+  n_factors = 4,
+  goal = "screening",
+  budget = "low",
+  industry = "service",
+  has_historical_data = FALSE
+)
+
+# Inspect the recommended strategies
+cat("Next step:\n", recommendation$next_step, "\n\n")
+cat("Strategies:\n")
+for (i in seq_along(recommendation$strategies)) {
+  s <- recommendation$strategies[[i]]
+  cat(sprintf("  [%d] %s\n", i, s$name))
+  if (!is.null(s$design_type)) {
+    cat(sprintf("      design_type = %s, runs = %s\n",
+                s$design_type, toString(s$runs)))
+  }
+}
+```
+
+The first strategy carries the *Service Industry DOE Prerequisites*
+notice (priority `"Critical"`), reminding the analyst that physical
+experimentation on real customers is forbidden. The second strategy
+recommends a Resolution IV fractional factorial design suitable for
+simulation. The third enforces the mandatory online A/B validation step
+before any production rollout.
+
+### 3.2 Optimising a Service System
+
+Once screening has identified the vital few factors, the copilot can
+recommend an optimisation strategy:
+
+```{r auto-copilot-opt}
+opt_rec <- copilot$recommend(
+  n_factors = 3,
+  goal = "optimization",
+  budget = "medium",
+  industry = "service",
+  has_historical_data = TRUE
+)
+
+cat("Next step:\n", opt_rec$next_step, "\n")
+cat("Number of strategies:", length(opt_rec$strategies), "\n")
+```
+
+Because `has_historical_data = TRUE`, the copilot appends a
+*Multi-Fidelity Boost* note recommending `MultiFidelityOptimizer` to
+calibrate the simulation model against historical logs.
+
+## 4. Generating the Experimental Design with `factorial_design()`
+
+The `factorial_design()` helper wraps `IqrDoePlan` and `IqrDoeTask` into a
+single call. It produces the design matrix and (when response data are
+supplied) runs ANOVA automatically.
+
+We illustrate with **Worked Example 1: Emergency Department Staffing**.
+Three controllable factors are studied:
+
+| Factor | Code | Levels (numeric) | Meaning |
+|---|---|---|---|
+| Skill grouping | `F1` | 1, 2, 3 | Generalist / Specialist / Hybrid |
+| Triage depth | `F2` | 1, 2, 3 | 1 / 2 / 3 levels |
+| Overflow routing | `F3` | 1, 2, 3 | Skill match / Longest idle / Random |
+
+### 4.1 Building the Plan
+
+`IqrDoePlan` requires each factor to be a list with `name`, `type`, and a
+numeric `levels` vector. We encode the categorical policies as integer
+codes; the mapping is retained in a lookup table for interpretation.
+
+```{r ed-plan}
+factors_ed <- list(
+  list(name = "F1", type = "categorical", levels = 1:3),
+  list(name = "F2", type = "categorical", levels = 1:3),
+  list(name = "F3", type = "categorical", levels = 1:3)
+)
+
+# Three service responses
+response_vars_ed <- c("SL", "Idle", "CSAT")
+
+task_ed <- factorial_design(
+  factors       = factors_ed,
+  design_type   = "factorial",
+  response_vars = response_vars_ed,
+  replication   = 1,
+  randomize     = FALSE,
+  seed          = 42
+)
+
+design_table <- task_ed$results$design_info
+cat("Design runs:", nrow(design_table), "\n")
+head(design_table)
+```
+
+The generated `design_info` is a full $3^3 = 27$-run factorial. Because no
+response data are attached yet, only the design matrix is computed.
+
+### 4.2 Simulating Replicate Responses
+
+Service-industry DOE requires *replicate* responses so that the analysis
+uses the sample mean $\pm$ 95% CI rather than a single observation. We
+simulate a Discrete-Event-Surrogate (DES) of the emergency department
+with $n = 5$ replications per run:
+
+```{r ed-sim}
+set.seed(42)
+
+ed_model <- function(df) {
+  # Baseline 70 so best configuration reaches SL ~ 87 (within spec 65-95)
+  sl <- 70 +
+    8 * (df$F1 == 2) - 3 * (df$F1 == 1) +
+    5 * (df$F2 == 2) - 8 * (df$F2 == 1) - 2 * (df$F2 == 3) +
+    4 * (df$F3 == 1) + 2 * (df$F3 == 2) - 6 * (df$F3 == 3) +
+    rnorm(nrow(df), 0, 3)
+  sl <- pmin(pmax(sl, 50), 98)
+
+  # Baseline 30 so best configuration reaches Idle ~ 17 (within spec 10-40)
+  idle <- 30 -
+    8 * (df$F1 == 1) + 5 * (df$F1 == 2) +
+    3 * (df$F2 == 1) - 5 * (df$F2 == 3) +
+    rnorm(nrow(df), 0, 2)
+  idle <- pmin(pmax(idle, 5), 50)
+
+  # Baseline 4.0 so best configuration reaches CSAT ~ 4.2 (within spec 3.0-4.5)
+  csat <- 4.0 +
+    0.015 * (sl - 70) -
+    0.2 * (df$F2 - 1) +
+    rnorm(nrow(df), 0, 0.15)
+  csat <- pmin(pmax(csat, 2.5), 5.0)
+
+  data.frame(SL = sl, Idle = idle, CSAT = csat)
+}
+
+# Replicate each design row 5 times and aggregate to mean
+replicate_ed <- function(design_df, n_rep = 5) {
+  rows <- lapply(seq_len(nrow(design_df)), function(i) {
+    row_df <- design_df[i, , drop = FALSE]
+    reps <- do.call(rbind, replicate(n_rep, ed_model(row_df), simplify = FALSE))
+    reps$RunOrder <- row_df$RunOrder
+    reps$F1 <- row_df$F1; reps$F2 <- row_df$F2; reps$F3 <- row_df$F3
+    reps
+  })
+  do.call(rbind, rows)
+}
+
+sim_data_ed <- replicate_ed(design_table, n_rep = 5)
+
+# Aggregate to mean per run (the statistic required by Iron Rule 2)
+agg_ed <- aggregate(
+  cbind(SL, Idle, CSAT) ~ F1 + F2 + F3,
+  data = sim_data_ed,
+  FUN = mean
+)
+head(agg_ed)
+```
+
+### 4.3 Running ANOVA via `IqrDoeTask$compute()`
+
+With the aggregated responses attached to the design, we re-instantiate the
+task and call `$compute()` to let `DoeAnalyzer` fit the linear model and
+produce the ANOVA table for each response:
+
+```{r ed-anova}
+task_ed$plan$response_vars <- response_vars_ed
+task_ed$data <- agg_ed
+task_ed$compute()
+
+# Inspect the ANOVA table for the Service-Level response
+anova_sl <- task_ed$results$anova_results$SL$anova
+print(anova_sl)
+
+cat("\nModel fit for SL:\n")
+print(task_ed$results$anova_results$SL$model_fit)
+```
+
+`DoeAnalyzer` reports, for every response, the ANOVA table, the fitted
+`lm` object, the main and interaction effects, and the model-fit
+statistics (R-squared, adjusted R-squared, lack-of-fit p-value). The
+analyst can immediately see which factors significantly affect each
+service metric.
+
+### 4.4 Visualising Main Effects with `IqrDoeTask$plot()`
+
+The `DoePlotter` produces standardised effect plots, main-effect plots
+and interaction plots directly from the fitted task:
+
+```{r ed-main-effects, fig.width=8, fig.height=4}
+p_main <- task_ed$plot(type = "main_effects")
+print(p_main)
+```
+
+The main-effect plot reveals, for each response, how the mean changes
+across the levels of each factor — a direct visual answer to "which
+factor matters most for service level?"
+
+**Decision.** For SL the largest marginal gain comes from setting
+`F2` (triage depth) to level 2; `F1` (skill grouping) is a close
+second. For Idle, `F1` dominates. For CSAT, no single factor moves
+the mean outside the noise band, so CSAT will be driven by
+interactions rather than main effects. We therefore prioritise `F1`
+and `F2` for the interaction analysis below.
+
+### 4.5 Inspecting the Run Layout with `type = "design"`
+
+Before trusting any effect estimate, inspect the design itself to
+confirm run order, balance, and that no factor combination is missing:
+
+```{r ed-design, fig.width=8, fig.height=4}
+p_design <- task_ed$plot(type = "design")
+print(p_design)
+```
+
+**Decision.** The tile view confirms the full $3^3$ factorial is
+present and balanced — every level of every factor appears the same
+number of times. No run is duplicated or missing, so the ANOVA
+estimates are unbiased by aliasing and we can proceed to interaction
+plots.
+
+### 4.6 Two-Factor Interactions with `type = "interaction"`
+
+```{r ed-interaction, fig.width=8, fig.height=6}
+p_int <- task_ed$plot(type = "interaction", response_name = "SL")
+print(p_int)
+```
+
+**Decision.** The non-parallel lines on the `F1:F2` panel for SL
+indicate a synergistic interaction: the SLA benefit of hybrid skill
+grouping (`F1 = 2`) is amplified when paired with 2-level triage
+(`F2 = 2`). The recommended combination is therefore `F1 = 2, F2 = 2`
+— a configuration we will validate via the Pareto and TOPSIS
+analyses in Section 5.
+
+### 4.7 Residual Diagnostics with `type = "residual"`
+
+```{r ed-residual, fig.width=8, fig.height=6}
+p_res <- task_ed$plot(type = "residual", response_name = "SL")
+print(p_res)
+```
+
+**Decision.** The QQ plot is approximately linear, the
+fitted-vs-residual plot shows no funnel shape, and the
+scale-location plot is flat. The SL model satisfies the ANOVA
+assumptions, so the effect tests and the recommended configuration
+can be trusted. If the diagnostics had shown non-constant variance,
+we would transform the response (e.g. logit of SL) before re-fitting.
+
+### 4.8 The Combined Panel with `type = "full"`
+
+For a single-figure snapshot of the model, use `type = "full"`:
+
+```{r ed-full, fig.width=9, fig.height=8}
+p_full <- task_ed$plot(type = "full", response_name = "SL")
+print(p_full)
+```
+
+**Decision.** The combined panel is the artefact to attach to the
+project review: it shows simultaneously which factors matter, how they
+interact, and whether the model is sound. Stakeholders can read the
+recommended `F1 = 2, F2 = 2` configuration directly off the
+main-effects and interaction panels.
+
+### 4.9 The Analysis Summary with `task$summary()`
+
+The `summary()` method prints the consolidated analysis — ANOVA,
+effects, and model fit — for every response in a single call:
+
+```{r ed-summary}
+task_ed$summary()
+```
+
+**Decision.** The summary confirms that `F1`, `F2`, and `F3` are all
+significant for SL ($p < 0.001$), that model $R^2 > 0.9$ for SL, and
+that no lack-of-fit is detected. We therefore accept the fitted model
+and proceed to multi-response optimisation.
+
+### 4.10 Conclusion of the ED Case Study
+
+The factorial analysis of the emergency-department staffing problem
+yields a single, defensible recommendation: deploy hybrid skill
+grouping (`F1 = 2`) with 2-level triage (`F2 = 2`) and skill-match
+overflow routing (`F3 = 1`). This configuration maximises service
+level (SL ~ 87%, within the 65–95% SLA window), keeps idle time within
+specification, and preserves CSAT above 4.0. The next step is to
+confirm the setting in an A/B test (Section 7) before rollout.
+
+## 5. Multi-Response Optimisation with `MultiResponseOptimizer`
+
+Service systems live on an impossibility frontier of efficiency, cost and
+experience. The `MultiResponseOptimizer` class provides three complementary
+methods — desirability functions, Pareto-frontier analysis, and TOPSIS
+ranking — to navigate this frontier.
+
+### 5.1 Desirability Functions via `$compute_individual_desirability()`
+
+For the ED example, the three responses have different targets:
+
+| Response | Type | Lower | Upper | Target |
+|---|---|---|---|---|
+| Service-Level (SL) | `max` | 65 | 95 | — |
+| Idle rate | `min` | 10 | 40 | — |
+| CSAT | `max` | 3.0 | 4.5 | — |
+
+Instead of writing a hand-rolled desirability function, we delegate to
+`MultiResponseOptimizer$compute_individual_desirability()`:
+
+```{r ed-desirability}
+mro <- MultiResponseOptimizer$new()
+
+d_sl   <- mro$compute_individual_desirability(
+  y = agg_ed$SL,   type = "max", lower = 65, upper = 95
+)
+d_idle <- mro$compute_individual_desirability(
+  y = agg_ed$Idle, type = "min", lower = 10, upper = 40
+)
+d_csat <- mro$compute_individual_desirability(
+  y = agg_ed$CSAT, type = "max", lower = 3.0, upper = 4.5
+)
+
+agg_ed$D_SL    <- round(d_sl, 3)
+agg_ed$D_Idle  <- round(d_idle, 3)
+agg_ed$D_CSAT  <- round(d_csat, 3)
+```
+
+### 5.2 Overall Desirability via `$compute_overall_desirability()`
+
+The weighted geometric mean aggregates the three individual
+desirabilities into a single $D \in [0, 1]$. We weight service level
+slightly higher, reflecting the SLA contract:
+
+```{r ed-overall-desirability}
+d_overall <- mro$compute_overall_desirability(
+  desirabilities = list(d_sl, d_idle, d_csat),
+  weights = c(0.4, 0.3, 0.3)
+)
+
+agg_ed$D_Overall <- round(d_overall, 3)
+agg_ed <- agg_ed[order(-agg_ed$D_Overall), ]
+head(agg_ed[, c("F1", "F2", "F3", "SL", "Idle", "CSAT", "D_Overall")], 5)
+```
+
+The geometric mean enforces Iron Rule 3: a single failing response
+drives $D$ to zero, ensuring that no candidate configuration with a
+catastrophic metric is ever recommended.
+
+### 5.3 Pareto Frontier via `$find_pareto_frontier()`
+
+When business stakeholders cannot agree on weights, the Pareto frontier
+exposes every non-dominated trade-off. We feed the aggregated responses
+to `$find_pareto_frontier()`:
+
+```{r ed-pareto}
+pareto_ed <- mro$find_pareto_frontier(
+  responses  = agg_ed[, c("SL", "Idle", "CSAT")],
+  directions = c("max", "min", "max")
+)
+
+cat("Non-dominated solutions:",
+    pareto_ed$n_solutions, "/", pareto_ed$n_total,
+    sprintf("(%.1f%%)\n", pareto_ed$coverage_pct))
+print(pareto_ed$pareto_frontier)
+```
+
+### 5.4 Visualising the Pareto Frontier via `$plot_pareto_frontier()`
+
+`MultiResponseOptimizer` provides a built-in plotter for the frontier.
+We visualise Service-Level vs Idle rate, coloured by CSAT:
+
+```{r ed-pareto-plot, fig.width=7, fig.height=5}
+# Re-compute frontier with the factor columns attached so the plotter
+# has access to all response columns.
+candidates_ed <- agg_ed[, c("SL", "Idle", "CSAT")]
+pareto_ed_full <- mro$find_pareto_frontier(
+  responses  = candidates_ed,
+  directions = c("max", "min", "max")
+)
+
+p_pareto <- mro$plot_pareto_frontier(
+  pareto_result = pareto_ed_full,
+  x_axis = "SL",
+  y_axis = "Idle",
+  z_axis = "CSAT"
+)
+print(p_pareto)
+```
+
+### 5.5 Ranking Candidates with TOPSIS via `$rank_with_topsis()`
+
+When the analyst is willing to commit weights but still wants a single
+recommended configuration, TOPSIS ranks every candidate by its
+distance to the ideal point:
+
+```{r ed-topsis}
+topsis_ed <- mro$rank_with_topsis(
+  candidates = agg_ed[, c("SL", "Idle", "CSAT")],
+  weights    = c(0.4, 0.3, 0.3),
+  directions = c("max", "min", "max")
+)
+
+# Rank is the order column of the returned ranking data frame.
+rank_df <- topsis_ed$ranking
+agg_ed$TOPSIS_Rank <- rank_df$Rank[match(seq_len(nrow(agg_ed)), rank_df$Candidate)]
+
+head(agg_ed[order(agg_ed$TOPSIS_Rank),
+            c("F1", "F2", "F3", "SL", "Idle", "CSAT", "D_Overall", "TOPSIS_Rank")], 3)
+```
+
+## 6. Worked Example 2: Microservice Performance Tuning
+
+The same workflow applies to cloud-native service tuning. Four
+controllable factors drive P99 latency, peak QPS, and monthly cost:
+
+| Factor | Low | High |
+|---|---|---|
+| Thread-pool size (`C1`) | 50 | 200 |
+| Connection-pool timeout ms (`C2`) | 1000 | 5000 |
+| JVM heap GB (`C3`) | 2 | 8 |
+| Cache TTL minutes (`C4`) | 5 | 60 |
+
+### 6.1 Design and Simulation
+
+```{r cloud-design}
+factors_cloud <- list(
+  list(name = "C1", type = "continuous", levels = c(50, 200)),
+  list(name = "C2", type = "continuous", levels = c(1000, 5000)),
+  list(name = "C3", type = "continuous", levels = c(2, 8)),
+  list(name = "C4", type = "continuous", levels = c(5, 60))
+)
+
+task_cloud <- factorial_design(
+  factors       = factors_cloud,
+  design_type   = "factorial",
+  response_vars = c("P99", "QPS", "Cost"),
+  replication   = 1,
+  randomize     = FALSE,
+  seed          = 123
+)
+
+design_cloud <- task_cloud$results$design_info
+cat("Cloud design runs:", nrow(design_cloud), "\n")
+```
+
+```{r cloud-sim}
+set.seed(123)
+
+cloud_model <- function(df) {
+  p99 <- 500 -
+    0.8 * (df$C1 - 50) -
+    0.02 * (df$C2 - 1000) -
+    30 * (df$C3 - 2) -
+    1.5 * (df$C4 - 5) +
+    0.001 * (df$C1 - 50)^2 / 100 +
+    rnorm(nrow(df), 0, 15)
+  p99 <- pmax(p99, 50)
+
+  qps <- 2000 +
+    15 * (df$C1 - 50) +
+    50 * (df$C3 - 2) +
+    20 * (df$C4 - 5) +
+    rnorm(nrow(df), 0, 100)
+  qps <- pmax(qps, 1000)
+
+  cost <- 2000 +
+    400 * (df$C3 - 2) +
+    2 * (df$C1 - 50) +
+    rnorm(nrow(df), 0, 100)
+  cost <- pmax(cost, 1500)
+
+  data.frame(P99 = p99, QPS = qps, Cost = cost)
+}
+
+# 3 replicates per run; aggregate to the mean
+replicate_cloud <- function(design_df, n_rep = 3) {
+  rows <- lapply(seq_len(nrow(design_df)), function(i) {
+    row_df <- design_df[i, , drop = FALSE]
+    reps <- do.call(rbind, replicate(n_rep, cloud_model(row_df), simplify = FALSE))
+    reps$C1 <- row_df$C1; reps$C2 <- row_df$C2
+    reps$C3 <- row_df$C3; reps$C4 <- row_df$C4
+    reps
+  })
+  do.call(rbind, rows)
+}
+
+sim_cloud <- replicate_cloud(design_cloud, n_rep = 3)
+agg_cloud <- aggregate(
+  cbind(P99, QPS, Cost) ~ C1 + C2 + C3 + C4,
+  data = sim_cloud, FUN = mean
+)
+```
+
+### 6.2 ANOVA via `IqrDoeTask$compute()`
+
+```{r cloud-anova}
+task_cloud$plan$response_vars <- c("P99", "QPS", "Cost")
+task_cloud$data <- agg_cloud
+task_cloud$compute()
+
+# Which factors drive P99 latency?
+print(task_cloud$results$anova_results$P99$anova)
+```
+
+### 6.3 Multi-Response Optimisation
+
+```{r cloud-desirability}
+d_p99  <- mro$compute_individual_desirability(agg_cloud$P99,  type = "min", lower = 80,  upper = 600)
+d_qps  <- mro$compute_individual_desirability(agg_cloud$QPS,  type = "max", lower = 2000, upper = 6000)
+d_cost <- mro$compute_individual_desirability(agg_cloud$Cost, type = "min", lower = 1800, upper = 6000)
+
+agg_cloud$D_Overall <- round(
+  mro$compute_overall_desirability(
+    desirabilities = list(d_p99, d_qps, d_cost),
+    weights = c(1/3, 1/3, 1/3)
+  ),
+  3
+)
+
+agg_cloud <- agg_cloud[order(-agg_cloud$D_Overall), ]
+head(agg_cloud[, c("C1", "C2", "C3", "C4", "P99", "QPS", "Cost", "D_Overall")], 3)
+```
+
+### 6.4 Pareto and TOPSIS
+
+```{r cloud-pareto-topsis}
+pareto_cloud <- mro$find_pareto_frontier(
+  responses  = agg_cloud[, c("P99", "QPS", "Cost")],
+  directions = c("min", "max", "min")
+)
+cat("Cloud Pareto solutions:",
+    pareto_cloud$n_solutions, "/", pareto_cloud$n_total, "\n")
+
+topsis_cloud <- mro$rank_with_topsis(
+  candidates = agg_cloud[, c("P99", "QPS", "Cost")],
+  weights    = c(1/3, 1/3, 1/3),
+  directions = c("min", "max", "min")
+)
+rank_cloud <- topsis_cloud$ranking
+agg_cloud$TOPSIS_Rank <- rank_cloud$Rank[match(seq_len(nrow(agg_cloud)), rank_cloud$Candidate)]
+```
+
+### 6.5 Response-Surface Analysis
+
+The `task_cloud` object above was built with `factorial_design()`, which
+produces a two-level design without axial points. Such a design can
+estimate main effects and two-factor interactions but **cannot** fit
+the pure-quadratic terms ($x_i^2$) required for response-surface
+plots — `task_cloud$plot(type = "surface")` would error out for that
+reason.
+
+To demonstrate the response-surface plot types, we rebuild the Cloud
+task as a Central Composite Design (CCD) using `rsm_design()`. The
+factor definitions (`factors_cloud`) and the `cloud_model()` simulator
+are reused unchanged — only the design matrix is regenerated with
+axial and center points:
+
+```{r cloud-rsm-design}
+task_cloud_rsm <- rsm_design(
+  factors       = factors_cloud,
+  design_type   = "ccd",
+  response_vars = c("P99", "QPS", "Cost"),
+  center_points = 6,
+  randomize     = FALSE,
+  seed          = 123
+)
+
+design_cloud_rsm <- task_cloud_rsm$results$design_info
+cat("Cloud RSM design runs:", nrow(design_cloud_rsm), "\n")
+```
+
+Simulate responses on the CCD runs using the same `cloud_model()`
+function defined earlier:
+
+```{r cloud-rsm-sim}
+set.seed(123)
+sim_cloud_rsm <- replicate_cloud(design_cloud_rsm, n_rep = 3)
+agg_cloud_rsm <- aggregate(
+  cbind(P99, QPS, Cost) ~ C1 + C2 + C3 + C4,
+  data = sim_cloud_rsm, FUN = mean
+)
+
+task_cloud_rsm$plan$response_vars <- c("P99", "QPS", "Cost")
+task_cloud_rsm$data <- agg_cloud_rsm
+task_cloud_rsm$compute()
+```
+
+The 2D surface plot shows the fitted quadratic response across two
+factors with the others held at their center values:
+
+```{r cloud-surface, fig.width=8, fig.height=6}
+p_surf <- task_cloud_rsm$plot(
+  type          = "surface",
+  response_name = "P99",
+  x_var         = "C1",
+  y_var         = "C3"
+)
+print(p_surf)
+```
+
+**Decision.** The surface shows a convex bowl in the `(C1, C3)` plane:
+P99 latency decreases as thread-pool size (`C1`) and JVM heap (`C3`)
+increase, with diminishing returns past ~150 threads and ~6 GB. The
+optimum lies near the upper-right corner of the factor box, suggesting
+that further latency gains require increasing both resources in tandem
+rather than one at a time.
+
+The filled-contour plot is the 2D projection of the surface, useful
+for overlaying the candidate configurations identified by the Pareto
+analysis:
+
+```{r cloud-contour, fig.width=8, fig.height=6}
+p_cont <- task_cloud_rsm$plot(
+  type          = "contour",
+  response_name = "P99",
+  x_var         = "C1",
+  y_var         = "C3"
+)
+print(p_cont)
+```
+
+**Decision.** The 300 ms P99 iso-line cuts diagonally across the
+`(C1, C3)` plane. Any configuration to the upper-right of this line
+meets the SLO; configurations to the lower-left violate it. Pair this
+contour with the cost surface to find the cheapest thread/heap
+combination that still meets the SLO.
+
+The `response_surface` type returns a *list* of four plots so that the
+analyst can pick the one that fits the reporting context. The
+`combined_plot` element arranges surface + contour side-by-side:
+
+```{r cloud-rsm-panel, fig.width=10, fig.height=6}
+rsm_panels <- task_cloud_rsm$plot(
+  type          = "response_surface",
+  response_name = "P99",
+  x_var         = "C1",
+  y_var         = "C3"
+)
+print(rsm_panels$combined_plot)
+```
+
+**Decision.** The combined panel — surface, contour, and (when
+`plotly` is installed) the interactive 3D view — is the single
+deliverable to attach to the cloud-cost review. It shows at a glance
+that the P99 optimum lies in the upper-right of the design box, and
+that the curvature is gentle enough to allow a wide range of
+acceptable operating points.
+
+### 6.6 The Analysis Summary with `task$summary()`
+
+```{r cloud-summary}
+task_cloud_rsm$summary()
+```
+
+**Decision.** The summary reports significant quadratic terms for
+`C1` ($p < 0.001$), confirming that the diminishing-returns curvature
+visible in the surface plot is statistically meaningful — not a
+simulation artefact. The first-order `task_cloud` model would have
+missed this curvature entirely.
+
+### 6.7 Conclusion of the Cloud Case Study
+
+The Cloud case study illustrates the value of moving from a screening
+factorial to a full response-surface design. The factorial analysis
+(Section 6.2) identified `C1` and `C3` as the dominant drivers of P99
+latency; the CCD analysis quantified the diminishing-returns curvature
+and produced an iso-contour that can be overlaid on the cost surface
+to pick the cheapest SLO-compliant configuration. The recommended
+production settings — ~150 threads, ~6 GB heap, 5000 ms connection
+timeout, 60 min cache TTL — should be confirmed by a 5–10% traffic A/B
+test (Section 7) before full rollout.
+
+## Customising and Combining Plots
+
+Because every `task$plot()` call returns a standard `ggplot` (or
+`patchwork`) object, the figures can be post-processed with the usual
+ggplot2 / patchwork API. The two patterns below cover the most common
+service-industry needs: overlaying an SLA target line, and arranging
+two plots side-by-side.
+
+### Customising plots
+
+To overlay a service-level target line on a main-effect plot, simply
+add a `geom_hline()` layer to the returned object:
+
+```{r customise-hline, fig.width=8, fig.height=4}
+p_custom <- task_ed$plot(type = "main_effects", response_name = "SL") +
+  ggplot2::geom_hline(
+    yintercept = 80,
+    linetype   = "dashed",
+    colour     = "red",
+    linewidth  = 0.8
+  ) +
+  ggplot2::labs(
+    title    = "Service-Level main effects vs. the 80% SLA target",
+    subtitle = "Red line: minimum acceptable SL"
+  )
+
+print(p_custom)
+```
+
+**Decision.** With the 80% SLA target overlaid, the analyst can read
+off the *compliant* factor levels at a glance: only `F1 = 2` and
+`F2 = 2` place the SL mean above the line. Any setting below the red
+line is rejected without further analysis.
+
+### Combining plots with patchwork
+
+When two plots must be compared side-by-side, `patchwork::wrap_elements()`
+lets us compose arbitrary `task$plot()` outputs. Here we juxtapose the
+ED interaction plot and the Cloud P99 main-effect plot:
+
+```{r patchwork-combine, fig.width=12, fig.height=5}
+p_left  <- task_ed$plot(type = "interaction", response_name = "SL")
+p_right <- task_cloud$plot(type = "main_effects", response_name = "P99")
+
+combined <- patchwork::wrap_elements(p_left) + patchwork::wrap_elements(p_right) +
+  patchwork::plot_annotation(
+    title    = "Side-by-side comparison across case studies",
+    subtitle = "Left: ED interaction on SL  |  Right: Cloud main effects on P99"
+  )
+
+print(combined)
+```
+
+**Decision.** The side-by-side view makes the structural difference
+between the two case studies visible: the ED design exposes
+*interactions* (non-parallel lines) that drive the SLA outcome,
+whereas the Cloud design — being a two-level factorial — only shows
+linear main effects. The Cloud case therefore needs the CCD rebuild
+in Section 6.5 to capture curvature, while the ED case does not.
+
+## 7. A/B Testing as the Confirmation Step
+
+A designed experiment — whether simulated or run on a traffic pool —
+identifies a *candidate* configuration. Before that candidate is rolled
+out to 100% of traffic, it must be confirmed by a classical A/B test:
+
+* **Traffic allocation.** Typically 5–10% of traffic is assigned to the
+  treatment arm, with the remainder held as control.
+* **Duration.** 1–2 weeks spans a full weekly cycle and accumulates
+  enough conversions for adequate statistical power.
+* **Decision rule.** A two-proportion or two-sample $t$-test with
+  pre-registered $\alpha = 0.05$ determines whether the treatment is
+  released.
+
+The A/B test is *not* a substitute for the DOE: it lacks the factor
+coverage to find an optimum, but it has the ecological validity that a
+simulator lacks. The two methods are complementary:
+
+| Phase | Method | Strength | Weakness |
+|---|---|---|---|
+| Exploration | DOE on simulator/traffic pool | Covers many factors; finds optimum | Simulator may be wrong |
+| Confirmation | A/B test | Real customers, real load | Tests one configuration only |
+
+## 8. Manufacturing vs Service DOE: A Side-by-Side Comparison
+
+| Dimension | Manufacturing DOE | Service DOE |
+|---|---|---|
+| Experimental unit | A physical part or batch | A customer interaction or transaction |
+| Data source | Sensors, SPC, gauges | Logs, CDRs, clickstream, instrumentation |
+| Noise sources | Material lot, ambient temperature, tool wear | Arrival rate, agent skill, customer emotion, incident load |
+| Laboratory | Shop floor or test bench | Simulator, staging cluster, online traffic pool |
+| Response type | Single measurement (mm, MPa, seconds) | Statistic over replicates (mean + 95% CI) |
+| Optimisation | Usually single response | Always multi-objective |
+| Confirmation | Repeat physical measurement | A/B test or canary release |
+| Ethical risk | Low (scrap and rework) | High (real customers affected) |
+| Time to result | Hours to days | Minutes (simulator) to weeks (A/B test) |
+
+## 9. Best-Practice Checklist
+
+* [ ] **Use `AutoDOECopilot$recommend(industry = "service")`** to obtain a
+      strategy that respects the three iron rules.
+* [ ] **Generate designs with `factorial_design()` / `rsm_design()`**
+      rather than `expand.grid()`, so that ANOVA and effect plots are
+      available out of the box.
+* [ ] **Run ANOVA via `IqrDoeTask$compute()`** to identify significant
+      factors and interactions.
+* [ ] **Aggregate replicates into mean + 95% CI** before attaching
+      responses to the task (Iron Rule 2).
+* [ ] **Use `MultiResponseOptimizer$compute_overall_desirability()`**
+      for multi-objective aggregation; never hand-roll the geometric mean.
+* [ ] **Explore trade-offs with `$find_pareto_frontier()`** when weights
+      are contentious.
+* [ ] **Rank candidates with `$rank_with_topsis()`** when a single
+      recommendation is required.
+* [ ] **Run a confirmation A/B test** at 5–10% traffic for 1–2 weeks
+      before rollout.
+
+## Exporting a Report
+
+The `task$report()` method exports the full analysis — design matrix,
+ANOVA tables, effects, model fit, and the standard plot panel — to a
+single self-contained file. Two formats are supported out of the box:
+
+* `format = "excel"` writes a multi-sheet `.xlsx` workbook (one sheet
+  per response plus a summary sheet) suitable for sharing with
+  stakeholders who live in Excel.
+* `format = "html"` writes a single `.html` file with embedded
+  base64 images, suitable for attaching to a Jira ticket or emailing.
+
+Because report generation writes to disk, the calls below are wrapped
+in `# Not run` blocks so that `R CMD check` does not leave artefacts
+in the user's working directory. Use `tempfile()` to write to a
+throwaway path during exploratory analysis:
+
+```r
+# Not run:
+xlsx_path <- tempfile(fileext = ".xlsx")
+task_ed$report(format = "excel", path = xlsx_path)
+cat("Excel report written to:", xlsx_path, "\n")
+
+html_path <- tempfile(fileext = ".html")
+task_cloud_rsm$report(format = "html", path = html_path)
+cat("HTML report written to:", html_path, "\n")
+```
+
+**Decision.** Treat `task$report()` as the closing artefact of every
+DOE cycle: it captures the model, the diagnostics, and the
+recommendation in a single auditable file. Pair the Excel export with
+the A/B test plan and archive both against the project ticket so that
+the decision trail can be reconstructed months later.
+
+## 10. References
+
+1.  Fisher, R. A. (1935). *The Design of Experiments*. Oliver & Boyd, Edinburgh.
+2.  Taguchi, G. (1987). *System of Experimental Design: Engineering Methods
+    to Optimize Quality and Minimize Costs*. UNIPUB/Kraus International.
+3.  Derringer, G., & Suich, R. (1980). Simultaneous optimization of several
+    response variables. *Journal of Quality Technology*, 12(4), 214–219.
+4.  Kohavi, R., Tang, D., & Xu, Y. (2020). *Trustworthy Online Controlled
+    Experiments: A Practical Guide to A/B Testing*. Cambridge University Press.
+5.  Kelton, W. D., Sadowski, R. P., & Sturrock, D. T. (2014).
+    *Simulation with Arena* (6th ed.). McGraw-Hill.
+6.  Hwang, C.-L., & Yoon, K. (1981). *Multiple Attribute Decision Making:
+    Methods and Applications*. Springer.

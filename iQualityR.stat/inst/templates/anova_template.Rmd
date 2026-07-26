@@ -1,0 +1,165 @@
+---
+title: "ANOVA Analysis Report"
+author: "iQualityR"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M:%S')`"
+output:
+  html_document:
+    theme: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+  word_document:
+    toc: true
+  powerpoint_presentation:
+    slide_level: 2
+params:
+  results: NULL
+  plan: NULL
+  theme_obj: NULL
+  timestamp: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+
+# 提取结果
+res <- params$results
+plan <- params$plan
+theme <- params$theme_obj
+
+# 使用 .core 包的格式化函数
+.format_p <- function(p, context = "table") {
+  if (is.na(p)) return("")
+  iQualityR.core::format_p_value(p, context = context)
+}
+```
+
+# ANOVA Analysis Report
+
+## 1. 模型信息
+
+- **任务类型**: `r res$test_type %||% "ANOVA"`
+- **模型公式**: `r res$formula %||% ""`
+- **样本量**: `r res$n %||% NA`
+- **分析时间**: `r format(params$timestamp, '%Y-%m-%d %H:%M:%S')`
+
+## 2. 方差分析表
+
+```{r anova_table}
+if (!is.null(res$anova_table)) {
+  df <- cbind(Source = rownames(res$anova_table), res$anova_table)
+  if ("Pr(>F)" %in% colnames(df)) {
+    df$Sig <- sapply(df$`Pr(>F)`, function(p) .format_p(p, "table"))
+  }
+  kable(df, digits = 4, caption = "ANOVA Table") %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+} else if (!is.null(res$anova_tables)) {
+  for (nm in names(res$anova_tables)) {
+    cat("\n### ", nm, "\n\n")
+    df <- cbind(Source = rownames(res$anova_tables[[nm]]), res$anova_tables[[nm]])
+    kable(df, digits = 4, caption = paste("ANOVA Table -", nm)) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  }
+}
+```
+
+## 3. 模型摘要
+
+```{r model_summary}
+if (!is.null(res$summary)) {
+  summ <- res$summary
+  cat("**R-squared**:", round(summ$r.squared, 4), "\n")
+  cat("**Adj R-squared**:", round(summ$adj.r.squared, 4), "\n")
+  if (!is.null(summ$fstatistic)) {
+    f_p <- pf(summ$fstatistic[1], summ$fstatistic[2], summ$fstatistic[3], lower.tail = FALSE)
+    cat("**F-statistic**:", round(summ$fstatistic[1], 2),
+        "on", summ$fstatistic[2], "and", summ$fstatistic[3], "DF,",
+        "p-value:", .format_p(f_p, "table"), "\n")
+  }
+}
+```
+
+## 4. 效应量
+
+```{r effect_size}
+if (!is.null(res$effect_size)) {
+  if (!is.null(res$effect_size$eta)) {
+    cat("**Eta-squared (η²)**:\n")
+    df <- data.frame(Effect = names(res$effect_size$eta), η² = round(res$effect_size$eta, 4))
+    kable(df, digits = 4, caption = "Eta-squared") %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  }
+  if (!is.null(res$effect_size$partial_eta)) {
+    cat("\n**Partial Eta-squared (ηp²)**:\n")
+    df <- data.frame(Effect = names(res$effect_size$partial_eta), ηp² = round(res$effect_size$partial_eta, 4))
+    kable(df, digits = 4, caption = "Partial Eta-squared") %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  }
+}
+```
+
+## 5. 多重比较
+
+```{r multiple_comparisons}
+if (!is.null(res$multiple_comparisons)) {
+  if (is.data.frame(res$multiple_comparisons)) {
+    df <- res$multiple_comparisons
+    if ("p.value" %in% colnames(df)) {
+      df$Sig <- sapply(df$p.value, function(p) .format_p(p, "table"))
+    }
+    kable(df, digits = 4, caption = "Multiple Comparisons (Tukey HSD)") %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  } else if (is.list(res$multiple_comparisons)) {
+    for (nm in names(res$multiple_comparisons)) {
+      cat("\n### ", nm, "\n\n")
+      df <- res$multiple_comparisons[[nm]]
+      if (is.data.frame(df)) {
+        kable(df, digits = 4, caption = paste("Multiple Comparisons -", nm)) %>%
+          kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+      }
+    }
+  }
+}
+```
+
+## 6. 诊断图
+
+```{r diagnostic_plots, fig.width=8, fig.height=6}
+if (inherits(res$model, "lm")) {
+  # 使用基础 R 绘制残差诊断图
+  par(mfrow = c(2, 2))
+  plot(res$model)
+}
+```
+
+## 7. 解释与建议
+
+```{r interpretation, results='asis'}
+if (!is.null(res$test_type)) {
+  cat("### 统计结论\n")
+  if (!is.null(res$anova_table)) {
+    p_val <- res$anova_table[1, "Pr(>F)"]
+    sig <- if (p_val < 0.001) "极显著" else if (p_val < 0.01) "非常显著" else if (p_val < 0.05) "显著" else "不显著"
+    cat(sprintf("- %s 检验结果为 %s (F = %.2f, df = %d, %d, p = %s)。\n",
+                res$test_type, sig,
+                res$anova_table[1, "F value"],
+                res$anova_table[1, "Df"],
+                res$anova_table[2, "Df"],
+                .format_p(p_val, "plot")))
+  }
+  if (!is.null(res$effect_size$eta)) {
+    cat("\n### 效应量\n")
+    eta <- res$effect_size$eta[1]
+    desc <- if (eta >= 0.14) "大效应" else if (eta >= 0.06) "中效应" else "小效应"
+    cat(sprintf("- 因素解释了 %.1f%% 的总变异（η² = %.3f），属于 %s。\n", eta * 100, eta, desc))
+  }
+}
+```
+
+---
+
+*报告生成于 iQualityR 框架*

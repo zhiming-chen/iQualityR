@@ -1,0 +1,441 @@
+---
+title: "Design Generation with iQualityR.doe"
+author: "iQualityR Team"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Design Generation with iQualityR.doe}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4,
+  fig.align = "center"
+)
+```
+
+## 1. Introduction
+
+Experimental design is the foundation of any data-driven quality
+improvement initiative. `iQualityR.doe` provides a unified interface for
+generating more than a dozen design families --- from classical full
+factorials to modern Definitive Screening Designs (DSD), mixture designs,
+and computer-experiment space-filling designs.
+
+This vignette walks through the **major design-generation APIs** using
+realistic engineering case studies. After reading this vignette you will
+know how to:
+
+* Create full, fractional, and orthogonal (Taguchi) factorial designs
+* Build response-surface designs (CCD, Box-Behnken, DSD)
+* Generate mixture designs (simplex centroid / lattice / extreme vertices)
+* Construct split-plot designs with hard-to-change factors
+* Build D/A/I-optimal designs via coordinate exchange
+* Generate Latin Hypercube and Maximin space-filling designs
+
+```{r setup}
+library(iQualityR.doe)
+set.seed(42)
+```
+
+## 2. API Overview
+
+### 2.1 The `IqrDoePlan` configurator
+
+Every experiment starts with an `IqrDoePlan` object that declares the
+factors, design type, and optional parameters (replication, center
+points, blocking, alpha, resolution, randomization seed).
+
+```{r plan-example}
+factors <- list(
+  list(name = "Temperature", type = "continuous", levels = c(80, 120)),
+  list(name = "Pressure",    type = "continuous", levels = c(2, 6)),
+  list(name = "Time",        type = "continuous", levels = c(10, 30))
+)
+
+plan <- IqrDoePlan$new(
+  task_tag    = "injection_molding",
+  design_type = "factorial",
+  factors     = factors,
+  replication = 2,
+  center_points = 4,
+  randomize   = TRUE,
+  seed        = 123
+)
+plan$validate()
+```
+
+### 2.2 Factory functions
+
+For convenience, `iQualityR.doe` exports one-call factory functions that
+build a plan, generate the design, and return a ready-to-use
+`IqrDoeTask`:
+
+| Function | Design family |
+|---|---|
+| `factorial_design()` | Full / fractional factorial |
+| `screening_design()` | Fractional screening (Res III/IV/V) |
+| `rsm_design()` | CCD / Box-Behnken |
+| `orthogonal_design()` | Taguchi orthogonal arrays |
+| `taguchi_design()` | Taguchi robust design (control + noise) |
+
+### 2.3 Direct generation via `DoeAnalyzer`
+
+For advanced users, `DoeAnalyzer$new()$run(plan)` returns a results list
+containing `design_info` (the generated design matrix) and, when response
+data is supplied, ANOVA tables and model objects.
+
+---
+
+## 3. Case Study: Injection Molding Screening
+
+### Problem
+
+An injection-molding team wants to identify which of **5 process
+factors** most affect part shrinkage: Temperature, Pressure, Holding Time,
+Cooling Time, and Screw Speed. Budget allows 16 runs.
+
+### Design: Fractional factorial (Resolution IV)
+
+A $2^{5-1}_{IV}$ design uses 16 runs and keeps main effects clear of
+two-factor interactions.
+
+```{r screening}
+factors <- lapply(LETTERS[1:5], function(nm) {
+  list(name = nm, type = "continuous", levels = c(-1, 1))
+})
+
+task <- screening_design(factors = factors, resolution = "IV", seed = 2024)
+head(task$results$design_info, 4)
+nrow(task$results$design_info)
+```
+
+### Decision
+
+With 16 runs and Resolution IV, the team can estimate all 5 main effects
+free of two-factor-interaction aliasing. If interactions are suspected
+active, the design can be **folded over** to de-alias them (see the
+*Analysis & Visualization* vignette).
+
+---
+
+## 4. Case Study: Chemical Yield Optimization (RSM)
+
+### Problem
+
+After screening, three factors remain: Temperature, Time, and
+Catalyst concentration. The team needs a second-order model to locate the
+optimal yield region.
+
+### Design: Central Composite Design (CCD)
+
+```{r ccd}
+factors <- list(
+  list(name = "Temp",     type = "continuous", levels = c(80, 120)),
+  list(name = "Time",     type = "continuous", levels = c(20, 40)),
+  list(name = "Catalyst", type = "continuous", levels = c(1, 5))
+)
+
+task <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = FALSE,
+  seed          = 7
+)
+nrow(task$results$design_info)
+table(task$results$design_info$PointType)
+```
+
+### Alternative: Box-Behnken Design
+
+When axial points are infeasible (e.g. extreme temperatures), a
+Box-Behnken design avoids the corners of the cube:
+
+```{r bbd}
+task_bbd <- rsm_design(
+  factors     = factors,
+  design_type = "box_behnken",
+  randomize   = FALSE
+)
+nrow(task_bbd$results$design_info)
+```
+
+### Decision
+
+A rotatable CCD with 6 center points provides 20 runs capable of fitting
+a full second-order model. The team proceeds with data collection.
+
+---
+
+## 5. Case Study: Definitive Screening Design
+
+### Problem
+
+For 4 factors where curvature is possible but runs are expensive, a DSD
+(Jones & Nachtsheim 2011) provides 3 levels per factor in only $2k + 1$
+runs, with main effects not aliased with second-order effects.
+
+```{r dsd}
+factors <- lapply(paste0("X", 1:4), function(nm) {
+  list(name = nm, type = "continuous", levels = c(-1, 0, 1))
+})
+
+plan <- IqrDoePlan$new(
+  task_tag = "dsd_screening",
+  design_type = "dsd",
+  factors = factors,
+  randomize = FALSE
+)
+analyzer <- DoeAnalyzer$new()
+results <- analyzer$run(plan = plan)
+nrow(results$design_info)
+```
+
+### Decision
+
+A 4-factor DSD uses only 9 runs yet can detect curvature without
+confounding main effects --- ideal for early-stage screening when
+second-order behavior is uncertain.
+
+---
+
+## 6. Case Study: Formulation Optimization (Mixture Design)
+
+### Problem
+
+A food scientist needs to optimize a 3-component formulation (Water,
+Sugar, Fat) where the proportions must sum to 1.
+
+### Simplex Centroid Design
+
+```{r mixture}
+factors <- lapply(c("Water", "Sugar", "Fat"), function(nm) {
+  list(name = nm, type = "continuous", levels = c(0, 1))
+})
+
+plan <- IqrDoePlan$new(
+  task_tag = "formulation",
+  design_type = "simplex_centroid",
+  factors = factors,
+  randomize = FALSE
+)
+results <- DoeAnalyzer$new()$run(plan = plan)
+nrow(results$design_info)   # 2^3 - 1 = 7 points
+```
+
+### Simplex Lattice Design
+
+For a denser grid, a {3,2} simplex lattice provides 6 blend points:
+
+```{r lattice}
+plan_lat <- IqrDoePlan$new(
+  task_tag = "lattice",
+  design_type = "simplex_lattice",
+  factors = factors,
+  alpha = 2,   # lattice degree m
+  randomize = FALSE
+)
+results_lat <- DoeAnalyzer$new()$run(plan = plan_lat)
+nrow(results_lat$design_info)
+```
+
+### Extreme Vertices Design
+
+When each component has lower/upper bounds (not 0 to 1), the
+McLean-Anderson extreme-vertices algorithm enumerates the feasible
+polytope:
+
+```{r extreme}
+factors <- list(
+  list(name = "A", type = "continuous", levels = c(0.2, 0.5)),
+  list(name = "B", type = "continuous", levels = c(0.3, 0.6)),
+  list(name = "C", type = "continuous", levels = c(0.1, 0.4))
+)
+plan_ev <- IqrDoePlan$new(
+  task_tag = "extreme_vertices",
+  design_type = "extreme_vertices",
+  factors = factors,
+  randomize = FALSE
+)
+results_ev <- DoeAnalyzer$new()$run(plan = plan_ev)
+nrow(results_ev$design_info)
+```
+
+### Decision
+
+For an unconstrained 3-component blend, the simplex centroid (7 runs)
+is the most efficient starting point. If the resulting model shows
+inadequate fit, augment with a simplex lattice.
+
+---
+
+## 7. Case Study: Split-Plot Design
+
+### Problem
+
+In a semiconductor process, **Oven Temperature** is hard to change
+(each adjustment costs 2 hours), while **Gas Flow** and **Time** are
+easy to change within an oven run.
+
+```{r splitplot}
+factors <- list(
+  list(name = "OvenTemp", type = "continuous", levels = c(-1, 1),
+       hard_to_change = TRUE),
+  list(name = "GasFlow",  type = "continuous", levels = c(-1, 1)),
+  list(name = "Time",     type = "continuous", levels = c(-1, 1))
+)
+
+plan <- IqrDoePlan$new(
+  task_tag = "split_plot",
+  design_type = "split_plot",
+  factors = factors,
+  randomize = TRUE,
+  seed = 99
+)
+results <- DoeAnalyzer$new()$run(plan = plan)
+head(results$design_info, 4)
+# WholePlot column groups runs sharing the same hard-to-change setting.
+table(results$design_info$WholePlot)
+```
+
+### Decision
+
+The split-plot design respects the nested randomization structure: oven
+temperature changes only twice (2 whole plots), while gas flow and time
+vary within each whole plot.
+
+---
+
+## 8. Case Study: Optimal Design Construction
+
+### Problem
+
+A team needs a 12-run design for 4 factors with a specific model
+including interactions, but standard designs do not fit. A
+**D-optimal** design maximizes the determinant of $X'X$.
+
+```{r optimal}
+factors <- lapply(paste0("F", 1:4), function(nm) {
+  list(name = nm, type = "continuous", levels = c(-1, 1))
+})
+
+analyzer <- DoeAnalyzer$new()
+opt <- analyzer$create_optimal_design(
+  factors     = factors,
+  n_runs      = 12,
+  model_order = "interaction",
+  criterion   = "D",
+  n_starts    = 5,
+  seed        = 42
+)
+nrow(opt$design)
+opt$criterion_name
+```
+
+### Comparing D / A / I optimality
+
+```{r optimal-compare}
+for (crit in c("D", "A", "I")) {
+  res <- analyzer$create_optimal_design(
+    factors = factors, n_runs = 12,
+    model_order = "main", criterion = crit,
+    n_starts = 5, seed = 42
+  )
+  cat(sprintf("  %s-optimal criterion value: %.4f\n", crit, res$criterion))
+}
+```
+
+### Decision
+
+When standard catalogs do not fit the model or run-count constraint,
+optimal design construction via coordinate exchange (Meyer & Nachtsheim
+1995) provides a customized, near-optimal design.
+
+---
+
+## 9. Space-Filling Designs for Computer Experiments
+
+### Problem
+
+When running physical experiments is impossible (e.g. simulation models),
+**Latin Hypercube Sampling** (LHS) and **Maximin** designs fill the
+factor space uniformly.
+
+```{r lhs}
+factors <- lapply(paste0("V", 1:3), function(nm) {
+  list(name = nm, type = "continuous", levels = c(0, 1))
+})
+plan_lhs <- IqrDoePlan$new(
+  task_tag = "sim_lhs",
+  design_type = "lhs",
+  factors = factors,
+  randomize = FALSE,
+  seed = 42
+)
+results_lhs <- DoeAnalyzer$new()$run(plan = plan_lhs)
+# LHS generates max(10*k, 20) points by default.
+head(results_lhs$design_info, 4)
+```
+
+### Decision
+
+LHS is the workhorse for surrogate-model fitting and Bayesian
+optimization initial designs (see the *AI/ML Advanced Features* vignette).
+
+---
+
+## 10. Design Evaluation
+
+After generating a design, `evaluate_design()` reports D/A/G/I-optimality
+and the condition number:
+
+```{r evaluate}
+# Evaluate the optimal design from Section 8.
+analyzer <- DoeAnalyzer$new()
+opt_factors <- lapply(paste0("F", 1:4), function(nm) {
+  list(name = nm, type = "continuous", levels = c(-1, 1))
+})
+opt <- analyzer$create_optimal_design(
+  factors = opt_factors, n_runs = 12,
+  model_order = "main", criterion = "D",
+  n_starts = 5, seed = 42
+)
+eval_out <- analyzer$evaluate_design(opt$design, model_order = "main")
+eval_out$D_eff
+eval_out$interpretation
+```
+
+For fractional factorials, `get_alias_structure()` reveals the aliasing
+pattern:
+
+```{r alias}
+alias_info <- analyzer$get_alias_structure(n_factors = 5, resolution = "IV")
+alias_info$generators
+```
+
+---
+
+## 11. Conclusion
+
+`iQualityR.doe` covers the full spectrum of experimental design
+generation --- from classical factorials to modern DSDs, mixture designs,
+and optimal designs. Key takeaways:
+
+* Use `factorial_design()` / `screening_design()` for 2-level factorials
+* Use `rsm_design()` for CCD / Box-Behnken response-surface designs
+* Use `IqrDoePlan` with `design_type = "dsd"` for definitive screening
+* Use mixture designs (`simplex_centroid` / `simplex_lattice` /
+  `extreme_vertices`) for formulation problems
+* Use `create_optimal_design()` when standard designs do not fit your
+  constraints
+* Use `lhs` / `maximin` for computer experiments and surrogate fitting
+
+The next vignette, *Analysis & Visualization*, shows how to fit models,
+compute effects, and generate diagnostic plots using the designs created
+here.

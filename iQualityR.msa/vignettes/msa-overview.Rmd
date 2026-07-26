@@ -1,0 +1,686 @@
+---
+title: "Measurement System Analysis with iQualityR.msa"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{MSA Overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+```
+
+## 1. Introduction
+
+**Measurement System Analysis (MSA)** is the disciplined study of the sources
+of variation that influence the values produced by a measurement process.
+Before any decision is made on the basis of a measured value — accept or
+reject a part, release a batch, control a process, or report a capability
+index — the analyst must know how much of the observed variation comes from
+the parts themselves and how much comes from the gage, the operators, the
+environment, and the procedure. A measurement system that contributes too
+much noise can render a capable process incapable in the eyes of the
+customer, or can hide a non-conforming process behind a flattering average.
+
+`iQualityR.msa` is the measurement-system-analysis module of the
+`iQualityR` quality-engineering ecosystem. It implements the full catalogue
+of studies defined by the two reference standards that dominate industrial
+practice:
+
+| Standard | Scope | Primary deliverables |
+|---|---|---|
+| **AIAG MSA Reference Manual, 4th edition** | The automotive-industry reference. Defines Type 1 gage studies, linearity & bias, crossed and nested Gage R&R (ANOVA and Xbar-R), attribute agreement, and the attribute gage analytic method. | `%Study Var`, `%Tolerance`, `%Contribution`, NDC, Cg/Cgk, kappa. |
+| **VDA 5 — Capability of Measurement Processes** | The German automotive standard. Adds a measurement-uncertainty framework (`uMS`, `%QMS`) that complements the AIAG capability view. | Combined standard uncertainty `uMS`, `%QMS` of tolerance, uncertainty budget. |
+
+The package reproduces the analysis workflow and output layout of Minitab's
+Stat > Quality Tools > Gage Study menus while running entirely in R, so that
+MSA studies can be embedded in reproducible reports, automated pipelines, and
+Shiny applications.
+
+## 2. Package Architecture
+
+`iQualityR.msa` follows the **Task-Plan-Analyzer-Plotter-Reporter (TPAPR)**
+architecture inherited from `iQualityR.core`. Every study is orchestrated by
+a *Task* object that owns the data, a *Plan* object that encodes the
+experimental design, an *Analyzer* that performs the statistical computation,
+a *Plotter* that renders the diagnostic charts, and a *Reporter* that
+assembles the final deliverable. The five roles are bound together by a
+shared *Theme* so that all output is visually consistent.
+
+```
+            +--------------------------+
+            |          Theme           |   IqrTheme  (iQualityR.core)
+            |  colors, fonts, scales   |
+            +--------------------------+
+                  |    |    |    |
+                  v    v    v    v
+   +----------+  +----------+  +-----------+  +----------+  +-----------+
+   |   Plan   |  |   Task   |  | Analyzer  |  | Plotter  |  | Reporter  |
+   |----------|  |----------|  |-----------|  |----------|  |-----------|
+   | IqrPlan  |->| IqrTask  |->| Iqr       |->| Iqr      |->| Iqr       |
+   | Base     |  | Base     |  | Analyzer  |  | Plotter  |  | Reporter  |
+   |          |  |          |  | Base      |  | Base     |  |           |
+   +----------+  +----------+  +-----------+  +----------+  +-----------+
+   design,        data +       statistics,      ggplot /      Excel, HTML,
+   specs,         lifecycle     variance         patchwork     PDF, Word
+   operators,     orchestration components       panels        reports
+   parts
+```
+
+The `iQualityR.core` base classes provide the lifecycle contract:
+
+| Base class | Role |
+|---|---|
+| `IqrTaskBase` | Lifecycle owner: `initialize()`, `compute()`, `summary()`, `plot()`, `report()`. Holds `data`, `plan`, `theme_obj`, `results`, and an `executor` list of Analyzer/Plotter instances. |
+| `IqrPlanBase` | Design container: operators, parts, replicates, specifications, randomisation. Serialisable via `to_list()`. |
+| `IqrAnalyzerBase` | Statistics engine: `run()`, `setup()`, `reset()`, `set_statistic()`, `set_datatable()`, `set_diagnostic()`, `set_raw_output()`. Sub-classes expose discrete public step methods so each phase is independently testable. |
+| `IqrPlotterBase` | Rendering engine: `available_plots()`, `render()`, `generate_plots()`, `save_assets()`. Returns `ggplot` / `patchwork` objects. |
+| `IqrReporter` | Output assembler: registers Rmd templates per study `task_tag` and renders Excel / HTML / PDF / Word deliverables. |
+| `IqrTheme` | Visual identity: discrete/sequential palettes, typography, `theme_iqr()` ggplot theme. Named themes such as `"academic"` are available. |
+
+Each concrete study in `iQualityR.msa` subclasses these bases
+(`Type1Task`, `MsaTask`, `AttrGageTask`, ...) so that the user-facing API is
+uniform across every study type.
+
+## 3. The Five-Step Workflow
+
+Every study, regardless of type, follows the same five-step lifecycle. This
+uniformity is the central design contract of the package: once you have
+learned the workflow for one study, you have learned it for all of them.
+
+```
+   Plan  -->  Task  -->  compute()  -->  summary() / plot()  -->  report()
+     1          2           3                    4                     5
+```
+
+| Step | Action | Typical call |
+|---|---|---|
+| 1. **Plan** | Define the design (operators, parts, replicates, specs) or let a convenience function infer it. | `create_msa_plan(...)` / `infer_msa_plan(data)` |
+| 2. **Task** | Construct the task that owns the data and bind the plan to it. | `MsaTask$new(data, plan)` or a one-shot helper. |
+| 3. **Compute** | Run the analyzer pipeline; populate `results`, `variance_components`, `statistics`, `interpretation`. | `task$compute()` |
+| 4. **Inspect** | Print the Minitab-style summary table and render the diagnostic charts. | `task$summary()`, `task$plot()` |
+| 5. **Report** | Export the deliverable as Excel, HTML, PDF, or Word, with figures saved alongside. | `task$report(format = "html")` |
+
+A generic code skeleton:
+
+```r
+library(iQualityR.msa)
+
+# 1. Plan ---------------------------------------------------------------
+plan <- create_msa_plan(
+  plan_name    = "Gage_RR_Demo",
+  objectives   = "Evaluate repeatability and reproducibility",
+  operators    = c("A", "B", "C"),
+  parts        = 10,
+  measurements = 3,
+  method       = "crossed"
+)
+plan$add_specification("Length", spec_id = "L1",
+                       nominal_value = 25, lsl = 24.5, usl = 25.5)
+
+# 2. Task ---------------------------------------------------------------
+# (Either pass `plan` to run_msa_analysis, or use a one-shot helper such
+#  as gage_rr_study() that builds the plan internally.)
+task <- run_msa_analysis(plan, measurement_data = my_data,
+                        analysis_method = "anova")
+
+# 3. Compute -----------------------------------------------------------
+# (Already invoked inside run_msa_analysis(); for a bare task call:)
+# task$compute(alpha_lim = 0.25, sigma = 6)
+
+# 4. Inspect -----------------------------------------------------------
+task$summary()
+task$plot(type = "summary")
+
+# 5. Report ------------------------------------------------------------
+task$report(format = "html", path = "msa_report.html")
+```
+
+For most day-to-day work the one-shot helper functions
+(`iqr_type1_bias()`, `gage_rr_study()`, `iqr_attr_gage()`, ...) collapse
+steps 1-3 into a single call, so a complete study can be as short as:
+
+```r
+task <- gage_rr_study(data = my_data, tolerance = 1.0)
+task$summary()
+task$plot()
+```
+
+## 4. Function & Class Index
+
+The package is organised by study type. Each table below lists the
+user-facing entry function, the underlying R6 classes, and the public step
+methods exposed by the analyzer for fine-grained inspection or re-runs.
+
+### 4.1 Type 1 Gage Study (Bias & Repeatability)
+
+A single-reference, single-operator study that quantifies bias and
+repeatability through Cg/Cgk and the VDA 5 uncertainty budget.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `iqr_type1_bias()` | One-shot entry for a Type 1 bias study on a numeric vector or single-column data frame. | `Type1Task` |
+| `Type1Task` | Task coordinator for Type 1 studies (both `bias` and `linearity`). | R6 object |
+| `Type1Plan` | Plan object holding reference value, spec limits, k-factor, VDA 5 inputs, criteria. | R6 object |
+| `Type1Analyzer` | Analyzer with four public step methods (below). | R6 object |
+| `Type1Analyzer$compute_bias()` | Sample statistics and two-sided t-test of H0: bias = 0. | list of statistics |
+| `Type1Analyzer$compute_capability()` | Cg, Cgk, `%Var (Repeatability)`, `%Var (Repeatability and Bias)`. | list of capability metrics |
+| `Type1Analyzer$compute_vda5()` | VDA 5 uncertainty components (uEVR, uRE, uBI, uCAL, uREST) and `%QMS`. | list of uncertainty results |
+| `Type1Analyzer$evaluate_criteria()` | Pass/fail diagnostics against plan criteria. | named logical list |
+| `Type1Plotter` | Renders run chart, capability chart, and VDA 5 panels. | R6 object |
+
+### 4.2 Gage Linearity & Bias
+
+A multi-reference study that regresses bias on reference value to detect
+linearity across the operating range of the gage.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `iqr_linearity_bias()` | One-shot entry; requires `reference` and `measurement` columns. | `Type1Task` (study_type = `"linearity"`) |
+| `Type1LinearityAnalyzer` | Analyzer with three public step methods (below). | R6 object |
+| `Type1LinearityAnalyzer$compute_per_reference_summary()` | Per-reference n, mean, sd, bias; aggregate avg/max bias. | list of summaries |
+| `Type1LinearityAnalyzer$fit_linearity_regression()` | `lm(bias ~ reference)`; linearity, slope CI, R². | list of regression results |
+| `Type1LinearityAnalyzer$evaluate_linearity_criteria()` | Pass/fail for slope, R², `%max bias`. | named logical list |
+
+### 4.3 Crossed Gage R&R
+
+The classic AIAG design in which every part is measured by every operator.
+Supports both the ANOVA method (with optional interaction term) and the
+Xbar-R method.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `gage_rr_study(method = "crossed")` | One-shot entry; ANOVA method with auto-detected interaction term. | `MsaTask` |
+| `gage_rr_xbar_r()` | One-shot entry; Xbar-R (range) method, no interaction. | `MsaTask` |
+| `MsaTask` | Task coordinator for Gage R&R studies. | R6 object |
+| `MSAPlan` | Plan object: operators, parts, replicates, method, specifications. | R6 object |
+| `MsaAnalyzer` | ANOVA / Xbar-R engine; variance components, NDC, interpretation. | R6 object |
+| `MsaPlotter` | Six-panel Minitab layout: variation, by-part, by-operator, interaction, Xbar, R. | R6 object |
+
+### 4.4 Nested Gage R&R
+
+Used when each part is destroyed by the act of measurement, so that no part
+can be measured by more than one operator. Parts are *nested within*
+operators rather than crossed with them.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `gage_rr_study(method = "nested")` | One-shot entry; fits `MeasurementValue ~ Operator + Part` and decomposes variance with the nested ANOVA formulas. | `MsaTask` |
+| `MsaTask` / `MsaAnalyzer` | Same classes as crossed; `plan$method <- "nested"` selects the nested code path. | R6 objects |
+
+### 4.5 Batch / Multi-Spec Gage R&R
+
+Runs a separate crossed Gage R&R study for each specification group in a
+single data frame, returning a named list of `MsaTask` objects.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `multi_spec_msa()` | Loops over unique `SpecID` values; one `MsaTask` per spec. | named list of `MsaTask` |
+
+### 4.6 Attribute Agreement Analysis
+
+For categorical (pass/fail or ordinal) ratings. Computes kappa statistics,
+per-response agreement, within- and between-appraiser agreement, and
+agreement against a known standard.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `iqr_attr_gage()` | One-shot entry with `mode = "kappa"` / `"detection"` / `"all"` and `method = "cohen"` / `"fleiss"` / `"wagner"`. | `AttrGageTask` |
+| `iqr_cohen_kappa()` | Shortcut for two-rater Cohen's kappa on a pair of evaluator columns. | `AttrGageTask` |
+| `iqr_fleiss_kappa()` | Shortcut for multi-rater Fleiss kappa on long-format ratings. | `AttrGageTask` |
+| `iqr_wagner()` | Shortcut for the Wagner two-way concordance method. | `AttrGageTask` |
+| `AttrGageTask` | Task coordinator for attribute studies. | R6 object |
+| `AttrGagePlan` | Plan object: comparison mode, kappa method, categories, scale type. | R6 object |
+| `KappaAnalyzer` | Cohen/Fleiss/Wagner engine; pairwise, vs-standard, within-appraiser, ordinal Kendall coefficients. | R6 object |
+
+### 4.7 Attribute Gage (Analytic Method)
+
+For a binary pass/fail gage measured against a reference value. Fits the
+detection probability as a function of the reference and derives the bias
+and repeatability of the attribute gage.
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `iqr_detection()` | One-shot entry for detection-rate / false-negative-rate analysis with Clopper-Pearson confidence intervals. | `AttrGageTask` (mode = `"detection"`) |
+| `DetectionAnalyzer` | Binomial detection engine; confusion matrix, Youden index, likelihood ratios. | R6 object |
+
+### 4.8 Plan Helpers & Generic Dispatcher
+
+| Function / Class | Description | Returns |
+|---|---|---|
+| `create_msa_plan()` | Construct an `MSAPlan` with operators, parts, replicates, method, randomisation. | `MSAPlan` |
+| `infer_msa_plan()` | Infer an `MSAPlan` from an existing data frame (auto-detects crossed vs nested). | `MSAPlan` |
+| `run_msa_analysis()` | Bind a plan to data, build an `MsaTask`, and call `compute()` in one step. | `MsaTask` |
+| `iqr_msa()` | Generic dispatcher: `study = "type1_bias"` / `"type1_linearity"` / `"attr_gage"` / `"gage_rr"`. | study task object |
+
+## 5. Decision Tree
+
+Use the following flowchart to choose the right study for your data.
+
+```
+START
+  |
+  +-- Is the response CONTINUOUS (a measured number)?
+  |     |
+  |     YES
+  |     |
+  |     +-- How many reference values are involved?
+  |     |     |
+  |     |     +-- ONE reference, ONE operator, repeated measures
+  |     |     |     -> iqr_type1_bias()           [Type 1 Gage Study]
+  |     |     |
+  |     |     +-- SEVERAL references, bias vs reference
+  |     |     |     -> iqr_linearity_bias()       [Gage Linearity & Bias]
+  |     |     |
+  |     |     +-- MULTIPLE parts x MULTIPLE operators
+  |     |           |
+  |     |           +-- Can every part be measured by every operator?
+  |     |           |     |
+  |     |           |     YES -> Crossed Gage R&R
+  |     |           |     |     |
+  |     |           |     |     +-- Want the classic range-based method?
+  |     |           |     |     |     -> gage_rr_xbar_r()           [Xbar-R]
+  |     |           |     |     |
+  |     |           |     |     +-- Otherwise prefer the ANOVA method?
+  |     |           |     |           -> gage_rr_study(method="crossed")
+  |     |           |     |
+  |     |           |     NO  (destructive / each part seen by one operator)
+  |     |           |           -> gage_rr_study(method="nested")
+  |     |           |
+  |     |           +-- One data frame, several specification groups?
+  |     |                 -> multi_spec_msa()     [Batch / Multi-Spec]
+  |
+  +-- Is the response CATEGORICAL (pass/fail, ordinal grade)?
+        |
+        YES
+        |
+        +-- Is there a known STANDARD / reference answer per sample?
+        |     |
+        |     +-- Binary pass/fail with a numeric reference per part?
+        |     |     -> iqr_detection()            [Attribute Gage Analytic]
+        |     |
+        |     +-- Want concordance between two raters only?
+        |     |     |
+        |     |     +-- Two raters, nominal scale
+        |     |     |     -> iqr_cohen_kappa()    [Cohen's kappa]
+        |     |     |
+        |     |     +-- Two raters, ordinal or distribution-free
+        |     |           -> iqr_wagner()         [Wagner two-way]
+        |     |
+        |     +-- Three or more raters, or multiple trials per rater?
+        |           -> iqr_fleiss_kappa()         [Fleiss kappa]
+        |           (use iqr_attr_gage(method="fleiss") for the full
+        |            agreement report including within/between/standard)
+```
+
+**Cohen vs Fleiss vs Wagner — quick rules**
+
+| Question | Choose |
+|---|---|
+| Exactly two raters, each sample rated once by each, nominal scale? | Cohen's kappa |
+| Three or more raters, or repeated trials, any scale? | Fleiss kappa (with optional Kendall coefficients for ordinal scales) |
+| Two raters, want a distribution-free concordance proportion with a bias-proportion diagnostic? | Wagner method |
+
+## 6. Bundled Sample Data
+
+The package ships six public Minitab sample data sets in
+`inst/extdata/minitab_msa/`. They are the same worksheets used by the
+Minitab *Stat > Quality Tools > Gage Study* menus and are distributed
+under Minitab's public sample-data licence. Each is provided both as a
+`.MWX` Minitab worksheet and as a UTF-8 `.csv` for direct use in R.
+
+| File | Rows × Cols | Columns | Study Type | Source |
+|---|---|---|---|---|
+| `量具数据.csv` | 90 × 3 | `部件`, `操作员`, `测量` (Part, Operator, Measurement) | Crossed Gage R&R (AIAG classic) | AIAG MSA Reference Manual, 4th edition (Minitab sample data) |
+| `硬盖厚度.csv` | 50 × 1 | `厚度` (Hardcoat thickness) | Type 1 Gage Study (Bias) | AIAG MSA Reference Manual, 4th edition (Minitab sample data) |
+| `轴承直径.csv` | 60 × 3 | `部件`, `主水平`, `响应` (Part, Main level, Response) | Nested Gage R&R | AIAG MSA Reference Manual, 4th edition (Minitab sample data) |
+| `织物印刷质量.csv` | 400 × 5 | `检验员`, `响应`, `样本`, `试验`, `标准` (Inspector, Response, Sample, Trial, Standard) | Attribute Agreement | AIAG MSA Reference Manual, 4th edition (Minitab sample data) |
+| `汽车螺栓.csv` | 10 × 3 | `部件号`, `参考值`, `接受次数` (Part, Reference, Acceptances) | Attribute Gage (Analytic) | AIAG MSA Reference Manual, 4th edition (Minitab sample data) |
+| `陶瓷部件.csv` | 60 × 3 | `部件`, `操作员`, `响应` (Part, Operator, Response) | Crossed Gage R&R | AIAG MSA Reference Manual, 4th edition (Minitab sample data) |
+
+Load any data set with the canonical `system.file()` pattern so that the
+vignette works regardless of the working directory:
+
+```r
+hardcoat_path <- system.file("extdata/minitab_msa/硬盖厚度.csv",
+                             package = "iQualityR.msa")
+hardcoat <- read.csv(hardcoat_path, fileEncoding = "UTF-8")
+head(hardcoat, 3)
+#>          厚度
+#> 1 0.02498525
+#> 2 0.02501149
+#> 3 0.02499991
+```
+
+## 7. AIAG MSA Acceptance Criteria
+
+The analyzer classes evaluate the computed statistics against the following
+AIAG MSA 4th edition thresholds. The overall verdict takes the *worst* of
+the independently assessed criteria.
+
+| Metric | Accept | Marginal | Reject |
+|---|---|---|---|
+| **%GRR (%Study Var)** | < 10 % | 10 % - 30 % | > 30 % |
+| **%GRR (%Tolerance)** | < 10 % | 10 % - 30 % | > 30 % |
+| **NDC** (number of distinct categories) | ≥ 5 | 4 | < 4 |
+| **Cg** (Type 1, repeatability) | ≥ 1.33 | 1.00 - 1.33 | < 1.00 |
+| **Cgk** (Type 1, capability with bias) | ≥ 1.33 | 1.00 - 1.33 | < 1.00 |
+| **%Bias of Tolerance** (Type 1) | < 10 % | 10 % - 20 % | > 20 % |
+| **VDA 5 %QMS** | < 15 % | 15 % - 30 % | > 30 % |
+| **Gage Linearity** slope | \|slope\| < 0.1 | 0.1 - 0.2 | > 0.2 |
+| **Gage Linearity** R² | ≥ 0.95 | 0.80 - 0.95 | < 0.80 |
+| **Cohen / Fleiss kappa** | ≥ 0.90 (Excellent) | 0.60 - 0.90 (Moderate-Good) | < 0.60 (Poor-Fair) |
+
+The `interpretation` field returned by every analyzer carries the
+machine-readable `status` (`"accept"`, `"marginal"`, `"reject"`), a
+human-readable `message`, the per-criterion sub-statuses, and the
+`criteria` string documenting which thresholds were applied.
+
+## 8. Theoretical Background
+
+### 8.1 Sources of Measurement Variation
+
+A measurement system is characterised along two orthogonal axes:
+
+| Axis | Components | Question answered |
+|---|---|---|
+| **Accuracy** (location) | Bias, Linearity, Stability | Does the gage read the right *value*? |
+| **Precision** (spread) | Repeatability, Reproducibility | Does the gage give the same *value* on repetition? |
+
+- **Bias** — the difference between the observed average and the reference
+  value.
+- **Linearity** — the change in bias across the operating range of the gage.
+- **Stability** — the change in bias over time.
+- **Repeatability** — variation when the *same* operator measures the *same*
+  part with the *same* gage (`EV`, equipment variation).
+- **Reproducibility** — variation when *different* operators measure the
+  *same* part (`AV`, appraiser variation).
+
+Together, repeatability and reproducibility form the **Gage R&R** portion of
+the total variation.
+
+### 8.2 Crossed Gage R&R Variance Decomposition
+
+For a crossed design in which part $i$ is measured by operator $j$ on
+replicate $k$, the two-way ANOVA model with interaction is
+
+$$
+y_{ijk} = \mu + P_i + O_j + (PO)_{ij} + \varepsilon_{ijk}
+$$
+
+with $\varepsilon_{ijk} \sim N(0, \sigma^2_{\text{repeat}})$ and
+$(PO)_{ij} \sim N(0, \sigma^2_{\text{interaction}})$. The expected mean
+squares yield the variance components:
+
+$$
+\hat\sigma^2_{\text{repeat}} = MS_{\text{error}},
+\quad
+\hat\sigma^2_{\text{interaction}} = \max\!\left(\frac{MS_{PO} - MS_{\text{error}}}{r},\;0\right)
+$$
+
+$$
+\hat\sigma^2_{\text{operator}} = \max\!\left(\frac{MS_O - MS_{PO}}{p\,r},\;0\right),
+\quad
+\hat\sigma^2_{\text{part}} = \max\!\left(\frac{MS_P - MS_{PO}}{o\,r},\;0\right)
+$$
+
+where $p$ = number of parts, $o$ = number of operators, $r$ = replicates.
+The total Gage R&R variance is
+$\hat\sigma^2_{\text{GRR}} = \hat\sigma^2_{\text{repeat}} + \hat\sigma^2_{\text{operator}} + \hat\sigma^2_{\text{interaction}}$
+and the total variation is
+$\hat\sigma^2_{\text{total}} = \hat\sigma^2_{\text{GRR}} + \hat\sigma^2_{\text{part}}$.
+
+If the interaction p-value exceeds `alpha_lim` (default 0.25), the model is
+refit without the interaction term and the simplified formulas
+$\hat\sigma^2_{\text{operator}} = \max((MS_O - MS_{\text{error}})/(p\,r), 0)$
+and $\hat\sigma^2_{\text{part}} = \max((MS_P - MS_{\text{error}})/(o\,r), 0)$
+are used instead.
+
+The reported metrics are:
+
+$$
+\%\text{Contribution} = 100\,\frac{\hat\sigma^2}{\hat\sigma^2_{\text{total}}},
+\qquad
+\%\text{Study Var} = 100\,\frac{6\,\hat\sigma}{6\,\hat\sigma_{\text{total}}},
+\qquad
+\text{NDC} = \left\lfloor 1.41\,\sqrt{\frac{\hat\sigma^2_{\text{part}}}{\hat\sigma^2_{\text{GRR}}}}\right\rfloor
+$$
+
+### 8.3 Nested Gage R&R Variance Decomposition
+
+When each part is measured by only one operator (destructive testing), the
+model becomes
+
+$$
+y_{ijk} = \mu + O_j + P(O)_{j(i)} + \varepsilon_{ijk}
+$$
+
+where $P(O)_{j(i)}$ denotes part $i$ nested within operator $j$. The
+expected mean squares give
+
+$$
+\hat\sigma^2_{\text{repeat}} = MS_{\text{error}},
+\quad
+\hat\sigma^2_{\text{part(operator)}} = \max\!\left(\frac{MS_{P(O)} - MS_{\text{error}}}{r},\;0\right),
+\quad
+\hat\sigma^2_{\text{operator}} = \max\!\left(\frac{MS_O - MS_{P(O)}}{p\,r},\;0\right)
+$$
+
+with $\hat\sigma^2_{\text{GRR}} = \hat\sigma^2_{\text{repeat}} + \hat\sigma^2_{\text{operator}}$.
+No interaction term is estimable in a nested design.
+
+### 8.4 Cg / Cgk Formulas (Type 1 Gage Study)
+
+For $n$ repeated measurements of a single reference with sample standard
+deviation $s$ and tolerance $T = USL - LSL$:
+
+$$
+\text{Bias} = \bar{x} - x_{\text{ref}},
+\qquad
+C_g = \frac{k \cdot T}{6\,s},
+\qquad
+C_{gk} = \frac{k\,T/2 - |\text{Bias}|}{3\,s}
+$$
+
+with the default multiplier $k = 0.2$. The bias is tested with a two-sided
+t-test of $H_0: \text{Bias} = 0$ on $n-1$ degrees of freedom, and the VDA 5
+combined standard uncertainty is
+
+$$
+u_{MS} = \sqrt{u^2_{\text{EVR}} + u^2_{\text{RE}} + u^2_{\text{BI}} + u^2_{\text{CAL}} + u^2_{\text{REST}}},
+\qquad
+\%QMS = 100 \cdot \frac{2\,u_{MS}}{T}
+$$
+
+where $u_{\text{EVR}} = s/\sqrt{n}$, $u_{\text{RE}} = \text{resolution}/(2\sqrt{3})$,
+and $u_{\text{BI}}$ is the standard error of the bias.
+
+### 8.5 Kappa Statistics
+
+For nominal-scale agreement between raters, let $P_o$ be the observed
+proportion of agreement and $P_e$ the expected agreement under chance.
+
+$$
+\kappa = \frac{P_o - P_e}{1 - P_e}
+$$
+
+- **Cohen's kappa** — two raters, each sample rated once. $P_e$ is the sum
+  over categories of the product of the marginal proportions.
+- **Fleiss' kappa** — $n$ subjects each rated by $r$ raters into $k$
+  categories. $P_o$ is the mean over subjects of
+  $\frac{1}{r(r-1)}\sum_j n_{ij}^2 - r$, and $P_e = \sum_j p_j^2$ where
+  $p_j$ is the overall proportion of category $j$.
+- **Wagner two-way** — distribution-free concordance proportion
+  $V = n_{\text{concordant}}/n$ with a bias-proportion diagnostic `BP`.
+  $V \ge 0.75$ is acceptable, $0.50 \le V < 0.75$ conditional,
+  $V < 0.50$ unacceptable.
+
+For **ordinal** scales, `KappaAnalyzer` additionally reports Kendall's $W$
+(between appraisers), Kendall's $\tau_b$ (each appraiser vs standard), and
+an overall appraiser-vs-standard $\tau$.
+
+**Kappa interpretation bands** (used by `KappaAnalyzer$interpret_kappa()`):
+
+| $\kappa$ range | Interpretation |
+|---|---|
+| $< 0$ | Poor |
+| $0.00 - 0.20$ | Slight |
+| $0.21 - 0.40$ | Fair |
+| $0.41 - 0.60$ | Moderate |
+| $0.61 - 0.75$ | Good |
+| $0.76 - 0.90$ | Strong |
+| $> 0.90$ | Excellent |
+
+## 9. Topic Vignettes Index
+
+This overview is the entry point. Each specialised topic is developed in
+its own vignette:
+
+| Vignette | Title | Call |
+|---|---|---|
+| `type1-gage-study` | Type 1 Gage Study: Bias and Repeatability | `vignette("type1-gage-study", package = "iQualityR.msa")` |
+| `gage-linearity` | Gage Linearity and Bias Study | `vignette("gage-linearity", package = "iQualityR.msa")` |
+| `gage-rr-crossed` | Crossed Gage R&R Study | `vignette("gage-rr-crossed", package = "iQualityR.msa")` |
+| `gage-rr-nested` | Nested Gage R&R Study | `vignette("gage-rr-nested", package = "iQualityR.msa")` |
+| `gage-rr-batch` | Batch Gage R&R for Multi-Spec Parts | `vignette("gage-rr-batch", package = "iQualityR.msa")` |
+| `attribute-agreement` | Attribute Agreement Analysis | `vignette("attribute-agreement", package = "iQualityR.msa")` |
+| `attribute-gage-analytic` | Attribute Gage Study (Analytic Method) | `vignette("attribute-gage-analytic", package = "iQualityR.msa")` |
+
+## 10. Installation & Quick Start
+
+`iQualityR.msa` is part of the `iQualityR` ecosystem and depends on
+`iQualityR.core` and `iQualityR.stat`. From inside the repository:
+
+```r
+# Install the foundation packages first, then iQualityR.msa
+install.packages("packages/iQualityR.core", repos = NULL, type = "source")
+install.packages("packages/iQualityR.stat", repos = NULL, type = "source")
+install.packages("packages/iQualityR.msa",  repos = NULL, type = "source")
+
+library(iQualityR.msa)
+```
+
+The minimal end-to-end example below runs a Type 1 Gage Study on the
+bundled `硬盖厚度.csv` (hardcoat thickness) data set. The reference value is
+0.025 inch and the tolerance is 0.0007 inch (LSL = 0.02465, USL = 0.02535),
+matching the Minitab Type 1 Gage Study help documentation.
+
+```r
+library(iQualityR.msa)
+
+# Load the bundled hardcoat-thickness data set
+hardcoat_path <- system.file("extdata/minitab_msa/硬盖厚度.csv",
+                             package = "iQualityR.msa")
+hardcoat <- read.csv(hardcoat_path, fileEncoding = "UTF-8")
+
+# Run a Type 1 Gage Study: reference = 0.025, tolerance = 0.0007
+task <- iqr_type1_bias(
+  data           = hardcoat,
+  reference_value = 0.025,
+  lsl            = 0.02465,
+  usl            = 0.02535
+)
+
+# Inspect the Minitab-style summary table
+task$summary()
+#>
+#> ========== Type 1 Gage Study ==========
+#>            Statistic           Value
+#> 1                 N             50
+#> 2         Reference  0.025000
+#> 3              Mean  0.024996
+#> 4             StDev  0.000031
+#> 5    6 * StDev (SV)  0.000184
+#> 6         Tolerance  0.000700
+#> 7              Bias -0.000004
+#> 8                 T -0.872
+#> 9           P-value  0.3880
+#>
+#> --- Gage Capability ---
+#>                          Metric     Value Decision
+#> 1                            Cg     1.137     FAIL
+#> 2                           Cgk     1.128     FAIL
+#> 3       %Var (Repeatability)    26.30%
+#> 4 %Var (Repeatability and Bias)  26.38%
+#> 5        %Bias of Tolerance     0.59%
+#>
+#> --- VDA 5 Uncertainty ---
+#>   Component     Value Decision
+#> 1      uEVR 0.0000044
+#> 2       uRE 0.0000000
+#> 3       uBI 0.0000044
+#> 4      uCAL 0.0000000
+#> 5     uREST 0.0000000
+#> 6       uMS 0.0000062
+#> 7      %QMS     1.78%     PASS
+```
+
+The study shows that the gage has negligible bias (the 95 % confidence
+interval for the bias straddles zero, p = 0.388) but its repeatability
+slightly exceeds the AIAG acceptance threshold: Cg = 1.14 and Cgk = 1.13
+fall below the 1.33 cut-off, so the gage is **not** acceptable as a
+production gage without further investigation. The VDA 5 combined
+uncertainty `%QMS = 1.78 %` is well inside the 15 % limit, confirming that
+the dominant issue is short-term repeatability rather than systematic
+uncertainty.
+
+To render the diagnostic charts and export a full report:
+
+```r
+# Six-panel Minitab-style chart (run chart + capability + VDA 5)
+task$plot(type = "summary")
+
+# Export the deliverable
+task$report(format = "html", path = "type1_hardcoat_report.html")
+task$report(format = "excel", path = "type1_hardcoat_report.xlsx")
+```
+
+## 11. References
+
+- **AIAG**. *Measurement Systems Analysis Reference Manual*, 4th edition.
+  Automotive Industry Action Group, Southfield MI, 2010. Defines the Type 1
+  gage study, linearity & bias, crossed/nested Gage R&R (ANOVA and Xbar-R),
+  attribute agreement, and the attribute gage analytic method, together with
+  the `%GRR` / NDC acceptance criteria used throughout this package.
+
+- **VDA**. *VDA 5 — Capability of Measurement Processes*, 2nd revised
+  edition. Verband der Automobilindustrie, Berlin, 2011. Defines the
+  measurement-uncertainty budget (`uMS`, `%QMS`) implemented in
+  `Type1Analyzer$compute_vda5()`.
+
+- **Minitab** help documentation, *Stat > Quality Tools > Gage Study*.
+  <https://support.minitab.com/en-us/minitab/21/help-and-how-to/quality-and-process-improvement/quality-tools/gage-study/>
+
+- **Minitab** public MSA sample data sets.
+  <https://support.minitab.com/en-us/datasets/measurement-systems-analysis-data-sets/>
+
+- **Cohen, J.** (1960). A coefficient of agreement for nominal scales.
+  *Educational and Psychological Measurement*, 20(1), 37-46.
+
+- **Fleiss, J. L.** (1971). Measuring nominal scale agreement among many
+  raters. *Psychological Bulletin*, 76(5), 378-382.
+
+- **Wagner, C. H.** (1982). Simpson's paradox in real life. *The American
+  Statistician*, 36(1), 46-48. (Source of the two-way concordance
+  proportion used by the Wagner method.)
+
+- `iQualityR.core` package documentation, for the
+  `IqrTaskBase` / `IqrPlanBase` / `IqrAnalyzerBase` / `IqrPlotterBase` /
+  `IqrReporter` / `IqrTheme` base classes that underpin the TPAPR
+  architecture described in Section 2.

@@ -1,0 +1,426 @@
+---
+title: "Analysis & Visualization with iQualityR.doe"
+author: "iQualityR Team"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Analysis & Visualization with iQualityR.doe}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4,
+  fig.align = "center"
+)
+```
+
+## 1. Introduction
+
+Once an experimental design is generated and response data collected, the
+analysis phase answers: **Which factors matter? How large are the effects?
+Is the model adequate?** `iQualityR.doe` provides an integrated analysis
+and visualization toolkit covering ANOVA, effect estimation, model
+diagnostics, model selection, VIF, uncoded equations, fold-over
+augmentation, botched-run handling, and 16 plot types.
+
+This vignette uses a **welding-strength case study** to demonstrate the
+full analysis workflow.
+
+```{r setup}
+library(iQualityR.doe)
+set.seed(42)
+```
+
+## 2. Case Study: Welding Process Optimization
+
+### Problem
+
+A manufacturing engineer investigates 4 factors affecting weld shear
+strength: Current (A), Voltage (B), Gas Flow (C), and Travel Speed (D).
+A $2^4$ full factorial with 3 center points was run.
+
+```{r data}
+factors <- lapply(LETTERS[1:4], function(nm) {
+  list(name = nm, type = "continuous", levels = c(-1, 1))
+})
+
+plan <- IqrDoePlan$new(
+  task_tag      = "welding",
+  design_type   = "factorial",
+  factors       = factors,
+  center_points = 3,
+  randomize     = FALSE,
+  response_vars = "Strength"
+)
+
+task <- IqrDoeTask$new(plan = plan, theme = "academic")
+analyzer <- DoeAnalyzer$new()
+results <- analyzer$run(plan = plan)
+design <- results$design_info
+
+# Simulate response: A and C are active, with a mild AC interaction.
+design$Strength <- 400 + 25 * design$A - 15 * design$C +
+  10 * design$A * design$C +
+  rnorm(nrow(design), 0, 3)
+
+task <- IqrDoeTask$new(plan = plan, data = design, theme = "academic")
+task$compute()
+```
+
+## 3. Model Summary & ANOVA
+
+### 3.1 Summary output
+
+```{r summary}
+task$summary()
+```
+
+The summary displays the design metadata, ANOVA table, coefficient
+estimates, and model fit statistics ($R^2$, adjusted $R^2$).
+
+### 3.2 Accessing results programmatically
+
+All results are stored in `task$results`:
+
+```{r results-structure}
+names(task$results)
+```
+
+## 4. Effect Estimation & Unreplicated Designs
+
+### 4.1 Lenth's PSE for unreplicated factorials
+
+When no replication exists, standard ANOVA cannot estimate error.
+Lenth's (1989) PSE method identifies active effects. The half-normal and
+Pareto plots (below) internally compute Lenth's PSE and draw reference
+lines. For a direct computation, extract the effects from the model:
+
+```{r lenth}
+# Fit a model with all main effects and two-factor interactions.
+model_full <- lm(Strength ~ (A + B + C + D)^2, data = design)
+beta <- coef(model_full)
+effects <- 2 * beta[names(beta) != "(Intercept)"]
+analyzer <- DoeAnalyzer$new()
+lenth_out <- analyzer$compute_lenth_pse(effects)
+lenth_out$pse
+lenth_out$active_me
+```
+
+### 4.2 Half-normal probability plot
+
+The half-normal plot uses Lenth's PSE internally to draw ME/SME
+reference lines. It requires effects from the task's results:
+
+```{r half-normal}
+# The half-normal plot is rendered by the plotter from effects stored
+# in the task results. Use the full model for effect extraction.
+print(task$plot(type = "half_normal"))
+```
+
+### 4.3 Normal effects plot (signed)
+
+```{r normal-effects}
+print(task$plot(type = "normal_effects"))
+```
+
+### 4.4 Pareto chart of effects
+
+```{r pareto}
+print(task$plot(type = "pareto_effects"))
+```
+
+### Decision
+
+The half-normal and Pareto plots confirm that factors **A** (Current)
+and **C** (Gas Flow), along with the **AC** interaction, are the active
+effects. All other effects fall below the Lenth ME reference line.
+
+## 5. Model Diagnostics
+
+### 5.1 Residual diagnostics (3-panel)
+
+```{r residual}
+print(task$plot(type = "residual"))
+```
+
+### 5.2 Residuals vs predictors
+
+To check whether residuals exhibit curvature against individual
+predictors:
+
+```{r resid-vs-pred}
+print(task$plot(type = "residuals_vs_predictors"))
+```
+
+### Decision
+
+If the Residuals-vs-Fitted panel shows a funnel (heteroscedasticity) or
+the Normal Q-Q deviates at the tails, a transformation (e.g. Box-Cox)
+or additional quadratic terms should be considered.
+
+## 6. Main Effects & Interaction Plots
+
+### 6.1 Main effects plot
+
+```{r main-effects}
+print(task$plot(type = "main_effects"))
+```
+
+### 6.2 Interaction plot
+
+```{r interaction}
+print(task$plot(type = "interaction"))
+```
+
+### 6.3 Full diagnostic panel
+
+```{r full}
+print(task$plot(type = "full"))
+```
+
+## 7. Model Adequacy Metrics
+
+### 7.1 R-squared (predicted) and PRESS
+
+`compute_model_fit_extended()` returns PRESS, $R^2_{pred}$, VIF, and a
+multicollinearity flag:
+
+```{r model-fit}
+fit_ext <- analyzer$compute_model_fit_extended(model_full)
+fit_ext$PRESS
+fit_ext$r_squared_pred
+fit_ext$max_vif
+```
+
+### 7.2 Variance Inflation Factors (VIF)
+
+Standalone VIF computation matches Minitab's Coefficients table VIF column:
+
+```{r vif}
+analyzer$compute_vif(model_full)
+```
+
+VIF > 10 flags harmful multicollinearity. In this orthogonal design, all
+VIFs are 1.
+
+### 7.3 Curvature test
+
+For designs with center points, the curvature test checks for
+quadratic curvature:
+
+```{r curvature}
+curv <- analyzer$test_curvature(
+  model       = model_full,
+  data        = design,
+  response_var = "Strength",
+  factor_vars  = c("A", "B", "C", "D")
+)
+curv$p_value
+curv$interpretation
+```
+
+## 8. Uncoded Coefficient Equation
+
+By default, coefficients are in coded units ($\pm 1$). To obtain the
+regression equation in **actual engineering units**:
+
+```{r uncoded}
+factors_actual <- list(
+  list(name = "A", type = "continuous", levels = c(180, 220)),  # Current (A)
+  list(name = "B", type = "continuous", levels = c(20, 30)),     # Voltage (V)
+  list(name = "C", type = "continuous", levels = c(15, 25)),     # Gas Flow (L/min)
+  list(name = "D", type = "continuous", levels = c(5, 15))       # Travel Speed (mm/s)
+)
+uncoded <- analyzer$get_uncoded_equation(model_full, factors_actual)
+cat(uncoded$equation, "\n")
+```
+
+### Decision
+
+The uncoded equation allows the engineer to predict weld strength directly
+from the machine settings (Current in Amps, Gas Flow in L/min) without
+converting to coded units.
+
+## 9. Model Selection
+
+When the full model contains inert terms, `select_model()` performs
+stepwise / AICc / BIC selection:
+
+```{r select-model}
+selected <- analyzer$select_model(model_full, direction = "backward",
+                                  criterion = "aicc")
+selected$n_terms_initial
+selected$n_terms_final
+```
+
+### Decision
+
+Backward elimination using AICc removes inert terms, yielding a parsimonious
+model with fewer parameters and improved prediction accuracy.
+
+## 10. Design Augmentation
+
+### 10.1 Fold-over for de-aliasing
+
+When a fractional factorial reveals aliased active effects, a fold-over
+adds mirror runs to break the aliasing:
+
+```{r foldover}
+frac_task <- screening_design(
+  factors = lapply(LETTERS[1:5], function(nm) {
+    list(name = nm, type = "continuous", levels = c(-1, 1))
+  }),
+  resolution = "IV",
+  seed = 1
+)
+frac_design <- frac_task$results$design_info[, 1:5]
+
+folded <- analyzer$fold_over(
+  design    = frac_design,
+  factors   = lapply(LETTERS[1:5], function(nm)
+    list(name = nm, type = "continuous", levels = c(-1, 1))),
+  fold_factor = NULL   # full fold-over
+)
+nrow(folded)
+table(folded$Foldover)
+```
+
+### 10.2 Augment factorial to CCD
+
+To fit a second-order model, augment the factorial with axial points:
+
+```{r augment-ccd}
+augmented <- analyzer$augment_to_ccd(
+  design      = design[, 1:4],
+  factors     = factors_actual,
+  alpha_type  = "rotatable",
+  n_center_points = 4
+)
+nrow(augmented)
+table(augmented$PointType)
+```
+
+### Decision
+
+Fold-over doubles the 16-run fractional to 32 runs, fully de-aliasing all
+effects. Augmenting to CCD adds axial points enabling response-surface
+analysis (see the *RSM & Optimization* vignette).
+
+## 11. Botched Runs Handling
+
+In practice, planned levels sometimes deviate. The `handle_botched_runs()`
+method replaces planned levels with actual measured levels and re-fits the
+model:
+
+```{r botched}
+# Simulate: actual A for run 3 was 185 instead of 180 (coded -1).
+actual <- design[, 1:4]
+actual$A[3] <- -0.75   # Deviates from planned -1
+
+botched_result <- analyzer$handle_botched_runs(
+  design       = design,
+  actual_data  = cbind(actual, Strength = design$Strength),
+  factor_names = c("A", "B", "C", "D"),
+  response_name = "Strength"
+)
+botched_result$changed_cols
+botched_result$design_corrected$A[3]
+```
+
+### Decision
+
+The corrected design reflects what truly happened on the shop floor. The
+re-fitted model uses actual levels, ensuring the analysis is valid.
+
+## 12. Power & Sample Size
+
+Before running an experiment, verify the design has adequate power:
+
+```{r power}
+power_out <- analyzer$compute_power(
+  n_factors     = 4,
+  n_replicates  = 1,
+  effect_size   = 15,
+  sigma         = 5,
+  n_center_points = 3
+)
+power_out$power
+power_out$interpretation
+```
+
+### Power curve visualization
+
+```{r power-curve}
+curve_df <- analyzer$plot_power_curve(
+  n_factors     = 4,
+  n_replicates  = 1,
+  sigma         = 5,
+  n_points      = 20,
+  max_effect    = 20
+)
+# Render as a ggplot.
+library(ggplot2)
+ggplot(curve_df, aes(Effect_Size, Power)) +
+  geom_line(color = "#2C7BB6", linewidth = 1) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "gray50") +
+  labs(title = "Power Curve (4 factors, sigma=5)",
+       x = "Effect Size", y = "Power") +
+  theme_minimal()
+```
+
+### Sample size calculation
+
+```{r sample-size}
+ss <- analyzer$compute_sample_size(
+  n_factors    = 4,
+  effect_size  = 15,
+  sigma        = 5,
+  target_power = 0.90
+)
+ss$n_replicates
+ss$achieved_power
+```
+
+## 13. Reporting
+
+### 13.1 Export to Excel
+
+```{r report-excel, eval=FALSE}
+tmp <- tempfile(fileext = ".xlsx")
+reporter <- DoeReporter$new()
+reporter$output(task$results, plan, format = "excel", path = tmp)
+```
+
+### 13.2 Export to Word / PowerPoint
+
+When the `officer` package is available:
+
+```{r report-office, eval=FALSE}
+# Word
+reporter$output(task$results, plan, format = "word",
+                path = tempfile(fileext = ".docx"))
+# PowerPoint
+reporter$output(task$results, plan, format = "powerpoint",
+                path = tempfile(fileext = ".pptx"))
+```
+
+## 14. Conclusion
+
+This vignette demonstrated the complete analysis workflow:
+
+* **Effect estimation** via Lenth PSE, half-normal, Pareto plots
+* **Model diagnostics** via residual plots and residuals-vs-predictors
+* **Model adequacy** via $R^2_{pred}$, PRESS, VIF, curvature test
+* **Uncoded equations** for engineering-unit interpretation
+* **Model selection** via stepwise / AICc / BIC
+* **Design augmentation** via fold-over and CCD conversion
+* **Botched-run handling** for real-world deviation correction
+* **Power & sample size** for design planning
+* **Reporting** to Excel, Word, and PowerPoint
+
+The next vignette, *Response Surface & Optimization*, extends the analysis
+to second-order models and response-surface methodology.

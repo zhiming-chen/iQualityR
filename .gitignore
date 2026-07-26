@@ -1,0 +1,82 @@
+# =====================================================================
+# iQualityR 仓库根级 .gitignore
+# =====================================================================
+# 本文件排除 R 包构建产物、编辑器/系统临时文件，以及开发过程中的
+# 草稿目录。各子包目录下的 .gitignore 负责包级局部产物（如 /doc/、
+# /Meta/）。
+# data-raw/ 目录【不排除】，用于数据可重现性。
+# =====================================================================
+
+# ---- R 包构建产物 ----
+*.tar.gz
+*.zip
+*.tgz
+*.Rcheck/
+**/*.Rcheck/
+*.log
+
+# ---- C/C++/Fortran 编译产物（安装时自动重新生成）----
+*.o
+*.so
+*.dll
+*.dylib
+**/src/symbols.rds
+
+# 说明：src/RcppExports.cpp 和 R/RcppExports.R 不排除，
+# 它们由 Rcpp::compileAttributes() 生成，但需要提交以保证
+# 不运行 compileAttributes() 也能安装包。
+
+# ---- Vignette 编译输出（保留 .Rmd 源文件）----
+**/inst/doc/
+**/Meta/
+*.html
+*.pdf
+*_cache/
+*_files/
+
+# ---- R 会话/工作区状态 ----
+.Rhistory
+.RData
+.Rapp.history
+.Rproj.user/
+*.Rproj
+
+# ---- testthat 状态与测试输出产物 ----
+**/tests/testthat/_snaps/
+**/tests/testthat/_progress/
+**/tests/testthat/_problems/
+**/tests/testthat/Rplots.pdf
+**/tests/testthat/testthat-problems.rds
+test_*.png
+test_*.pdf
+
+# ---- 临时报告/草稿目录 ----
+temp_reports/
+**/temp_reports/
+**/Untitled/
+**/vignettes_test/
+**/vignettes/_legacy/
+**/vignettes/gage_rr_report_figures/
+**/vignettes/.html
+
+# ---- Packrat / renv 锁文件（本项目未使用）----
+packrat/lib*/
+renv/library/
+renv/staging/
+renv/local/
+renv/active.R
+
+# ---- 系统/编辑器临时文件 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- SQLite / 临时数据库 ----
+*.sqlite
+*.sqlite3
+*.db

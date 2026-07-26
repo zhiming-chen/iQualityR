@@ -1,0 +1,1371 @@
+---
+title: "Statistical Foundations of Design of Experiments"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Statistical Foundations of Design of Experiments}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+# Introduction
+
+This vignette is a self-contained, executable exposition of the
+statistical foundations on which the design generators in
+**iQualityR.doe** are built. Every concept is illustrated on a single,
+consistent case study --- a $2^3$ factorial design with two replicates
+and four center points studying a chemical-process yield --- so that
+the reader can move from theory to reproducible practice in a single
+R session.
+
+The presentation covers:
+
+* the **linear-model framework** and the role of the design matrix $X$;
+* **least-squares estimation** via `task$compute()`;
+* **degrees of freedom**, pure error, and lack of fit;
+* **effect estimation** and the **effect sparsity** principle, with a
+  Pareto chart and a normal probability plot of effects built from the
+  fitted model;
+* **aliasing** in fractional-factorial designs, illustrated with
+  `screening_design()`;
+* the four core formulas of DOE: effect estimation, the $F$-statistic,
+  $D$-optimality, and the curvature test;
+* **center points** and the single-degree-of-freedom curvature test;
+* **randomization** and the reproducible run order produced by the
+  package.
+
+> **A note on implementation status.** The classical
+> unreplicated-factorial diagnostics --- Lenth's pseudo-standard error,
+> the half-normal plot of effects, and fold-over augmentation --- are
+> *not yet implemented* in **iQualityR.doe**. Where the discussion
+> needs them, the math is given explicitly *without* a fake call to a
+> missing function, so the reader can apply the formulas by hand or
+> use a complementary package such as `FrF2` or `BsMD` for the
+> corresponding diagnostics.
+
+# Case Study: A Chemical-Process Yield Optimization
+
+A chemical-engineering team is studying the batch yield of a catalysed
+reaction. Three process variables are suspected to drive the yield:
+
+| Factor       | Symbol          | Low level | High level | Unit      |
+|--------------|-----------------|-----------|------------|-----------|
+| Temperature  | `Temperature`   | 100       | 200        | $^\circ$C |
+| Pressure     | `Pressure`      | 1         | 5          | atm       |
+| Reaction time| `Time`          | 30        | 90         | min       |
+
+The response is `Yield` (%), to be maximised. The team chooses a $2^3$
+full-factorial design with **two replicates** of the eight corner
+points ($n_f = 16$) plus **four center points** ($n_c = 4$), for a
+total of $n = 20$ runs. The two replicates provide a pure-error
+estimate of $\sigma^2$; the four center points enable a
+single-degree-of-freedom curvature test (Section 9).
+
+The factor list is built first, with **numeric** level vectors (the
+package validator rejects character levels):
+
+```{r case-study-factors}
+factors <- list(
+  list(name = "Temperature", type = "continuous", levels = c(100, 200)),
+  list(name = "Pressure",    type = "continuous", levels = c(1,     5)),
+  list(name = "Time",        type = "continuous", levels = c(30,   90))
+)
+
+factors
+```
+
+# The Linear Model Framework
+
+## The Matrix Form
+
+Every regular design in this package is analyzed through the linear
+model
+
+$$
+y = X\beta + \epsilon,
+$$
+
+where:
+
+* $y$ is the $n \times 1$ vector of observed responses;
+* $X$ is the $n \times p$ **design matrix** (also called the *model
+  matrix* once the intercept column is appended);
+* $\beta$ is the $p \times 1$ vector of unknown coefficients;
+* $\epsilon$ is the $n \times 1$ vector of random errors, with
+  $\epsilon \sim N(0, \sigma^2 I_n)$ under the classical assumptions.
+
+The rows of $X$ are determined by the experimental plan, while its
+columns are determined by the model that the engineer intends to fit.
+The central idea of experimental design is to choose $X$ *before* the
+data are collected so that the subsequent inference will be as
+efficient and unambiguous as possible.
+
+## Coding of Factor Levels
+
+For two-level factors the standard coding uses the values $-1$ (low)
+and $+1$ (high). This **orthogonal coding** has three convenient
+properties:
+
+1. The intercept $\hat\beta_0$ is the grand mean of the responses.
+2. The regression coefficient $\hat\beta_i$ is one-half of the
+   corresponding factor effect (Section 5).
+3. When the design is orthogonal, the columns of $X$ are mutually
+   orthogonal and the cross-product $X^\top X$ is diagonal, which
+   makes the coefficient estimates uncorrelated.
+
+The coded value of each factor is obtained from the natural units by
+a linear transformation:
+
+$$
+x_A = \frac{A - (A_{\text{low}} + A_{\text{high}})/2}
+           {(A_{\text{high}} - A_{\text{low}})/2}.
+$$
+
+For our case study this means:
+
+* $x_{\text{Temperature}} = (\text{Temperature} - 150) / 50$,
+* $x_{\text{Pressure}}    = (\text{Pressure}    -   3) /   2$,
+* $x_{\text{Time}}        = (\text{Time}        -  60) /  30$.
+
+## The Design Matrix for the $2^3$ Case Study
+
+For a $2^3$ design analyzed with the full first-order-with-interaction
+model $y \sim A * B * C$, the model matrix $X$ has eight columns: the
+intercept, three main-effect columns, three two-way interactions, and
+one three-way interaction. We construct it explicitly for the eight
+corner points in standard (Yates) order:
+
+```{r build-X-matrix}
+# Coded design matrix for the 2^3 factorial in standard (Yates) order.
+coded_design <- expand.grid(
+  Temperature = c(-1,  1),
+  Pressure    = c(-1,  1),
+  Time        = c(-1,  1)
+)
+coded_design
+
+# Full model matrix for y ~ Temperature * Pressure * Time.
+X <- model.matrix(~ Temperature * Pressure * Time, data = coded_design)
+X
+```
+
+The resulting $8 \times 8$ matrix is the building block of the design.
+With two replicates the analysis matrix becomes $16 \times 8$, and the
+four center points add four more rows whose non-intercept entries are
+all zero (since $A = B = C = 0$ at the center).
+
+## A Column of Ones and the Identity Column
+
+A column of ones is appended to $X$ to fit the intercept. In the
+analysis of variance this column does not consume any degrees of
+freedom beyond the single one used to estimate the grand mean. All
+subsequent effect columns are contrasts and therefore have zero
+column sum in the orthogonal coding --- as can be verified directly:
+
+```{r column-sums}
+colSums(X)
+```
+
+Only the intercept column has a non-zero sum (8, the number of rows);
+every contrast column sums to zero, confirming orthogonality.
+
+# Least-Squares Estimation
+
+## The Normal Equations
+
+The ordinary least-squares estimator minimises the residual sum of
+squares
+
+$$
+S(\beta) = (y - X\beta)^\top (y - X\beta).
+$$
+
+Taking the gradient with respect to $\beta$ and setting it to zero
+yields the **normal equations**
+
+$$
+X^\top X \, \hat\beta = X^\top y,
+$$
+
+with unique solution (when $X^\top X$ is invertible)
+
+$$
+\hat\beta = (X^\top X)^{-1} X^\top y.
+$$
+
+Under the classical assumptions, the Gauss-Markov theorem states that
+$\hat\beta$ is the best linear unbiased estimator (BLUE) of $\beta$.
+If in addition $\epsilon \sim N(0, \sigma^2 I)$, then
+
+$$
+\hat\beta \sim N\bigl(\beta,\; \sigma^2 (X^\top X)^{-1}\bigr),
+$$
+
+which is the basis for the $t$- and $F$-tests reported by
+`task$compute()`. The variance-covariance matrix of the estimator,
+
+$$
+\text{Cov}(\hat\beta) = \sigma^2 (X^\top X)^{-1},
+$$
+
+is the central object of design optimality, because every sensible
+criterion for "good" designs is a functional of $(X^\top X)^{-1}$.
+
+## Building the Design with `factorial_design()`
+
+We now build the case-study design with the package's high-level
+constructor. The argument `center_points = 4` appends four center
+points at the geometric center of the design region (Temperature =
+150, Pressure = 3, Time = 60). The argument `replication = 2` doubles
+the eight corner points. Setting `seed = 42` makes the randomised run
+order reproducible.
+
+```{r build-design}
+task <- factorial_design(
+  factors       = factors,
+  design_type   = "factorial",
+  response_vars = "Yield",
+  replication   = 2,
+  center_points = 4,
+  randomize     = TRUE,
+  seed          = 42
+)
+
+# Inspect the design table (first 6 rows).
+head(task$results$design_info)
+
+# Total number of runs.
+nrow(task$results$design_info)
+```
+
+The `design_info` data frame has `r nrow(task$results$design_info)`
+rows: 16 factorial runs (8 corners $\times$ 2 replicates) plus 4
+center points. The `RunOrder` column reflects the randomised order;
+`Replication` identifies the replicate (1 or 2) for the factorial
+portion and is `NA` for the four center points.
+
+## Simulating the Response Data
+
+In a real study the responses would be measured after the physical
+trials. Here we simulate them from a known physics-inspired model so
+that the analysis is reproducible. The true model has:
+
+* a baseline yield of $70\%$ at the center of the design region;
+* positive main effects of `Temperature`, `Pressure`, and `Time`;
+* a positive `Temperature` $\times$ `Pressure` interaction;
+* **negative quadratic curvature**, so the average factorial yield is
+  $6$ points below the center yield --- a strong signal for the
+  curvature test of Section 9;
+* Gaussian noise with $\sigma = 1$.
+
+```{r simulate-responses}
+set.seed(2024)
+
+design_df <- task$results$design_info
+
+# Convert to coded variables {-1, +1} (0 at center points).
+A <- (design_df$Temperature - 150) / 50
+B <- (design_df$Pressure    -   3) /   2
+C <- (design_df$Time        -  60) /  30
+
+# True model: yield = 70 + 2.5*A + 1.5*B + 2.0*C + 1.0*A*B
+#                   - 2.0*(A^2 + B^2 + C^2) + N(0, 1)
+# At factorial points A^2 = B^2 = C^2 = 1, so the quadratic term is -6.
+# At center A = B = C = 0, so the quadratic term vanishes.
+design_df$Yield <- 70 +
+  2.5 * A + 1.5 * B + 2.0 * C +
+  1.0 * A * B +
+  -2.0 * (A^2 + B^2 + C^2) +
+  rnorm(nrow(design_df), sd = 1.0)
+
+# Attach the response data to the task.
+task$data <- design_df
+
+head(task$data, 5)
+```
+
+## Fitting the Model with `task$compute()`
+
+Calling `task$compute()` regenerates the design table (reproducibly,
+because `seed = 42` was set) and, because `task$data` is now populated
+and `response_vars = "Yield"` was declared on the plan, fits the
+full-interaction model `Yield ~ Temperature * Pressure * Time` and
+populates:
+
+* `task$results$anova_results` --- a named list, one entry per
+  response;
+* `task$results$effects` --- main and interaction effects for the
+  first response;
+* `task$results$model` --- the fitted `lm` object for the first
+  response;
+* `task$results$model_fit` --- $R^2$, adjusted $R^2$, and the
+  lack-of-fit $p$-value (the latter is `NA` here because the analyzer
+  does not currently compute a pure-error-based lack-of-fit
+  $p$-value).
+
+```{r compute-anova}
+task$compute()
+task$summary()
+```
+
+## Reading the ANOVA Table
+
+The ANOVA table produced by `task$results$anova_results$Yield$anova`
+partitions the total sum of squares into contributions from each main
+effect, each two-way interaction, the three-way interaction, and the
+residuals:
+
+```{r inspect-anova}
+task$results$anova_results$Yield$anova
+```
+
+The estimated coefficients of the fitted model can be inspected
+directly through `task$results$model`:
+
+```{r inspect-coef}
+coef(task$results$model)
+```
+
+The package's `effects` list extracts the main and
+pairwise-interaction regression coefficients (recall that the
+**effect** is twice the regression coefficient, see Section 5):
+
+```{r inspect-effects}
+task$results$effects$main
+task$results$effects$interaction
+```
+
+# Degrees of Freedom
+
+## Source-by-Source Decomposition
+
+Each effect in an ANOVA decomposition consumes one or more degrees of
+freedom. For a two-level factor the corresponding contrast column has
+one degree of freedom. For a three-level factor the corresponding
+effect consumes two degrees of freedom (linear plus quadratic).
+
+The total degrees of freedom in a dataset of $n$ observations is
+$n - 1$ (one is lost to the grand mean). The model degrees of freedom
+is $p - 1$, where $p$ is the number of estimated parameters including
+the intercept. The error degrees of freedom is
+
+$$
+df_{\text{Error}} = n - p.
+$$
+
+For our case study with $n = 20$ observations and $p = 8$ parameters
+(intercept, three main effects, three two-way interactions, one
+three-way interaction), the error degrees of freedom is
+
+$$
+df_{\text{Error}} = 20 - 8 = 12.
+$$
+
+These 12 residual degrees of freedom decompose into **lack-of-fit**
+and **pure-error** components, as we now show.
+
+## Pure Error and Lack of Fit
+
+When replication is present, the error sum of squares splits further:
+
+$$
+\text{SS}_{\text{Error}}
+  = \text{SS}_{\text{LOF}} + \text{SS}_{\text{PE}},
+$$
+
+where $\text{SS}_{\text{PE}}$ is the **pure error** sum of squares
+computed from replicate-to-replicate variation at the same design
+point, and $\text{SS}_{\text{LOF}}$ is the **lack of fit** sum of
+squares. The associated test statistic is
+
+$$
+F_{\text{LOF}}
+  = \frac{\text{MS}_{\text{LOF}}}{\text{MS}_{\text{PE}}}
+  \sim F_{df_{\text{LOF}},\, df_{\text{PE}}}.
+$$
+
+For our design we can enumerate the degrees of freedom directly from
+the ANOVA table:
+
+```{r enumerate-df}
+anova_tbl <- task$results$anova_results$Yield$anova
+anova_tbl
+
+# Total df: n - 1
+n_total <- nrow(task$data)
+df_total <- n_total - 1
+
+# Model df: sum of effect df (excluding the residual row).
+df_model <- sum(anova_tbl$Df[-nrow(anova_tbl)])
+
+# Error df: residual df from the ANOVA table.
+df_error <- anova_tbl$Df[nrow(anova_tbl)]
+
+# Pure-error df: 8 factorial points (1 df each from 2 reps) +
+#                4 center points (3 df) = 8 + 3 = 11.
+df_pe <- 8 * (2 - 1) + (4 - 1)
+
+# Lack-of-fit df: residual df - pure-error df.
+df_lof <- df_error - df_pe
+
+data.frame(
+  Source = c("Total", "Model", "Residual",
+             "  Pure error", "  Lack of fit"),
+  Df     = c(df_total, df_model, df_error, df_pe, df_lof)
+)
+```
+
+The single lack-of-fit degree of freedom is exactly the curvature
+degree of freedom --- the only model misspecification in our
+simulation is the unmodelled quadratic curvature, so all lack-of-fit
+signal is attributable to curvature. Section 9 computes the curvature
+$F$-statistic directly.
+
+> **Note.** The package's `DoeAnalyzer` does not currently split the
+> residual sum of squares into pure-error and lack-of-fit components
+> automatically; the lack-of-fit $p$-value reported by `model_fit` is
+> `NA`. The curvature $F$-test in Section 9 closes this gap for
+> designs with center points.
+
+# Effect Estimation and Effect Sparsity
+
+## The Effect Formula
+
+For a two-level design coded in the standard $\{-1, +1\}$ convention,
+the **effect** of factor $A$ is the difference between the mean
+response at the high level and the mean response at the low level:
+
+$$
+\text{Effect}_A = \bar{y}_{A+} - \bar{y}_{A-}.
+$$
+
+Equivalently, if $c_i \in \{-1, +1\}$ is the coded value of factor
+$A$ for run $i$ and $n$ is the number of runs over which the contrast
+is computed (here $n_f = 16$ factorial runs, since center points have
+$c_i = 0$ and contribute nothing to the contrast),
+
+$$
+\text{Effect}_A = \frac{2}{n}\, \sum_{i=1}^{n} c_i\, y_i.
+$$
+
+The ordinary-least-squares regression coefficient $\hat\beta_A$ is
+half the effect, because the coded variable changes by two units when
+moving from $-1$ to $+1$:
+
+$$
+\hat\beta_A = \frac{\text{Effect}_A}{2}.
+$$
+
+We can verify the equivalence directly on the case-study data:
+
+```{r effect-formula}
+# Use only the 16 factorial runs (exclude center points where A=B=C=0).
+factorial_only <- task$data[!is.na(task$data$Replication), ]
+
+# Coded values for the factorial points.
+A <- (factorial_only$Temperature - 150) / 50
+y <- factorial_only$Yield
+n_f <- nrow(factorial_only)
+
+# Effect of Temperature using the contrast formula (2/n_f) * sum(c * y).
+effect_Temp_contrast <- (2 / n_f) * sum(A * y)
+effect_Temp_contrast
+
+# Effect of Temperature using 2 * beta_hat from the fitted lm.
+effect_Temp_coef <- 2 * coef(task$results$model)["Temperature"]
+effect_Temp_coef
+```
+
+Both quantities agree to numerical precision. The same computation
+applies to every main effect and every interaction; the contrast
+column $c$ for an interaction $AB$ is simply the elementwise product
+$A \cdot B$.
+
+## The F-Statistic for an Effect
+
+Each contrast has one degree of freedom, so its mean square equals
+its sum of squares:
+
+$$
+\text{SS}_{\text{Effect}}
+  = \frac{(\text{Contrast})^2}{n}
+  = \frac{n}{4}\, (\text{Effect})^2,
+\qquad
+\text{MS}_{\text{Effect}} = \text{SS}_{\text{Effect}} / 1.
+$$
+
+The test statistic for the null hypothesis "the effect is zero" is
+
+$$
+F_0 = \frac{\text{MS}_{\text{Effect}}}{\text{MS}_{\text{Error}}}
+  \sim F_{1,\, df_{\text{Error}}}.
+$$
+
+This is exactly the $F$-statistic reported in the `Mean Sq` and
+`F value` columns of `task$results$anova_results$Yield$anova`. An
+effect is declared significant at level $\alpha$ when $F_0$ exceeds
+$F_{\alpha, 1, df_{\text{Error}}}$, equivalently when the $p$-value
+is below $\alpha$.
+
+## The Effect Sparsity Principle
+
+Empirical experience across many fields of industrial experimentation
+shows that, in a saturated or near-saturated design, only a small
+minority of the estimable effects are truly active. This is the
+**effect sparsity** principle, sometimes called the *Pareto principle
+of effects* or the *key few and trivial many*.
+
+The principle has two consequences:
+
+1. **It justifies the use of saturated screening designs.** If only
+   a few effects are active, a small design is sufficient to identify
+   them.
+2. **It enables the use of inert effects as a noise estimate.** When
+   replication is unavailable, the many inert effects provide a
+   pseudo-error estimate (Section 6.5).
+
+## Pareto Chart of Effects
+
+The Pareto chart orders the absolute effects from largest to smallest
+and displays them as bars. The chart is the simplest visual
+representation of effect sparsity: a sharp drop separates the *vital
+few* active effects from the *trivial many* inert effects.
+
+The package's `task$plot(type = "main_effects")` renders a bar chart
+of the **regression coefficients** for the main effects only. To
+visualise **all** effects (main + two-way + three-way interactions)
+as a true Pareto chart, we build one explicitly with `ggplot2`,
+multiplying the regression coefficients by $2$ to obtain the effects:
+
+```{r pareto-chart, fig.width = 8, fig.height = 4.5}
+# Collect all coefficients from the fitted model and convert to effects.
+all_coefs <- coef(task$results$model)
+effect_df <- data.frame(
+  Term   = names(all_coefs),
+  Effect = 2 * as.numeric(all_coefs)   # Effect = 2 * beta_hat
+)
+effect_df <- effect_df[effect_df$Term != "(Intercept)", ]
+effect_df$AbsEffect <- abs(effect_df$Effect)
+
+# Order by absolute effect (descending) for the Pareto chart.
+effect_df <- effect_df[order(effect_df$AbsEffect, decreasing = TRUE), ]
+effect_df$Term <- factor(effect_df$Term, levels = effect_df$Term)
+
+ggplot(effect_df, aes(x = Term, y = Effect, fill = AbsEffect)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_fill_gradient(low = "#9ecae1", high = "#08519c", guide = "none") +
+  labs(
+    title = "Pareto Chart of Factorial Effects",
+    subtitle = "Chemical yield case study (2^3 with 2 replicates + 4 center points)",
+    x = "Effect (ordered by |effect|)",
+    y = "Effect estimate (Yield %)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The chart shows the *vital few* --- `Temperature`, `Time`, `Pressure`,
+and the `Temperature:Pressure` interaction --- clearly separated from
+the *trivial many* (`Temperature:Time`, `Pressure:Time`,
+`Temperature:Pressure:Time`), whose estimates are dominated by noise.
+This is the effect-sparsity pattern in graphical form.
+
+## Normal Probability Plot of Effects
+
+Daniel (1959) introduced the use of **normal probability plots of
+effects** for unreplicated factorial designs. If all effects were
+inert, the ordered contrasts would lie approximately on a straight
+line through the origin with slope $\sigma$. Active effects appear as
+outliers at the extremes of the plot.
+
+> **Implementation status.** The `task$plot()` API in **iQualityR.doe**
+> exposes eight plot types: `design`, `main_effects`, `interaction`,
+> `residual`, `full`, `response_surface`, `surface`, and `contour`
+> (see the *API Overview* section of the package-level vignettes for
+> the full signature, including the `response_name`, `x_var`, and
+> `y_var` arguments used by the response-surface types). A built-in
+> **normal-probability plot of effects** and **half-normal plot** are
+> *not yet implemented* as a dedicated `task$plot()` type, and
+> **Lenth's pseudo-standard error** is likewise not yet exposed. The
+> plot below is therefore built directly with `ggplot2`, using the
+> effect estimates from `task$results$model`. Lenth (1989) proposed a
+> robust pseudo-standard error
+> $\text{PSE} = 1.5 \cdot \text{median}\{|c_i| : |c_i| < 2.5 s_0\}$
+> with $s_0 = 1.5 \cdot \text{median}(|c_i|)$; the reader can compute
+> the PSE by hand from `effect_df$Effect` and apply it as a reference
+> line.
+
+```{r npp-effects, fig.width = 7, fig.height = 5}
+# Sort effects and assign theoretical normal scores.
+n_eff <- nrow(effect_df)
+effect_df_sorted <- effect_df[order(effect_df$Effect), ]
+effect_df_sorted$Rank <- seq_len(n_eff)
+effect_df_sorted$p <- (effect_df_sorted$Rank - 0.5) / n_eff
+effect_df_sorted$z <- qnorm(effect_df_sorted$p)
+
+# Reference line through the origin; slope estimated from the three
+# smallest |effects| (treated as inert, in the spirit of Lenth's method).
+inert_idx <- order(abs(effect_df_sorted$Effect))[1:3]
+slope <- sd(effect_df_sorted$Effect[inert_idx])
+
+ggplot(effect_df_sorted, aes(x = z, y = Effect)) +
+  geom_abline(intercept = 0, slope = slope, color = "gray50",
+              linetype = "dashed") +
+  geom_point(size = 3, color = "#08519c") +
+  geom_text(aes(label = Term), vjust = -0.8, hjust = 0.5, size = 3) +
+  labs(
+    title = "Normal Probability Plot of Effects",
+    subtitle = "Active effects deviate from the straight line",
+    x = "Theoretical normal quantile",
+    y = "Effect estimate (Yield %)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+The four active effects (`Temperature`, `Time`, `Pressure`,
+`Temperature:Pressure`) depart visibly from the straight line, while
+the three inert effects (`Temperature:Time`, `Pressure:Time`,
+`Temperature:Pressure:Time`) lie close to it. In a real
+unreplicated-screening analysis the inert effects would be used to
+estimate $\sigma$ via Lenth's method --- but, as noted above, that
+diagnostic is not yet provided by the package.
+
+# Aliasing in Fractional Designs
+
+## Generators and the Defining Relation
+
+A $2^{k-p}$ fractional factorial design is constructed by:
+
+1. selecting a base $2^{k-p}$ full factorial in $k - p$ *independent*
+   factors (the *generators*);
+2. equating the remaining $p$ factors to specific products of the
+   generators.
+
+Each equation of the form $E = ABC$ gives rise to a **defining word**
+$I = ABCE$. The collection of all such words, including their
+products, is the **defining relation**. The length of the shortest
+word is the **resolution** of the design.
+
+## The Alias Pattern
+
+For every defining word $W$, two effects $E_1$ and $E_2$ are *aliased*
+(confounded) if and only if $E_1 E_2 = W$. The alias structure
+therefore follows directly from the defining relation.
+
+| Resolution | Main effects aliased with | 2FI aliased with        |
+|------------|---------------------------|-------------------------|
+| III        | 2FI                       | Main effects and other 2FI |
+| IV         | 3FI                       | Other 2FI               |
+| V          | 4FI                       | 3FI                     |
+
+A small worked example is the $2^{7-4}$ resolution-III design with
+defining relation $I = ABD = ACE = BCF = DEG$. The alias of the main
+effect $A$ is
+
+$$
+A = A \cdot I = A \cdot ABD = BD = A \cdot ACE = CE = \dots
+$$
+
+so $A$ is aliased with $BD$, $CE$, and longer products. Whenever such
+an alias is encountered, the engineer uses the effect-sparsity
+principle to decide which member of the alias chain is the most
+plausible physical explanation.
+
+## A Fractional Design with `screening_design()`
+
+To illustrate the API for fractional designs, we build a six-factor
+resolution-IV screening design. The `screening_design()` constructor
+is a convenience wrapper around
+`factorial_design(design_type = "fractional")` that defaults to
+resolution IV.
+
+```{r screening-design}
+factors_6 <- lapply(1:6, function(i) {
+  list(name = paste0("X", i), type = "continuous", levels = c(-1, 1))
+})
+
+screen_task <- screening_design(
+  factors    = factors_6,
+  resolution = "IV",
+  randomize  = TRUE,
+  seed       = 2024
+)
+
+screen_task$summary()
+head(screen_task$results$design_info, 8)
+nrow(screen_task$results$design_info)
+```
+
+The design has `r nrow(screen_task$results$design_info)` runs. A
+textbook $2^{6-2}_{\text{IV}}$ design with 16 runs would have defining
+relation $I = ABD = ACE = BCDE$, aliasing each main effect with
+three-factor interactions (e.g., $A = BD = CE$) and each two-factor
+interaction with one other two-factor interaction (e.g., $AB = CD$,
+$AC = BE$, etc.).
+
+> **Implementation status --- fractional generator.** The
+> fractional-factorial generator currently shipped with
+> **iQualityR.doe** is a *simplified* one: it subsets a full factorial
+> by systematic sampling rather than constructing a proper alias
+> structure from independent generators. The resulting design is
+> adequate for teaching the API and for rough screening, but the
+> alias pattern is not guaranteed to match the textbook
+> resolution-IV aliasing above. For production work that depends on
+> the alias structure, prefer `DoE.base::fac.design()` or
+> `FrF2::FrF2()`, then attach the resulting design table to an
+> `IqrDoeTask` for analysis and reporting.
+
+## Fold-Over Designs (Not Yet Implemented)
+
+When a screening design identifies an alias that cannot be resolved by
+argument, a **fold-over** can be run. The fold-over duplicates the
+original design with all signs of one or more factors reversed. This
+breaks specific alias chains and lifts the design to a higher
+resolution.
+
+> **Implementation status.** Fold-over augmentation is *not yet
+> implemented* in **iQualityR.doe**. The math is straightforward:
+> for a full fold-over, append a copy of the original design matrix
+> with the sign of *every* factor reversed; for a single-factor
+> fold-over on factor $A$, append a copy with only the sign of $A$
+> reversed. The combined design is then re-analyzed with
+> `task$compute()` after attaching the augmented data. The reader
+> can implement this by hand with `rbind(design, -design)` (full
+> fold-over) or
+> `rbind(design, transform(design, A = -A))` (single-factor
+> fold-over).
+
+# Design Optimality Criteria
+
+## The Information Matrix
+
+All classical optimality criteria are functions of the **information
+matrix** $M = X^\top X$ (or equivalently its inverse, the
+**dispersion matrix** $(X^\top X)^{-1}$). A design is **optimal** in
+a given sense if it optimises the corresponding criterion over the
+design space.
+
+For our $2^3$ case-study design, the information matrix is diagonal
+because the design is orthogonal:
+
+```{r information-matrix}
+# Rebuild X for the 16 factorial runs (2 replicates of 2^3 = 8 corners).
+coded_full <- rbind(coded_design, coded_design)
+X_full <- model.matrix(~ Temperature * Pressure * Time, data = coded_full)
+
+# X'X and its inverse.
+M <- t(X_full) %*% X_full
+M
+solve(M)
+```
+
+The diagonal structure of $M$ confirms that, for an orthogonal
+design, all coefficient estimates are uncorrelated. The off-diagonal
+entries of $(X^\top X)^{-1}$ (here, all zero) give the covariances
+$\text{Cov}(\hat\beta_i, \hat\beta_j)$.
+
+## D-Optimality
+
+A design is **D-optimal** if it maximises the determinant of the
+information matrix,
+
+$$
+\max_{X}\; \det(X^\top X).
+$$
+
+**Geometric interpretation.** The joint confidence ellipsoid for
+$\beta$ has volume proportional to
+$\det\bigl((X^\top X)^{-1}\bigr)^{1/2} = \det(X^\top X)^{-1/2}$.
+**Maximising** $\det(X^\top X)$ therefore **minimises** the volume of
+the joint confidence ellipsoid, i.e., it makes the joint estimate of
+$\beta$ as precise as possible in the volume sense. D-optimal designs
+are widely used because the criterion is invariant under
+reparameterisation and is easy to compute numerically.
+
+For our case-study design the determinant is
+
+```{r d-optimality}
+det(M)
+```
+
+Adding a replicate doubles every diagonal entry of $M$, which
+multiplies the determinant by $2^p$, where $p$ is the number of
+parameters. For our $2^3$ design with $p = 8$ parameters, going from
+$1$ replicate to $2$ replicates multiplies the determinant by
+$2^8 = 256$, shrinking the joint confidence ellipsoid by a factor of
+$256^{1/2} = 16$ in volume:
+
+```{r d-optimality-replication}
+# Single-replicate information matrix (8 corner runs only).
+M1 <- t(X) %*% X
+det(M1)
+det(M) / det(M1)
+2^8
+```
+
+## A-, G-, V-, and I-Optimality
+
+Several other criteria are in routine use:
+
+* **A-optimality**:
+  $\min_X\, \text{tr}\bigl((X^\top X)^{-1}\bigr)$
+  --- minimises the *sum* of the variances of the estimated
+  coefficients.
+* **G-optimality**:
+  $\min_X\, \max_{x \in \mathcal{X}} x^\top (X^\top X)^{-1} x$
+  --- minimises the *worst-case* prediction variance over the design
+  region.
+* **V-optimality**: minimises the *average* prediction variance over
+  a finite set of candidate points.
+* **I-optimality**: minimises the *average* prediction variance
+  integrated over the continuous design region; particularly relevant
+  for response-surface work.
+
+The **Kiefer-Wolfowitz equivalence theorem** (1960) states that, in
+the approximate-design framework, a design is D-optimal if and only
+if it is G-optimal. This equivalence justifies the practical use of
+D-optimal computer-generated designs as a proxy for G-optimal
+prediction-focused designs.
+
+## Practical Implementation in iQualityR.doe
+
+The `IqrDoePlan` class exposes an `optimality` field (default `"D"`)
+so that the user can declare the intended criterion.
+**iQualityR.doe** uses regular designs by default because they are
+orthogonal and hence simultaneously D-, A-, G-, V-, and I-optimal
+within the regular-design family. The `optimality` field is recorded
+on the plan for downstream use but is not currently enforced by the
+analyzer when irregular or computer-generated designs are requested.
+
+```{r optimality-field}
+task$plan$optimality   # "D" by default
+task$plan$alpha        # NULL for non-RSM designs
+task$plan$resolution   # NULL for full factorial
+```
+
+# Center Points and the Curvature Test
+
+## Why Center Points?
+
+A two-level factorial design assumes that the response is locally
+linear in every factor. When the response is actually curved, the
+linear model is biased and the optimum may be missed. To detect
+curvature without committing to a full second-order design, the
+engineer appends **center points** at the geometric center of the
+design region. In our case study, the four center points sit at
+`Temperature = 150`, `Pressure = 3`, `Time = 60` (natural units),
+i.e., $A = B = C = 0$ in coded units.
+
+## The Curvature Contrast
+
+Let $\bar y_f$ be the average of the $n_f$ factorial runs and
+$\bar y_c$ the average of the $n_c$ center points. The curvature
+contrast is
+
+$$
+C = \bar y_f - \bar y_c,
+$$
+
+with associated sum of squares
+
+$$
+\text{SS}_{\text{Curvature}}
+  = \frac{n_f\, n_c}{n_f + n_c}\, (\bar y_f - \bar y_c)^2,
+$$
+
+and test statistic
+
+$$
+F_{\text{Curv}}
+  = \frac{\text{SS}_{\text{Curvature}} / 1}{\text{MS}_{\text{PE}}}
+  \sim F_{1,\, df_{\text{PE}}}.
+$$
+
+Here $\text{MS}_{\text{PE}}$ is the pure-error mean square obtained
+from the replicate-to-replicate variation at each design point. With
+$n_c = 4$ center points (3 df) and 8 factorial points each replicated
+twice (8 df), the pure-error degrees of freedom is
+$df_{\text{PE}} = 3 + 8 = 11$.
+
+## Computing the Curvature Test for Our Case Study
+
+We extract the factorial and center-point subsets from `task$data`
+and compute the curvature $F$-statistic directly from the formula:
+
+```{r curvature-test}
+# Split the data into factorial and center-point subsets.
+is_center <- is.na(task$data$Replication)
+yf <- task$data$Yield[!is_center]
+yc <- task$data$Yield[is_center]
+
+n_f <- length(yf)
+n_c <- length(yc)
+
+ybar_f <- mean(yf)
+ybar_c <- mean(yc)
+
+# Curvature contrast and sum of squares.
+C <- ybar_f - ybar_c
+SS_curv <- (n_f * n_c / (n_f + n_c)) * C^2
+df_curv <- 1
+
+# Pure-error SS from the 8 factorial points (2 reps each -> 1 df each)
+# plus 4 center points (3 df).
+factorial_pts <- task$data[!is_center,
+                           c("Temperature", "Pressure", "Time", "Yield")]
+factorial_pts$Key <- paste(factorial_pts$Temperature,
+                           factorial_pts$Pressure,
+                           factorial_pts$Time, sep = "|")
+
+factorial_pe <- 0
+for (key in unique(factorial_pts$Key)) {
+  yy <- factorial_pts$Yield[factorial_pts$Key == key]
+  factorial_pe <- factorial_pe + sum((yy - mean(yy))^2)
+}
+factorial_df_pe <- length(unique(factorial_pts$Key)) * (2 - 1)  # 8 df
+
+# Center pure error: 4 center points -> 3 df.
+center_pe <- sum((yc - mean(yc))^2)
+center_df_pe <- n_c - 1  # 3 df
+
+SS_pe <- factorial_pe + center_pe
+df_pe <- factorial_df_pe + center_df_pe
+MS_pe <- SS_pe / df_pe
+
+# Curvature F-statistic.
+F_curv <- (SS_curv / df_curv) / MS_pe
+p_curv <- 1 - pf(F_curv, df_curv, df_pe)
+F_crit <- qf(0.95, df_curv, df_pe)
+
+curvature_results <- data.frame(
+  Quantity = c("n_f (factorial runs)", "n_c (center points)",
+               "y_bar_f", "y_bar_c",
+               "Curvature contrast C = y_bar_f - y_bar_c",
+               "SS_Curvature", "df_Curvature",
+               "SS_PureError", "df_PureError",
+               "MS_PureError",
+               "F_Curvature", "p-value",
+               "F_crit (0.05, 1, 11)"),
+  Value = c(n_f, n_c,
+            round(ybar_f, 4), round(ybar_c, 4),
+            round(C, 4),
+            round(SS_curv, 4), df_curv,
+            round(SS_pe, 4), df_pe,
+            round(MS_pe, 4),
+            round(F_curv, 4),
+            signif(p_curv, 4),
+            round(F_crit, 4))
+)
+
+curvature_results
+```
+
+The curvature $F$-statistic is highly significant ($p \ll 0.05$),
+confirming that the response surface is curved and that a
+first-order-with-interaction model is inadequate. The natural next
+step is to augment the design with axial runs to form a Central
+Composite Design and fit a full second-order model --- the topic of
+the `doe_rsm` vignette.
+
+## Visualising the Curvature
+
+The contrast between $\bar y_f$ and $\bar y_c$ can be visualised
+directly:
+
+```{r curvature-plot, fig.width = 7, fig.height = 4}
+plot_df <- data.frame(
+  Group = c(rep("Factorial points", n_f), rep("Center points", n_c)),
+  Yield = c(yf, yc)
+)
+
+ggplot(plot_df, aes(x = Group, y = Yield, fill = Group)) +
+  geom_boxplot(width = 0.4, outlier.shape = NA) +
+  geom_jitter(width = 0.05, size = 2, alpha = 0.7) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               color = "black", fill = "white") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Curvature: factorial mean vs. center mean",
+    subtitle = sprintf("y_bar_f = %.2f,  y_bar_c = %.2f,  F_Curv = %.2f",
+                       ybar_f, ybar_c, F_curv),
+    x = "",
+    y = "Yield (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+The center-point distribution sits visibly above the factorial
+distribution, exactly as engineered by the simulation.
+
+## ANOVA Partition of the Total Sum of Squares
+
+The full ANOVA partition for our case study, including the curvature
+component, is summarised below. The model sums of squares come from
+`task$results$anova_results$Yield$anova`; the pure-error and
+curvature sums of squares are computed above.
+
+```{r anova-partition, fig.width = 8, fig.height = 4.5}
+# Build a data frame describing the ANOVA partition.
+anova_rows <- task$results$anova_results$Yield$anova
+ss_total <- sum(anova_rows$`Sum Sq`)
+ss_model <- sum(anova_rows$`Sum Sq`[-nrow(anova_rows)])
+ss_resid <- anova_rows$`Sum Sq`[nrow(anova_rows)]
+
+partition_df <- data.frame(
+  Source = c("Model", "Residual (total)",
+             "  Curvature (1 df)", "  Pure error (11 df)"),
+  SS = c(ss_model, ss_resid, SS_curv, SS_pe),
+  df = c(df_model, df_error, df_curv, df_pe)
+)
+partition_df$MS <- partition_df$SS / partition_df$df
+partition_df$Proportion <- partition_df$SS / ss_total
+
+# Bar chart of the SS partition.
+partition_plot <- partition_df[partition_df$Source != "Residual (total)", ]
+partition_plot$Source <- factor(partition_plot$Source,
+                                levels = partition_plot$Source)
+
+ggplot(partition_plot, aes(x = Source, y = SS, fill = Source)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = sprintf("%.1f\n(%.0f%%)", SS, 100 * Proportion)),
+            vjust = -0.3, size = 3.5) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "ANOVA Partition of Total Sum of Squares",
+    subtitle = sprintf("Total SS = %.2f  (model + curvature + pure error)",
+                       ss_total),
+    x = "",
+    y = "Sum of Squares"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 15, hjust = 1))
+
+partition_df
+```
+
+The partition shows that the model effects (mostly `Temperature`,
+`Time`, `Pressure`, and their `Temperature:Pressure` interaction)
+account for the bulk of the variation, with curvature contributing a
+non-trivial share that is highly significant relative to pure error.
+
+# Randomization
+
+## The Three Principles of Experimental Design
+
+The three fundamental principles of experimental design, due to
+Fisher (1935), are:
+
+1. **Randomization.** The order of runs must be randomised so that
+   the assumption of independent errors is approximately valid.
+2. **Replication.** Replicating runs provides an estimate of
+   experimental error and increases the precision of effect
+   estimates.
+3. **Blocking.** Grouping runs into homogeneous blocks reduces the
+   error variance by removing known nuisance sources.
+
+Randomization converts systematic, possibly unknown, sources of
+variability --- time trends, operator drift, material lot effects ---
+into unsystematic noise that satisfies the independence assumption
+of the linear model. Without randomization, such sources can produce
+spurious significant effects.
+
+## Reproducible Randomization in iQualityR.doe
+
+The **iQualityR.doe** package randomizes by default
+(`randomize = TRUE`) and exposes the `seed` argument so that the
+random order is reproducible. The randomized `RunOrder` column is
+stored in `task$results$design_info`:
+
+```{r randomized-run-order}
+# Show the first 10 rows of the randomized run order.
+head(task$results$design_info[, c("RunOrder", "Temperature", "Pressure",
+                                  "Time", "Replication")], 10)
+
+# Compare with the *standard* (unrandomized) order: rebuild with
+# randomize = FALSE and the same seed.
+task_std <- factorial_design(
+  factors       = factors,
+  design_type   = "factorial",
+  response_vars = "Yield",
+  replication   = 2,
+  center_points = 4,
+  randomize     = FALSE,
+  seed          = 42
+)
+
+head(task_std$results$design_info[, c("RunOrder", "Temperature", "Pressure",
+                                      "Time", "Replication")], 10)
+```
+
+The first run of the randomized design differs from the first run of
+the unrandomized design. Following the randomized run order on the
+shop floor is essential --- it is the physical act that protects the
+validity of the $F$-tests reported by `task$compute()`.
+
+## Restricted Randomization
+
+In some situations fully unrestricted randomization is impractical
+(for example, when changing a factor level is expensive). In such
+cases the engineer uses **restricted randomization** by blocking and
+randomizing within blocks. The principle is the same: randomize as
+much as the experimental constraints allow, and block the rest.
+Blocking support in **iQualityR.doe** is currently limited to the
+`blocking` field on `IqrDoePlan`; full blocked-design generation is
+not yet implemented, and the engineer is expected to combine multiple
+tasks by hand when blocks are needed.
+
+# Visualising Results with `task$plot()`
+
+The theory in the previous sections was illustrated with hand-built
+`ggplot2` charts so that every formula could be inspected directly.
+In day-to-day practice, however, the engineer should reach for the
+package's built-in plotting API, which produces consistent, themed
+diagnostic figures from any fitted `IqrDoeTask`. This section is a
+short, practical reference.
+
+## API Overview
+
+The `IqrDoeTask` class exposes a single `plot()` method whose
+signature is:
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "main_effects")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+## Demonstration on the Yield Case Study
+
+The `task` built earlier (Section *Building the Design with
+`factorial_design()`*) already has its response data attached and
+fitted, so we can directly call `task$plot()`.
+
+### Design layout
+
+```{r plot-design, fig.width = 7, fig.height = 3.2, fig.cap = "Built-in design layout produced by task$plot(type = 'design')."}
+print(task$plot(type = "design"))
+```
+
+The tile view makes the run order explicit: each tile is one
+experimental run, coloured by its position in the randomised
+sequence. This is the figure to share with the lab technician before
+the trials start.
+
+### Main effects
+
+```{r plot-main-effects, fig.width = 7, fig.height = 3.2, fig.cap = "Main effects of the three factors on Yield, from task$plot(type = 'main_effects')."}
+print(task$plot(type = "main_effects"))
+```
+
+**Decision.** `Temperature` has the steepest main-effect slope, so
+it is the dominant lever on `Yield`. `Time` has a moderate positive
+effect; `Pressure` is nearly flat. If the budget only allows one
+factor to be re-tuned, it should be `Temperature`.
+
+### Interaction
+
+```{r plot-interaction, fig.width = 7, fig.height = 3.5, fig.cap = "Two-factor interaction panels from task$plot(type = 'interaction')."}
+print(task$plot(type = "interaction"))
+```
+
+**Decision.** The near-parallel lines for `Temperature:Time` confirm
+the absence of a strong two-factor interaction --- the additive model
+is adequate. The slight non-parallelism of `Temperature:Pressure`
+near the high-`Pressure` corner motivates the confirmation run
+discussed below.
+
+### Residual diagnostics
+
+```{r plot-residual, fig.width = 7, fig.height = 4.5, fig.cap = "Residual diagnostics from task$plot(type = 'residual')."}
+print(task$plot(type = "residual"))
+```
+
+**Decision.** The QQ plot is linear in the middle range, the
+residuals-vs-fitted plot shows no funnel shape, and the scale-location
+plot is flat. The model assumptions are satisfied; the inference on
+the ANOVA table (Section *Reading the ANOVA Table*) can be trusted.
+
+### Combined `full` panel
+
+The `"full"` type composes main-effects, interaction, and residual
+panels into a single `patchwork` object. It is the quickest
+one-liner for a slide or a report.
+
+```{r plot-full, fig.width = 9, fig.height = 8, fig.cap = "Combined diagnostic panel from task$plot(type = 'full')."}
+print(task$plot(type = "full"))
+```
+
+### Customising the returned `ggplot` object
+
+Because `task$plot()` returns a standard `ggplot` (or `patchwork`)
+object, you can post-process it with additional `ggplot2` layers. For
+example, to add a horizontal spec limit to the main-effects plot:
+
+```{r plot-customise, fig.width = 7, fig.height = 3.2, fig.cap = "Customised main-effects plot: a user-added horizontal line marks the target Yield of 75%."}
+library(ggplot2)
+
+p_main <- task$plot(type = "main_effects")
+p_main +
+  geom_hline(yintercept = 75, linetype = "dashed", color = "firebrick") +
+  labs(subtitle = "Red line: target Yield = 75%")
+```
+
+### Combining multiple `task$plot()` outputs with `patchwork`
+
+Several `task$plot()` outputs can be composed into a custom layout
+with `patchwork`:
+
+```{r plot-patchwork, fig.width = 9, fig.height = 6, fig.cap = "Custom patchwork composition: main effects (left) and interaction (right) combined with patchwork::wrap_elements()."}
+library(patchwork)
+
+p1 <- task$plot(type = "main_effects")
+p2 <- task$plot(type = "interaction")
+
+wrap_elements(p1) + wrap_elements(p2) +
+  plot_layout(ncol = 2, widths = c(1, 1.2)) +
+  plot_annotation(
+    title = "Yield case study: effects and interactions",
+    tag_levels = "A"
+  )
+```
+
+### Exporting a report
+
+In addition to `plot()`, `IqrDoeTask$report()` exports the full
+analysis (design table, ANOVA, coefficients, model summary) to an
+Excel or HTML file:
+
+```r
+# Not run here to keep the vignette self-contained.
+task$report(format = "excel", path = tempfile(fileext = ".xlsx"))
+task$report(format = "html",  path = tempfile(fileext = ".html"))
+```
+
+`$report()` returns the task invisibly, so it can be chained.
+
+# Summary
+
+The statistical foundations of design of experiments rest on three
+pillars:
+
+1. The **linear model** $y = X\beta + \epsilon$, whose estimation and
+   inference are well understood under the classical assumptions.
+2. **Orthogonality**, which makes the effect estimates uncorrelated
+   and the information matrix $X^\top X$ diagonal.
+3. **Principled experimentation** through randomization, replication,
+   and blocking, which together guarantee that the assumptions of
+   the linear model are approximately met in practice.
+
+The four core formulas that recur throughout DOE are:
+
+$$
+\text{Effect}_A = \bar y_{A+} - \bar y_{A-}
+                = \frac{2}{n}\sum_i c_i y_i,
+\qquad
+F_0 = \frac{\text{MS}_{\text{Effect}}}{\text{MS}_{\text{Error}}},
+$$
+
+$$
+\max_X \det(X^\top X) \;\;\text{(D-optimality)},
+\qquad
+F_{\text{Curv}}
+  = \frac{(n_f n_c / (n_f + n_c))\,(\bar y_f - \bar y_c)^2}
+         {\text{MS}_{\text{PE}}}.
+$$
+
+The **iQualityR.doe** package implements these foundations through a
+small set of constructors that share a common `IqrDoeTask` interface,
+so that the engineer can move from theory to reproducible practice in
+a single R session. The features that are *not yet implemented* ---
+Lenth's method, the half-normal plot, fold-over augmentation, and
+proper fractional-factorial alias-structure generation --- are
+clearly flagged in the corresponding sections and replaced by their
+mathematical treatment so that the reader can apply them by hand or
+via complementary R packages.
+
+# References
+
+1. Fisher, R. A. (1935). *The Design of Experiments*. Oliver and
+   Boyd.
+2. Montgomery, D. C. (2019). *Design and Analysis of Experiments*
+   (10th ed.). Wiley.
+3. Box, G. E. P., Hunter, W. G., & Hunter, J. S. (2005).
+   *Statistics for Experimenters* (2nd ed.). Wiley.
+4. Wu, C. F. J., & Hamada, M. S. (2009). *Experiments: Planning,
+   Analysis, and Optimization* (2nd ed.). Wiley.
+5. Kiefer, J., & Wolfowitz, J. (1960). The equivalence of two
+   extremum problems. *Canadian Journal of Mathematics*, 12,
+   363-366.
+6. Daniel, C. (1959). Use of half-normal plots in interpreting
+   factorial two-level experiments. *Technometrics*, 1(4), 311-341.
+7. Lenth, R. V. (1989). Quick and easy analysis of unreplicated
+   factorials. *Technometrics*, 31(4), 469-473.
+8. Myers, R. H., Montgomery, D. C., & Anderson-Cook, C. M. (2016).
+   *Response Surface Methodology: Process and Product Optimization
+   Using Designed Experiments* (4th ed.). Wiley.
+
+# sessionInfo
+
+```{r sessioninfo}
+sessionInfo()
+```

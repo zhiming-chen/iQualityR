@@ -1,0 +1,34 @@
+Package: iQualityR.capa
+Title: Process Capability Analysis for iQualityR
+Version: 0.1.0
+Description: Provides comprehensive process capability analysis tools,
+  including normal, non-normal, and non-parametric capability analysis,
+  distribution fitting, and related visualizations consistent with
+  the iQualityR ecosystem.
+Authors@R: c(
+    person("iQualityR", "Team", role = c("aut", "cre"),
+           email = "iQualityR@example.com")
+  )
+Depends:
+    R (>= 4.1.0)
+Imports:
+    R6,
+    iQualityR.core (>= 0.1.0),
+    iQualityR.stat (>= 0.1.0),
+    iQualityR.plot (>= 0.1.0),
+    ggplot2,
+    data.table,
+    MASS,
+    patchwork,
+    stats,
+    utils
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat,
+    withr
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+NeedsCompilation: no

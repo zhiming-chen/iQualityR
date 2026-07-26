@@ -1,0 +1,282 @@
+---
+title: "Statistical Enhancement Charts: Adaptive, ARIMA, AEWMA, Change-Point, KDE, T2+MEWMA"
+author: "iQualityR.spc"
+date: "2026-07-05"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Statistical Enhancement Charts: Adaptive, ARIMA, AEWMA, Change-Point, KDE, T2+MEWMA}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE,
+  error = TRUE
+)
+```
+
+```{r setup, echo = FALSE}
+library(iQualityR.spc)
+library(ggplot2)
+set.seed(2026)
+
+# Helper: save plot via ggsave() and display via include_graphics().
+# This avoids knitr's inline graphics device which can crash in R CMD check.
+iqr_plot <- function(task, type = "full", name) {
+  dir.create("figures", showWarnings = FALSE)
+  path <- file.path("figures", paste0(name, ".png"))
+  p <- task$plot(type = type)
+  ggplot2::ggsave(path, p, width = 7, height = 4.5, dpi = 100, bg = "white")
+  knitr::include_graphics(path)
+}
+```
+
+## Overview
+
+This vignette covers the **statistical enhancement charts** introduced in
+`iQualityR.spc` v0.2. These charts extend the Shewhart, time-weighted, and
+multivariate families to handle real-world complications that classical
+charts struggle with:
+
+- **Adaptive rolling-window chart** -- processes with naturally drifting mean
+- **ARIMA residual chart** -- autocorrelated processes
+- **Adaptive EWMA (AEWMA)** -- small sustained shifts with adaptive smoothing
+- **Change-point detection** -- structural breaks in mean or variance
+- **KDE nonparametric chart** -- non-normal underlying distributions
+- **T2 + MEWMA hybrid** -- multivariate processes needing both shift types
+
+All functions return an `IqrSpcTask` object with the standard `summary()`,
+`plot()`, and `results` accessors, so they integrate seamlessly with the
+rest of the iQualityR ecosystem.
+
+## 1. Adaptive Rolling-Window Chart
+
+The adaptive chart recomputes the center line and sigma over a rolling
+window of the most recent `window_size` observations. It is useful for
+processes with naturally drifting mean where fixed limits would produce
+excessive false alarms.
+
+For each point `i`, the center is the mean of the previous `window_size`
+observations (including point `i`), and sigma is estimated via
+`iQualityR.stat::sigma_estimate` on the same window.
+
+```{r}
+df <- data.frame(
+  measurement = c(rnorm(40, 100, 1), rnorm(20, 102, 1))
+)
+task <- run_spc_adaptive(df, "measurement", window_size = 15)
+task$summary()
+iqr_plot(task, "summary", "spc_enhancement_adaptive")
+```
+
+**Tuning guidance**:
+
+- `window_size` >= 5. Smaller windows react faster but are noisier.
+- Larger windows approximate a standard I-MR chart.
+- For drift-plus-shift processes, pair with `run_spc_changepoint` (Section 4)
+  to identify regime boundaries.
+
+## 2. ARIMA Residual Chart
+
+When measurements are autocorrelated (e.g., chemical processes, sensor
+readings), the independence assumption of standard Shewhart charts is
+violated, leading to misleading control limits. The ARIMA residual chart
+fits an ARIMA(p,d,q) model and applies an I-MR chart to the residuals.
+
+```{r}
+# Simulate an AR(1) process with mean 100
+ar1 <- stats::arima.sim(list(ar = 0.6), n = 60, sd = 1) + 100
+df <- data.frame(measurement = as.numeric(ar1))
+task <- run_spc_arima_resid(df, "measurement", arima_order = c(1, 0, 0))
+task$summary()
+```
+
+The fitted ARIMA model coefficients, sigma2, and AIC are stored in
+`task$results$diagnostics` for traceability:
+
+```{r}
+task$results$diagnostics$arima_coef
+task$results$diagnostics$arima_sigma2
+task$results$diagnostics$arima_aic
+```
+
+**Choosing `arima_order`**:
+
+- `c(1, 0, 0)` -- AR(1), suitable for most slowly-drifting sensor data.
+- `c(0, 1, 1)` -- IMA(1,1), equivalent to exponentially smoothed residuals.
+- `c(1, 1, 1)` -- ARIMA(1,1,1), for trending plus autocorrelated data.
+
+Always inspect the residual ACF/PACF before reporting. If residuals still
+show significant autocorrelation, the order is too low.
+
+## 3. Adaptive EWMA (AEWMA)
+
+Standard EWMA uses a fixed smoothing parameter `lambda`, which forces a
+trade-off between sensitivity (small lambda) and responsiveness (large
+lambda). The AEWMA chart varies `lambda` over time based on the magnitude
+of the recent forecast error:
+
+\deqn{\lambda_i = \lambda_0 + (1 - \lambda_0) \cdot \min(1, k \cdot |e_i| / \sigma)}{lambda_i = lambda_0 + (1 - lambda_0) * min(1, k * |e_i| / sigma)}
+
+where `e_i = x_i - z_{i-1}` is the one-step forecast error. Large deviations
+increase `lambda`, making the chart responsive to sudden shifts while
+retaining the smoothing benefit of standard EWMA in steady state.
+
+```{r}
+df <- data.frame(
+  measurement = c(rnorm(30, 100, 1), rnorm(15, 103, 1))
+)
+task <- run_spc_aewma(df, "measurement", aewma_lambda = 0.2, aewma_k = 1.5)
+task$summary()
+iqr_plot(task, "summary", "spc_enhancement_aewma")
+```
+
+**Parameter guidance**:
+
+- `aewma_lambda` in (0, 1]. Base smoothing; 0.2 is a common starting point.
+- `aewma_k` > 0. Larger values trigger faster adaptation. Typical range 1-2.
+- Use AEWMA instead of standard EWMA when the process is subject to
+  occasional large shocks that should be reflected quickly.
+
+## 4. Change-Point Detection
+
+Change-point analysis identifies structural breaks in the process mean or
+variance. Unlike control charts (which monitor for ongoing stability),
+change-point detection is retrospective: it segments the historical data
+into regimes with different parameters.
+
+```{r}
+df <- data.frame(
+  measurement = c(rnorm(30, 100, 1), rnorm(30, 103, 1))
+)
+task <- run_spc_changepoint(df, "measurement")
+task$summary()
+```
+
+Detected change-points are reported with the segment means before and after:
+
+```{r}
+task$results$data_tables$change_points
+```
+
+**Backend selection**:
+
+- If the `changepoint` package is installed, the PELT algorithm is used via
+  `requireNamespace("changepoint", quietly = TRUE)`.
+- Otherwise, an in-house binary-segmentation routine based on cumulative
+  sums is used as a fallback.
+- `cp_method` accepts `"PELT"`, `"AMOC"`, `"SegNeigh"`, or `"BinSeg"`
+  (case-insensitive). `cp_penalty` controls sensitivity; `"MBIC"` is the
+  default and is robust for most applications.
+
+## 5. KDE Nonparametric Chart
+
+When the underlying process distribution is non-normal (e.g., skewed,
+bounded, or multimodal), the standard 3-sigma limits of Shewhart charts are
+inappropriate. The KDE chart derives control limits from the empirical
+distribution via Kernel Density Estimation:
+
+```{r}
+# Non-normal data (exponential)
+df <- data.frame(measurement = rexp(50, rate = 0.1))
+task <- run_spc_kde(df, "measurement")
+task$summary()
+iqr_plot(task, "summary", "spc_enhancement_kde")
+```
+
+The control limits are the empirical 0.135th and 99.865th percentiles
+(equivalent to +-3 sigma under normality), computed from the KDE via
+quantile integration.
+
+**Bandwidth selection**:
+
+- `kde_bandwidth = NULL` (default) uses the Sheather-Jones selector
+  (`bw.SJ`), which is robust for most unimodal distributions.
+- For multimodal data, a smaller bandwidth may be needed to resolve modes.
+- The bandwidth actually used is stored in `task$results$diagnostics`.
+
+```{r}
+task$results$diagnostics$bandwidth
+```
+
+## 6. T2 + MEWMA Hybrid Multivariate Chart
+
+When monitoring multiple correlated variables, the Hotelling T2 chart
+detects large mean shifts while MEWMA detects small sustained shifts. The
+hybrid chart runs both statistics on the same data and flags a violation
+when either exceeds its upper control limit:
+
+```{r}
+df <- data.frame(
+  x1 = c(rnorm(25, 50, 1), rnorm(10, 52, 1)),
+  x2 = c(rnorm(25, 30, 0.8), rnorm(10, 31, 0.8))
+)
+task <- run_spc_t2_mewma(df, lambda = 0.2)
+task$summary()
+```
+
+The combined statistic displayed on the chart is the maximum of
+`T2 / UCL_T2` and `MEWMA / UCL_MEWMA`; a value > 1 indicates a violation.
+Both raw statistics are stored in the `points` data table:
+
+```{r}
+head(task$results$data_tables$points)
+```
+
+**When to use which multivariate chart**:
+
+| Scenario | Recommended Chart |
+|----------|--------------------|
+| Large mean shift detection | T2 alone |
+| Small sustained mean shift detection | MEWMA alone |
+| Both shift types, single dashboard | T2 + MEWMA hybrid |
+| Diagnosing which variable shifted | Pair with `run_spc_t2` per-variable |
+
+## 7. Choosing an Enhancement Chart
+
+| Data characteristic | Recommended chart |
+|---------------------|-------------------|
+| Drifting mean | Adaptive |
+| Autocorrelated residuals | ARIMA residual |
+| Occasional large shocks | AEWMA |
+| Historical regime changes | Change-point |
+| Non-normal distribution | KDE |
+| Multiple correlated vars, mixed shifts | T2 + MEWMA |
+
+## 8. Combining Enhancement Charts
+
+In practice, multiple enhancement charts are often used together. A
+typical workflow for an unfamiliar process:
+
+1. Run `run_spc_changepoint` to identify historical regime boundaries.
+2. Within each regime, run `run_spc_kde` to assess distributional shape.
+3. If non-normal, use KDE chart; if normal but autocorrelated, use ARIMA
+   residual; otherwise standard Shewhart or EWMA.
+4. For real-time monitoring of slow drifts with occasional jumps, prefer
+   AEWMA over standard EWMA.
+5. For multivariate processes, always pair T2 with MEWMA (use the hybrid)
+   unless one shift type is known to be irrelevant.
+
+## References
+
+- Capizzi, G., & Masarotto, G. (2003). An adaptive exponentially weighted
+  moving average control chart. *Technometrics*, 45(3), 199-207.
+- Hotelling, H. (1947). Multivariate quality control. *Techniques of
+  Statistical Analysis*, 111-184.
+- Killick, R., & Eckley, I. A. (2014). changepoint: An R package for
+  changepoint analysis. *Journal of Statistical Software*, 58(3), 1-19.
+- Lowry, C. A., Woodall, W. H., Champ, C. W., & Rigdon, S. E. (1992). A
+  multivariate exponentially weighted moving average control chart.
+  *Technometrics*, 34(1), 46-53.
+- Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+  (7th ed.).
+- Sheather, S. J., & Jones, M. C. (1991). A reliable data-based bandwidth
+  selection method for kernel density estimation. *Journal of the Royal
+  Statistical Society, Series B*, 53(3), 683-690.

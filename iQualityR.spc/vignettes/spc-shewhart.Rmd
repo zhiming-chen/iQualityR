@@ -1,0 +1,220 @@
+---
+title: "Shewhart Control Charts: Variables and Attributes"
+author: "iQualityR.spc"
+date: "2026-07-05"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Shewhart Control Charts: Variables and Attributes}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE,
+  error = TRUE
+)
+```
+
+```{r setup, echo = FALSE}
+library(iQualityR.spc)
+library(ggplot2)
+set.seed(2026)
+
+# Helper: save plot via ggsave() and display via include_graphics().
+# This avoids knitr's inline graphics device which can crash in R CMD check.
+iqr_plot <- function(task, type = "full", name) {
+  dir.create("figures", showWarnings = FALSE)
+  path <- file.path("figures", paste0(name, ".png"))
+  p <- task$plot(type = type)
+  ggplot2::ggsave(path, p, width = 7, height = 4.5, dpi = 100, bg = "white")
+  knitr::include_graphics(path)
+}
+```
+
+## Overview
+
+This vignette demonstrates the **Shewhart control charts** implemented in
+`iQualityR.spc` for variables data (Xbar-R, Xbar-S, I-MR) and attributes
+data (P, NP, U, C, Laney P', Laney U'). These charts are the foundation of
+Statistical Process Control (SPC) and are aligned with the Minitab
+`Stat > Control Charts` menu and ISO 7870-2:2023.
+
+The package reuses the sigma estimation, Nelson rules detection, and control
+limit constants from `iQualityR.stat`, so results are consistent with the
+rest of the iQualityR ecosystem.
+
+## 1. Variables Charts
+
+### 1.1 Xbar-R Chart
+
+Use Xbar-R when data can be grouped into rational subgroups of size 2-10.
+
+```{r}
+df <- data.frame(
+  measurement = rnorm(50, mean = 100, sd = 2),
+  subgroup = rep(1:10, each = 5)
+)
+task <- run_spc_xbar_r(df, "measurement",
+                       subgroup = "subgroup", subgroup_size = 5)
+task$summary()
+iqr_plot(task, "full", "spc_shewhart_xbar_r")
+```
+
+### 1.2 Xbar-S Chart
+
+Xbar-S is preferred when subgroup sizes are larger than 10, because the
+sample standard deviation is a more efficient estimator than the range.
+
+```{r}
+df <- data.frame(
+  measurement = rnorm(60, mean = 50, sd = 1.5),
+  subgroup = rep(1:10, each = 6)
+)
+task <- run_spc_xbar_s(df, "measurement",
+                       subgroup = "subgroup", subgroup_size = 6)
+task$summary()
+```
+
+### 1.3 I-MR Chart
+
+I-MR (Individuals - Moving Range) is used when each subgroup has size 1.
+
+```{r}
+df <- data.frame(measurement = rnorm(30, mean = 100, sd = 1))
+task <- run_spc_imr(df, "measurement")
+task$summary()
+iqr_plot(task, "full", "spc_shewhart_imr")
+```
+
+### 1.4 Out-of-Control Detection
+
+When a point violates a Nelson rule, it is highlighted in red on the chart:
+
+```{r}
+df <- data.frame(measurement = c(rnorm(29, 100, 1), 105))
+task <- run_spc_imr(df, "measurement")
+iqr_plot(task, "summary", "spc_shewhart_ooc")
+```
+
+## 2. Attributes Charts
+
+### 2.1 P Chart
+
+For monitoring the proportion of defective items when sample sizes may vary:
+
+```{r}
+df <- data.frame(
+  defectives = rbinom(20, 100, 0.05),
+  sample_size = rep(100, 20)
+)
+task <- run_spc_p(df, "defectives", "sample_size")
+task$summary()
+```
+
+### 2.2 NP Chart
+
+For counts of defectives with equal sample sizes:
+
+```{r}
+df <- data.frame(
+  defectives = rbinom(15, 50, 0.04),
+  sample_size = rep(50, 15)
+)
+task <- run_spc_np(df, "defectives", "sample_size")
+```
+
+### 2.3 U Chart
+
+For defects per unit:
+
+```{r}
+df <- data.frame(
+  defects = rpois(20, lambda = 4),
+  sample_size = rep(1, 20)
+)
+task <- run_spc_u(df, "defects", "sample_size")
+```
+
+### 2.4 C Chart
+
+For total counts of defects:
+
+```{r}
+df <- data.frame(defects = rpois(20, lambda = 5))
+task <- run_spc_c(df, "defects")
+```
+
+### 2.5 Laney P' and U' Charts
+
+When sample sizes are very large, traditional P and U charts produce too
+many false alarms because they ignore between-subgroup variation. The
+Laney correction (Laney 2002) adjusts for this over-dispersion and is
+recommended by AIAG-VDA SPC (2026).
+
+```{r}
+df <- data.frame(
+  defectives = rbinom(25, 500, 0.05),
+  sample_size = rep(500, 25)
+)
+task <- run_spc_p_laney(df, "defectives", "sample_size")
+task$summary()
+```
+
+## 3. Nelson Rules
+
+All charts apply the 8 Nelson rules by default. Use the `nelson_rules`
+argument to enable specific rules:
+
+```{r}
+df <- data.frame(measurement = rnorm(30, 100, 1))
+task <- run_spc_imr(df, "measurement", nelson_rules = c(1, 2, 3))
+```
+
+The rules are:
+
+| Rule | Description |
+|------|-------------|
+| 1 | 1 point beyond 3 sigma |
+| 2 | 9 consecutive points on same side of center |
+| 3 | 6 consecutive points increasing or decreasing |
+| 4 | 14 consecutive points alternating up and down |
+| 5 | 2 of 3 points beyond 2 sigma (same side) |
+| 6 | 4 of 5 points beyond 1 sigma (same side) |
+| 7 | 15 consecutive points within 1 sigma (stratification) |
+| 8 | 8 consecutive points outside 1 sigma (mixture) |
+
+## 4. Sigma Estimation Methods
+
+The package supports 7 sigma estimation methods via `iQualityR.stat`:
+
+| Method | Code | Default for |
+|--------|------|-------------|
+| Range | `r_bar` | Xbar-R |
+| Standard deviation | `s_bar` | Xbar-S |
+| Pooled SD | `pooled_s` | I-MR-R/S |
+| Moving range (mean) | `mr_bar` | I-MR, EWMA, CUSUM, MA |
+| Moving range (median) | `mr_median` | Robust alternative |
+| Mean successive squared diff | `mssd` | Short-run SPC |
+| Total SD | `total` | Attributes, rare events |
+
+```{r}
+df <- data.frame(measurement = rnorm(30, 100, 1))
+task_mrb <- run_spc_imr(df, "measurement", sigma_method = "mr_bar")
+task_mssd <- run_spc_imr(df, "measurement", sigma_method = "mssd")
+cat("MR-bar sigma:", round(task_mrb$results$statistics$sigma, 4), "\n")
+cat("MSSD sigma: ", round(task_mssd$results$statistics$sigma, 4), "\n")
+```
+
+## References
+
+- Montgomery, D. C. (2013). *Introduction to Statistical Quality Control* (7th ed.).
+- ISO 7870-2:2023. *Shewhart control charts*.
+- AIAG-VDA SPC (2026). *Statistical Process Control*.
+- Laney, D. B. (2002). Improved control charts for attributes. *Quality Engineering*.

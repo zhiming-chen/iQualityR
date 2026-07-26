@@ -1,0 +1,470 @@
+---
+title: "Attribute Gage Study: Analytic Method and Detection Performance"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Attribute Gage Study (Analytic Method)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) {
+  x <- suppressWarnings(as.numeric(x))
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  formatC(x, format = "f", digits = digits)
+}
+fmt_pct <- function(x, digits = 2) {
+  x <- suppressWarnings(as.numeric(x))
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  paste0(formatC(100 * x, format = "f", digits = digits), "%")
+}
+fmt_p <- function(x, digits = 4) {
+  x <- suppressWarnings(as.numeric(x))
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  if (x < 10^-digits) return(paste0("<", formatC(10^-digits, format = "f", digits = digits)))
+  formatC(x, format = "f", digits = digits)
+}
+round_df <- function(x, digits = 4) {
+  x <- as.data.frame(x)
+  num_cols <- vapply(x, is.numeric, logical(1))
+  x[num_cols] <- lapply(x[num_cols], round, digits = digits)
+  x
+}
+```
+
+## 1. Business Context
+
+An automotive supplier produces precision bolts for a safety-critical engine assembly. Each bolt is inspected by an automated **Go / No-Go attribute gage**: the gage either *accepts* the bolt (Pass — it fits the Go ring) or *rejects* it (Fail — it does not). The engineering team needs to validate the gage's **detection capability** — how reliably it identifies non-conforming bolts, especially those whose dimension is close to the specification limit.
+
+The study follows the classical Minitab *Attribute Gage Study (Analytic Method)* example design:
+
+| Parameter | Value |
+|---|---|
+| Product | Automotive engine bolt |
+| Gage type | Go / No-Go attribute (visual / mechanical) |
+| Parts | 10, with known reference dimensions |
+| Trials per part | 20 |
+| Total measurement events | 10 × 20 = 200 |
+| Spec limit (working) | −0.020 (deviation from nominal) |
+| Positive (detect) category | Fail (non-conforming) |
+| Negative category | Pass (conforming) |
+| Reference standard | Master measurement of each part |
+
+The 10 parts are chosen to span the **transition zone** of the gage: some are clearly below the spec limit (the gage should always reject them), some are clearly above (the gage should always accept them), and several are deliberately placed near the spec limit to probe the gage's grey zone.
+
+## 2. Method and Formulas
+
+### Detection rate and false negative rate
+
+Let $x$ be the number of true positives (Fail parts correctly detected as Fail) and $n$ the number of positive reference samples.
+
+$$
+p = \frac{x}{n} = \frac{\#\text{ detections}}{\#\text{ positive trials}}, \qquad
+\mathrm{FNR} = 1 - p
+$$
+
+### Clopper-Pearson exact binomial confidence interval
+
+The exact two-sided $100(1-\alpha)\%$ confidence interval for $p$ is defined by the beta quantile function:
+
+$$
+\mathrm{CI}_{\mathrm{lower}} = B^{-1}(\alpha/2;\, x,\, n - x + 1), \qquad
+\mathrm{CI}_{\mathrm{upper}} = B^{-1}(1 - \alpha/2;\, x + 1,\, n - x)
+$$
+
+This is the most conservative (coverage ≥ nominal) interval and is the default in R's `binom.test()`.
+
+### Binomial hypothesis test
+
+$$
+H_0:\; p \le p_0 \quad \text{vs.} \quad H_1:\; p > p_0
+$$
+
+The p-value is $\Pr(X \ge x \mid p = p_0)$ under the binomial model $\mathrm{Binom}(n, p_0)$. If $p\text{-value} < 0.05$, the gage meets the $p_0$ detection requirement.
+
+### Diagnostic performance metrics
+
+From the 2 × 2 confusion matrix (TP, FN, FP, TN):
+
+$$
+\text{Sensitivity} = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FN}}, \qquad
+\text{Specificity} = \frac{\mathrm{TN}}{\mathrm{TN} + \mathrm{FP}}
+$$
+
+$$
+\text{Youden index} = \text{Sensitivity} + \text{Specificity} - 1
+$$
+
+$$
+\mathrm{LR+} = \frac{\text{Sensitivity}}{1 - \text{Specificity}}, \qquad
+\mathrm{LR-} = \frac{1 - \text{Sensitivity}}{\text{Specificity}}
+$$
+
+$$
+\text{Prevalence} = \frac{\mathrm{TP} + \mathrm{FN}}{N}, \qquad N = \mathrm{TP} + \mathrm{FN} + \mathrm{FP} + \mathrm{TN}
+$$
+
+### Acceptance criteria
+
+| Detection rate | Decision |
+|---|---|
+| $\geq 0.90$ | Acceptable — gage reliably detects non-conforming parts |
+| $0.80$ — $0.89$ | Marginal — conditional acceptance; risk review required |
+| $< 0.80$ | Unacceptable — gage cannot reliably detect non-conforming parts |
+
+## 3. Data Preparation
+
+The bolt study data ships with the package as a UTF-8 CSV file in **summary form**: one row per part with the part number, the known reference dimension (deviation from nominal), and the number of acceptances out of 20 trials.
+
+```{r load-bolt}
+bolt_path <- system.file("extdata/minitab_msa/汽车螺栓.csv", package = "iQualityR.msa")
+bolt_data <- read.csv(bolt_path, fileEncoding = "UTF-8")
+names(bolt_data) <- c("Part", "Reference", "Acceptances")
+
+summary(bolt_data)
+head(bolt_data, 10)
+```
+
+The reference values are numeric deviations ranging from −0.050 to −0.005. As the reference value approaches zero (the nominal), the acceptance count rises sharply — this is the gage's transition zone. We set a **working spec limit of −0.020**: parts with reference below −0.020 are treated as the "Fail" reference standard, and parts at or above −0.020 as the "Pass" reference standard. This split lets us compute both sensitivity and specificity.
+
+To run `iqr_detection()`, we expand the summary into **long format**: one row per trial, with a `Reference` column (the known standard, Pass / Fail) and a `Test` column (the gage's verdict, Pass / Fail).
+
+```{r build-long}
+n_trials <- 20
+spec_limit <- -0.020
+
+long_data <- do.call(rbind, lapply(1:nrow(bolt_data), function(i) {
+  part   <- bolt_data$Part[i]
+  ref_val <- bolt_data$Reference[i]
+  n_acc  <- bolt_data$Acceptances[i]
+
+  ref_std <- ifelse(ref_val < spec_limit, "Fail", "Pass")
+
+  # n_acc trials are classified "Pass" by the gage, the rest "Fail"
+  test_results <- c(rep("Pass", n_acc), rep("Fail", n_trials - n_acc))
+
+  data.frame(
+    Part      = part,
+    Reference = ref_std,
+    Test      = test_results,
+    stringsAsFactors = FALSE
+  )
+}))
+
+head(long_data, 12)
+cat("Long-format rows:", nrow(long_data), "\n")
+table(long_data$Reference, long_data$Test)
+```
+
+The contingency table above already previews the confusion matrix: the gage struggles to classify parts near the spec limit (the off-diagonal counts are concentrated in the Fail-reference row).
+
+## 4. Quick Start (One-Liner)
+
+For a detection study in long format, `iqr_detection()` runs the full analysis in a single call.
+
+```{r quick-start}
+task <- iqr_detection(
+  long_data,
+  reference_col     = "Reference",
+  test_col          = "Test",
+  positive_category = "Fail",
+  negative_category = "Pass"
+)
+
+task$summary()
+```
+
+The returned `task` object holds the complete detection results. The rest of this vignette walks through the same analysis using the explicit Plan / Task workflow and then drills into every output table, test, and plot.
+
+## 5. Step-by-Step Workflow
+
+The explicit workflow gives full control over study parameters and produces a reproducible protocol. The flow is: **Plan → validate → protocol → Task → compute → summary → plot → report**.
+
+```{r step-plan}
+plan <- AttrGagePlan$new(
+  plan_name       = "Bolt Visual Inspection Gage Study",
+  objectives      = "Evaluate Go/No-Go gage detection capability near the spec limit",
+  scale_type      = "nominal",
+  comparison_mode = "one_way",
+  kappa_method    = "cohen",
+  categories      = c("Pass", "Fail"),
+  category_order  = c("Pass", "Fail"),
+  trials          = 20
+)
+
+plan$set_meta("data",
+  reference_col     = "Reference",
+  test_col          = "Test",
+  positive_category = "Fail",
+  negative_category = "Pass"
+)
+
+plan$validate()
+plan$generate_protocol()
+```
+
+```{r step-task}
+task <- AttrGageTask$new(
+  data = long_data,
+  plan = plan,
+  theme = "academic",
+  mode  = "detection"
+)
+
+task$compute()
+task$summary()
+```
+
+## 6. Detection Performance Deep-Dive
+
+The raw detection output is stored in `task$detection_results$raw_output`. The following tables expose every metric computed by the `DetectionAnalyzer`.
+
+### Overall detection metrics
+
+```{r detection-overall}
+dr <- task$detection_results$raw_output
+
+data.frame(
+  Metric = c(
+    "Detection rate (sensitivity)", "False negative rate",
+    "Specificity", "False positive rate",
+    "Youden index", "LR+", "LR-",
+    "Prevalence"
+  ),
+  Estimate = c(
+    fmt_pct(dr$detection_rate, 2),
+    fmt_pct(dr$false_negative_rate, 2),
+    fmt_pct(dr$specificity, 2),
+    fmt_pct(dr$false_positive_rate, 2),
+    fmt_num(dr$youden_index, 4),
+    fmt_num(dr$LR_positive, 4),
+    fmt_num(dr$LR_negative, 4),
+    fmt_pct(dr$prevalence, 2)
+  ),
+  `95% CI` = c(
+    paste0("(", fmt_pct(dr$detection_ci$lower, 2), ", ", fmt_pct(dr$detection_ci$upper, 2), ")"),
+    "-",
+    paste0("(", fmt_pct(dr$specificity_ci$lower, 2), ", ", fmt_pct(dr$specificity_ci$upper, 2), ")"),
+    "-", "-", "-", "-", "-"
+  ),
+  check.names = FALSE
+)
+```
+
+**Engineering interpretation:**
+
+- **Detection rate (sensitivity)** — of all truly non-conforming trials, the fraction the gage correctly rejected. Below 0.80 means the gage routinely lets bad parts through.
+- **False negative rate** — the complement of sensitivity. This is the fraction of bad bolts the gage incorrectly accepted — the most dangerous error for a safety-critical bolt.
+- **Specificity** — of all truly conforming trials, the fraction the gage correctly accepted. High specificity means the gage does not scrap good parts.
+- **Youden index** — a single-number summary that rewards both sensitivity and specificity. A value of 1 is perfect; 0 means the gage is no better than chance.
+- **LR+** — a high LR+ means a "Fail" verdict from the gage is strong evidence the part is truly non-conforming. LR+ above 10 is considered strong confirmatory evidence.
+- **LR-** — a low LR- means a "Pass" verdict is strong evidence the part is truly conforming. LR- below 0.1 is ideal.
+- **Prevalence** — the proportion of the study sample that is truly non-conforming. This is a property of the study design, not of the gage.
+
+### Confusion matrix
+
+```{r detection-confusion}
+knitr::kable(
+  dr$confusion_matrix_table,
+  caption = "Confusion matrix: reference standard vs. gage test result"
+)
+```
+
+### Risk table
+
+```{r detection-risk}
+knitr::kable(
+  round_df(dr$risk_table, 2),
+  caption = "Risk table: correct and incorrect classifications by reference group"
+)
+```
+
+The risk table shows that almost all errors are concentrated in the positive (Fail) reference group — these are the false negatives that drive the detection rate below the acceptance threshold.
+
+## 7. Binomial Hypothesis Test
+
+The detection rate is a binomial proportion. We test whether it meets the minimum acceptance level of 0.80.
+
+$$
+H_0:\; p \le 0.80 \quad \text{vs.} \quad H_1:\; p > 0.80
+$$
+
+The test uses the `DetectionAnalyzer` directly, which exposes the `detection_test()` method.
+
+```{r binomial-test}
+analyzer <- DetectionAnalyzer$new()
+analyzer$run(long_data, plan = plan$to_list())
+
+test_result <- analyzer$detection_test(null_rate = 0.80, alternative = "greater")
+
+data.frame(
+  Item = c(
+    "Test method", "Null hypothesis (p0)", "Alternative",
+    "Point estimate (x / n)", "x (true positives)", "n (positive trials)",
+    "P-value", "Decision (alpha = 0.05)"
+  ),
+  Value = c(
+    test_result$test_method,
+    fmt_num(test_result$null_hypothesis, 2),
+    test_result$alternative,
+    fmt_pct(test_result$point_estimate, 4),
+    formatC(round(test_result$point_estimate * analyzer$params$n_positive), format = "d"),
+    formatC(analyzer$params$n_positive, format = "d"),
+    fmt_p(test_result$p_value, 4),
+    ifelse(test_result$p_value < 0.05, "Reject H0 — gage meets 80% requirement",
+           "Fail to reject H0 — gage does NOT meet 80% requirement")
+  )
+)
+```
+
+Because the observed detection rate is below the 0.80 threshold, the one-sided test cannot reject the null hypothesis: the gage does **not** meet the 80% detection requirement at the 5% significance level.
+
+## 8. Per-Part Analysis
+
+The per-part acceptance rate reveals the gage's transition zone. Parts whose reference value is far from the spec limit are classified consistently; parts near the limit show mixed behaviour.
+
+```{r per-part-table}
+per_part <- data.frame(
+  Part       = bolt_data$Part,
+  Reference  = bolt_data$Reference,
+  Acceptances = bolt_data$Acceptances,
+  Trials     = n_trials,
+  Acceptance_Rate = bolt_data$Acceptances / n_trials,
+  Ref_Standard = ifelse(bolt_data$Reference < spec_limit, "Fail", "Pass")
+)
+
+knitr::kable(
+  round_df(per_part, 4),
+  caption = "Per-part acceptance rate vs. reference value"
+)
+```
+
+```{r per-part-plot, fig.height=5.5}
+ggplot(per_part, aes(x = Reference, y = Acceptance_Rate, color = Ref_Standard)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+  geom_vline(xintercept = spec_limit, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+  geom_line(aes(group = 1), color = "grey70", linewidth = 0.5) +
+  geom_point(size = 3.2) +
+  geom_text(aes(label = paste0("P", Part)), vjust = -0.9, size = 3, color = "grey30") +
+  scale_y_continuous(limits = c(-0.05, 1.05), breaks = seq(0, 1, 0.25),
+                     labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(values = c("Fail" = "#d64545", "Pass" = "#2f855a")) +
+  labs(
+    title = "Gage Transition Zone",
+    subtitle = "Per-part acceptance rate vs. reference value; dashed lines mark 50% and the spec limit",
+    x = "Reference value (deviation from nominal)",
+    y = "Acceptance rate",
+    color = "Reference\nstandard"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+The plot shows a sharp transition between parts 6 and 7 (reference ≈ −0.020). Parts 1–4 (reference ≤ −0.035) are rejected almost every time — the gage detects them reliably. Parts 8–10 (reference ≥ −0.015) are accepted almost every time. The **borderline parts** (parts 5–7, reference −0.030 to −0.020) are the source of the false negatives: the gage accepts them 40%–85% of the time even though they are below the spec limit.
+
+## 9. Visualization Gallery
+
+The `AttrGagePlotter` supports several detection-specific plot types. Each is rendered via `print(task$plot(type = "..."))`.
+
+```{r plot-catalogue}
+plot_catalogue <- data.frame(
+  Plot_Type = c("detection_ci", "detection_metrics", "confusion_matrix"),
+  Purpose = c(
+    "Sensitivity and specificity with 95% Clopper-Pearson confidence intervals",
+    "Stacked bar chart of sensitivity, specificity, false negative and false positive rates",
+    "Heatmap of the 2x2 confusion matrix (TP, FN, FP, TN)"
+  )
+)
+knitr::kable(plot_catalogue, caption = "Detection plot types available in AttrGagePlotter")
+```
+
+### Detection confidence intervals
+
+```{r plot-detection-ci}
+print(task$plot(type = "detection_ci"))
+```
+
+The dashed reference line at 0.80 marks the minimum acceptable detection rate. Sensitivity falls below this threshold, while specificity is well above.
+
+### Detection performance metrics
+
+```{r plot-detection-metrics}
+print(task$plot(type = "detection_metrics"))
+```
+
+Each stacked bar sums to 100% within its reference group. The dashed vertical line marks the Youden index — a single-number summary of overall detection capability.
+
+### Confusion matrix heatmap
+
+```{r plot-confusion-matrix}
+# The confusion_matrix plot is rendered directly from the detection raw output.
+plotter <- AttrGagePlotter$new()
+print(plotter$plot_confusion_matrix(dr))
+```
+
+The heatmap makes the asymmetry visible at a glance: the top-left cell (TP = correctly detected Fail parts) and bottom-right cell (TN = correctly accepted Pass parts) dominate, but the top-right cell (FN = missed Fail parts) is non-trivial — these are the false negatives that drive the gage's rejection.
+
+## 10. Report Export
+
+The task exports a self-contained report in Excel, HTML, or PDF format. The Excel workbook contains one sheet per result table (detection metrics, confusion matrix, risk table, and raw data).
+
+```{r report-export}
+xlsx_path <- tempfile("bolt_detection_", fileext = ".xlsx")
+html_path <- tempfile("bolt_detection_", fileext = ".html")
+
+task$report(format = "excel", path = xlsx_path)
+task$report(format = "html",  path = html_path)
+
+data.frame(
+  Format = c("Excel", "HTML"),
+  Path = c(xlsx_path, html_path),
+  Exists = c(file.exists(xlsx_path), file.exists(html_path)),
+  Size_KB = round(c(file.info(xlsx_path)$size, file.info(html_path)$size) / 1024, 1)
+)
+```
+
+## 11. Interpretation and Decision
+
+Synthesising the tables and plots above, the engineering conclusion for the bolt Go/No-Go gage is:
+
+**Detection rate.** The observed sensitivity is `r fmt_pct(dr$detection_rate, 1)` with a 95% Clopper-Pearson interval of (`r fmt_pct(dr$detection_ci$lower, 1)`, `r fmt_pct(dr$detection_ci$upper, 1)`). This falls below the 0.80 acceptable threshold, and the binomial test confirms the gage does **not** meet the 80% detection requirement (p-value = `r fmt_p(test_result$p_value, 4)`).
+
+**Specificity.** Specificity is `r fmt_pct(dr$specificity, 1)` — the gage almost never rejects a conforming part. This means the gage is biased toward accepting parts, which is dangerous for a safety-critical bolt: false negatives are far more costly than false positives.
+
+**Root cause — transition zone.** The per-part analysis localises the problem to parts 5–7 (reference −0.030 to −0.020). These parts are below the spec limit but close enough that the gage's mechanical Go ring cannot reliably distinguish them from conforming parts. The gage's resolution is insufficient at the spec boundary.
+
+**Youden index.** The Youden index is `r fmt_num(dr$youden_index, 3)`, which is in the moderate range — the gage is better than chance but not by a wide enough margin for safety-critical use.
+
+**Likelihood ratios.** LR+ = `r fmt_num(dr$LR_positive, 2)` is very high (a "Fail" verdict is strong evidence of a truly bad part), but LR- = `r fmt_num(dr$LR_negative, 3)` is well above the 0.1 ideal (a "Pass" verdict does not confidently rule out a bad part).
+
+**Overall decision.** The gage is **unacceptable** for release in its current state. The detection rate is below 0.80 and the false negative rate is too high for a safety-critical application. Recommended actions:
+
+1. **Tighten the spec limit** — move the acceptance boundary inward so that borderline parts are classified by a more capable instrument.
+2. **Replace the attribute gage** — use a variable (continuous) measuring device with adequate $C_g$ and $C_{gk}$ capability near the spec limit.
+3. **Re-train inspectors** — if the gage is operator-dependent (visual inspection), retraining on borderline samples can reduce the transition-zone width.
+4. **Re-run the study** after corrective action, targeting a detection rate ≥ 0.90 with a 95% CI lower bound above 0.80.
+
+## 12. Reference
+
+- Minitab Help, *Attribute Gage Study (Analytic Method)* — detection rate, false negative rate, and the binomial model for attribute gage capability.
+- AIAG, *Measurement Systems Analysis (MSA)*, 4th edition, Chapter III — Attribute Measurement Systems Study, analytic method.
+- Clopper, C. J. and Pearson, E. S. (1934). "The use of confidence or fiducial limits illustrated in the case of the binomial." *Biometrika*, 26(4), 404–413.
+- Youden, W. J. (1950). "Index for rating diagnostic tests." *Cancer*, 3(1), 32–35.
+- DeLong, E. R., DeLong, D. M. and Clarke-Pearson, D. L. (1988). "Comparing the areas under two or more correlated receiver operating characteristic curves." *Biometrics*, 44(3), 837–845.

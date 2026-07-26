@@ -1,0 +1,362 @@
+---
+title: "Quality Prediction Modeling Quick Start"
+author: "iQualityR Development Team"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Quality Prediction Modeling Quick Start}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+  )
+
+```
+
+```{r setup, echo = FALSE}
+library(iQualityR.predict)
+```
+
+## 1. What is Quality Prediction Modeling?
+
+In production and service processes, we often need to **predict future quality indicators** based on historical data. For example:
+
+- **Manufacturing**: Predicting product strength, hardness, dimensional accuracy based on process parameters
+- **Food Industry**: Predicting product taste and shelf life based on fermentation conditions
+- **Service Industry**: Predicting service satisfaction and complaint rates based on customer characteristics
+- **Healthcare**: Predicting treatment effectiveness and recovery time based on patient indicators
+
+**The prediction module of iQualityR** is designed to help quality engineers and data analysts quickly build reliable quality prediction models without requiring deep expertise in machine learning.
+
+### Dual-Mode Design
+
+| Mode | Who It's For | Code Required | Description |
+|------|-------------|---------------|-------------|
+| **Business** | Frontline quality engineers | 3 lines | Auto-select algorithm, one-click results |
+| **Expert** | Data scientists/researchers | 5-20 lines | Full control over algorithms and parameters |
+
+---
+
+## 2. Quick Start (Business Mode)
+
+### Scenario 1: Predicting Product Quality Indicators (Regression)
+
+Suppose you are a quality engineer at an electronics manufacturing company and want to predict solder joint strength based on welding process parameters.
+
+```{r regression-example}
+# Simulate welding process data
+set.seed(123)
+n <- 200
+solder_data <- data.frame(
+  temperature = runif(n, 240, 280),    # Welding temperature (C)
+  pressure = runif(n, 3, 8),           # Welding pressure (MPa)
+  time = runif(n, 1.5, 4.0),          # Welding time (s)
+  flux_amount = runif(n, 5, 15)        # Flux amount (mg)
+)
+
+# True solder joint strength (simulated physical relationship)
+solder_data$strength <-
+  25 + 0.08 * (solder_data$temperature - 260) +
+  1.2 * (solder_data$pressure - 5.5) +
+  0.5 * (solder_data$time - 2.75) -
+  0.002 * (solder_data$temperature - 260)^2 +
+  rnorm(n, 0, 2)
+
+# One-click modeling
+task <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure", "time", "flux_amount")
+)
+
+# Execute computation
+task$compute()
+```
+
+```{r regression-summary}
+# View quality-friendly summary
+task$summary()
+```
+
+```{r regression-plot, fig.height=6, warning=FALSE}
+# Generate 4-panel diagnostic plot
+task$plot()
+```
+
+**Interpreting the Output:**
+
+1. **Model Rating**: Five-star rating indicates R2 >= 0.85, meaning the model effectively explains quality variation
+2. **Key Influencing Factors**: Longer bars indicate greater factor impact on quality
+3. **Residual Plot**: Points should be randomly distributed around the 0 line with no obvious pattern
+
+### Scenario 2: Determining Product Pass/Fail (Classification)
+
+Suppose you are a quality supervisor at a food company and need to predict whether products pass or fail based on fermentation parameters.
+
+```{r classification-example}
+# Simulate fermentation process data
+set.seed(456)
+n <- 300
+ferment_data <- data.frame(
+  temp = runif(n, 35, 45),             # Fermentation temperature (C)
+  humidity = runif(n, 70, 90),         # Ambient humidity (%)
+  ph = runif(n, 4.0, 6.0),             # pH value
+  sugar = runif(n, 10, 25)             # Sugar content (Bx)
+)
+
+# Generate pass/fail using logistic relationship
+# Use simple balanced approach to ensure both classes exist
+ferment_data$status <- ifelse(runif(n) < 0.5, "Pass", "Fail")
+ferment_data$status <- factor(ferment_data$status)
+
+# Modeling
+class_task <- classification_analysis(
+  data = ferment_data,
+  target = "status",
+  factors = c("temp", "humidity", "ph", "sugar")
+)
+
+class_task$compute()
+class_task$plot()
+class_task$summary()
+```
+
+### Scenario 3: Quality Trend Forecasting (Time Series)
+
+Suppose you need to forecast product defect rate trends for the next few months.
+
+```{r timeseries-example, warning=FALSE}
+# Simulate monthly quality data
+set.seed(789)
+months <- 36
+quality_ts <- data.frame(
+  month = seq.Date(as.Date("2021-01-01"), by = "month", length.out = months),
+  temp_avg = runif(months, 18, 28),    # Monthly average temperature
+  humidity_avg = runif(months, 60, 85)  # Monthly average humidity
+)
+
+# Defect rate (upward trend + seasonality)
+quality_ts$defect_rate <-
+  3.5 + 0.03 * (1:months) +            # Slow upward trend
+  0.5 * sin(2 * pi * (1:months) / 12) + # Seasonal fluctuation
+  rnorm(months, 0, 0.3)
+
+# Model and forecast next 6 months
+ts_task <- time_series_forecast(
+  data = quality_ts,
+  target = "defect_rate",
+  time_column = "month",
+  horizon = 6
+)
+
+ts_task$compute()
+ts_task$summary()
+ts_task$plot()
+```
+
+---
+
+## 3. Understanding Model Output
+
+### 3.1 Model Rating System
+
+| Rating | R2 Range | Interpretation | Recommendation |
+|--------|----------|----------------|----------------|
+| Five-star Excellent | >= 0.8 | Model effectively explains quality variation | Ready for production forecasting |
+| Four-star Good | 0.7-0.8 | Model has good prediction capability | Continue monitoring |
+| Three-star Acceptable | 0.5-0.7 | Model has some explanatory power | Check for missing important factors |
+| Two-star Weak | 0.3-0.5 | Model has insufficient explanatory power | Reselect factors or collect more data |
+| One-star Not Recommended | < 0.3 | Current factor combination is invalid | Redesign experiment |
+
+### 3.2 Diagnostic Plot Interpretation
+
+| Chart | What to Look For | Normal Behavior | Warning Signals |
+|-------|------------------|-----------------|-----------------|
+| **Actual vs Predicted** | Do points fall near the diagonal? | Points distributed along 45-degree line | Significant deviation from diagonal |
+| **Residuals vs Fitted** | Are residuals randomly distributed? | No obvious pattern, band-shaped | Funnel-shaped, curved |
+| **Q-Q Plot** | Are residuals normally distributed? | Points along dashed line | Tail separation |
+| **Factor Influence** | Which factors are most important? | Bar chart sorted by importance | One factor >= 80% may indicate overfitting |
+
+### 3.3 Common Diagnostic Conclusions
+
+```
+[OK] Residual Normality: Satisfied -> Interval estimates are reliable
+[WARNING] Homoscedasticity: Slightly violated -> Pay attention to high-value prediction accuracy
+[WARNING] Collinearity: VIF > 10 -> Some factors are highly correlated
+[WARNING] Influential Points: 2 found -> Check for anomalous data
+```
+
+---
+
+## 4. Advanced Usage Guide
+
+### 4.1 Selecting Different Algorithms
+
+The system auto-selects algorithms by default, but you can manually specify:
+
+```{r algorithm-selection}
+# Specify random forest
+task_rf <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure", "time", "flux_amount"),
+  model_type = "random_forest"
+)
+task_rf$compute()
+
+# Specify ridge regression (suitable for many factors with collinearity)
+task_ridge <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure", "time", "flux_amount"),
+  model_type = "ridge"
+)
+task_ridge$compute()
+```
+
+**Supported Algorithms:**
+
+| Algorithm | Use Case | Advantages | Disadvantages |
+|-----------|----------|------------|--------------|
+| `linear` | Small data, linear relationships | Highly interpretable | Cannot handle complex relationships |
+| `ridge` | Many factors, collinearity | Stable, prevents overfitting | Coefficient shrinkage |
+| `random_forest` | Nonlinear, robust | No tuning needed, high accuracy | Hard to interpret |
+| `xgboost` | High accuracy pursuit | Industry-leading accuracy | Requires tuning, slow |
+| `svm` | Complex boundaries | Good for small samples | Sensitive to parameters |
+| `pls` | High-dimensional collinearity | Dimensionality reduction | Generally moderate accuracy |
+
+### 4.2 Adjusting Validation Strategy
+
+```{r validation-config}
+# Use 10-fold cross-validation (more robust but slower)
+task_10cv <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure"),
+  validation = list(
+    method = "cross_validation",
+    folds = 10
+  )
+)
+```
+
+### 4.3 Enabling Explainability Analysis
+
+```{r explanation-config, warning=FALSE, eval=FALSE}
+# Enable SHAP value decomposition (higher computational cost)
+# Note: SHAP analysis requires shapviz package and is only supported for XGBoost/LightGBM/H2O models
+# This code block is not evaluated during vignette build; run separately after installing shapviz
+task_shap <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure", "time"),
+  model_type = "xgboost",  # SHAP only works with xgboost/lightgbm/h2o
+  explanation = list(
+    feature_importance = TRUE,
+    shap_values = TRUE,
+    partial_dependence = TRUE
+  )
+)
+task_shap$compute()
+
+# View explanation plots
+task_shap$plot(type = "explanation")
+```
+
+---
+
+## 5. Exporting Reports
+
+### 5.1 Excel Report
+
+```{r export-excel, eval = FALSE}
+# Export multi-sheet Excel report
+task$report(format = "excel", path = "quality_prediction_report.xlsx")
+```
+
+Excel report includes:
+- **Model Overview**: Type, parameters, rating
+- **Performance Metrics**: R2, RMSE, MAE
+- **Factor Influence**: Ranking and percentages
+- **Diagnostic Conclusions**: Normality, homoscedasticity, collinearity
+- **Model Coefficients**: Regression coefficient table (linear models)
+
+### 5.2 HTML Report
+
+```{r export-html, eval = FALSE}
+# Generate complete HTML report (with charts)
+task$report(format = "html", path = "quality_prediction_report.html")
+
+```
+
+---
+
+## 6. FAQ and Troubleshooting
+
+### Q1: Why is the model rating only three stars?
+
+**Possible Causes:**
+1. Important factors not included -> Review process flow for missing parameters
+2. Poor data quality -> Check for measurement system issues (MSA)
+3. Insufficient sample size -> Recommend at least 50+ observations
+
+**Improvement Suggestions:**
+```r
+# View diagnostic suggestions
+task$summary()  # See "Improvement Suggestions" section at the bottom
+```
+
+### Q2: What if the auto-selected algorithm is not suitable?
+
+Manually specify the algorithm:
+```r
+# Switch to random forest
+task <- regression_analysis(..., model_type = "random_forest")
+```
+
+### Q3: How to predict new data?
+
+```{r predict-new, eval = FALSE}
+# After training the model
+new_samples <- data.frame(
+  temperature = c(255, 265),
+  pressure = c(5, 7),
+  time = c(2.5, 3.0),
+  flux_amount = c(10, 12)
+)
+
+predictions <- task$predict(new_samples)
+print(predictions)
+```
+
+### Q4: What if the data has missing values?
+
+The system deletes rows with missing values by default. For advanced handling:
+```r
+# Expert mode: customize missing value handling
+# (See advanced guide vignette for details)
+```
+
+---
+
+## 7. Next Steps
+
+- **Advanced Configuration**: Read `advanced-predictive-config` vignette for expert mode
+- **View Documentation**: `?regression_analysis`, `?classification_analysis`
+- **Report Issues**: Submit issue on GitHub
+
+---
+
+*This vignette is written by the iQualityR Team*

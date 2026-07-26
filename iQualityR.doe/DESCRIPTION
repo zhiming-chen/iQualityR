@@ -1,0 +1,40 @@
+Package: iQualityR.doe
+Title: Design of Experiments for iQualityR
+Version: 0.1.0
+Description: Provides comprehensive design of experiments tools, including
+  factorial designs, response surface methodology, Taguchi methods,
+  Bayesian optimization, multi-response optimization, and DOE-related
+  visualizations and reporting.
+Authors@R: c(
+    person("iQualityR", "Team", role = c("aut", "cre"),
+           email = "iQualityR@example.com")
+  )
+Depends:
+    R (>= 4.1.0)
+Imports:
+    R6,
+    iQualityR.core (>= 0.1.0),
+    iQualityR.plot (>= 0.1.0),
+    ggplot2,
+    data.table,
+    patchwork,
+    methods,
+    stats,
+    utils,
+    MASS
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat,
+    knitr,
+    rmarkdown,
+    withr,
+    kernlab,
+    openxlsx,
+    officer
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+VignetteBuilder: knitr
+NeedsCompilation: no

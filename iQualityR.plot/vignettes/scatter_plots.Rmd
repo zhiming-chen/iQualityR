@@ -1,0 +1,442 @@
+---
+title: "Scatter Plots"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Scatter Plots}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Scatter Plots
+
+## Overview
+
+Scatter plots are one of the most fundamental and important analytical tools in quality management, used to study the relationship between two variables. `iQualityR.plot` provides four scatter plot functions:
+
+- `plot_scatter_basic()` - Basic scatter plot (with regression line)
+- `plot_scatter_grouped()` - Grouped scatter plot
+- `plot_scatter_bubble()` - Bubble scatter plot
+- `plot_scatter_density()` - Density scatter plot (handling overlapping points)
+
+## Load Data
+
+```{r setup}
+library(ggplot2)
+library(datasets)
+library(iQualityR.core)
+library(iQualityR.plot)
+
+data("mtcars")
+data("iris")
+```
+
+## 1. Basic Scatter Plot: plot_scatter_basic()
+
+The basic scatter plot is used to explore the linear relationship between two continuous variables, automatically adding a regression line and correlation coefficient.
+
+### Basic Usage
+
+```{r basic_scatter}
+# Analyze the relationship between horsepower and fuel efficiency
+plot_scatter_basic(
+  data = mtcars,
+  x_var = "hp",
+  y_var = "mpg",
+  title = "Horsepower vs Fuel Efficiency"
+)
+```
+
+### Custom Options
+
+```{r basic_custom}
+# Custom scatter plot style
+plot_scatter_basic(
+  data = mtcars,
+  x_var = "wt",
+  y_var = "mpg",
+  add_regression = TRUE,
+  add_ci = TRUE,
+  add_correlation = TRUE,
+  correlation_method = "pearson",
+  point_color = "#e74c3c",
+  point_size = 2.5,
+  point_alpha = 0.7,
+  line_color = "#2c3e50",
+  line_size = 1.5,
+  ci_fill = "#3498db",
+  ci_alpha = 0.15,
+  title = "Weight vs Fuel Efficiency"
+)
+```
+
+### Without Regression Line
+
+```{r basic_no_regression}
+# Show scatter points only, without regression line
+plot_scatter_basic(
+  data = mtcars,
+  x_var = "disp",
+  y_var = "qsec",
+  add_regression = FALSE,
+  add_correlation = TRUE,
+  title = "Engine Displacement vs Acceleration Time"
+)
+```
+
+### Using Different Correlation Methods
+
+```{r correlation_methods, eval=FALSE}
+# Pearson correlation coefficient (default, suitable for linear relationships)
+plot_scatter_basic(mtcars, "hp", "mpg", correlation_method = "pearson")
+
+# Spearman rank correlation (suitable for monotonic relationships, robust to outliers)
+plot_scatter_basic(mtcars, "hp", "mpg", correlation_method = "spearman")
+
+# Kendall rank correlation (suitable for small samples)
+plot_scatter_basic(mtcars, "hp", "mpg", correlation_method = "kendall")
+```
+
+## 2. Grouped Scatter Plot: plot_scatter_grouped()
+
+When data contains categorical variables, the grouped scatter plot can use different colors for different groups and fit regression lines separately.
+
+### Basic Usage
+
+```{r grouped_basic}
+# Analyze by number of cylinders
+plot_scatter_grouped(
+  data = mtcars,
+  x_var = "hp",
+  y_var = "mpg",
+  group_var = "cyl",
+  title = "Horsepower vs Fuel Efficiency by Cylinder Count"
+)
+```
+
+### Custom Grouped Style
+
+```{r grouped_custom}
+# Custom grouped scatter plot
+plot_scatter_grouped(
+  data = mtcars,
+  x_var = "wt",
+  y_var = "mpg",
+  group_var = "am",
+  add_regression = TRUE,
+  add_ci = TRUE,
+  add_correlation = TRUE,
+  point_size = 2,
+  point_alpha = 0.7,
+  line_size = 1.2,
+  palette = c("0" = "#e74c3c", "1" = "#3498db"),
+  title = "Weight vs Fuel Efficiency by Transmission Type"
+)
+```
+
+### Without Regression Line
+
+```{r grouped_no_regression}
+# Show grouped scatter points only
+plot_scatter_grouped(
+  data = iris,
+  x_var = "Sepal.Length",
+  y_var = "Petal.Length",
+  group_var = "Species",
+  add_regression = FALSE,
+  title = "Iris Sepal Length vs Petal Length"
+)
+```
+
+## 3. Bubble Scatter Plot: plot_scatter_bubble()
+
+The bubble scatter plot uses point size to display a third variable, enabling three-dimensional data visualization.
+
+### Basic Usage
+
+```{r bubble_basic}
+# Use bubble size to represent car weight
+plot_scatter_bubble(
+  data = mtcars,
+  x_var = "hp",
+  y_var = "mpg",
+  size_var = "wt",
+  title = "Horsepower, Fuel Efficiency, and Weight"
+)
+```
+
+### Bubble Plot with Grouping
+
+```{r bubble_grouped}
+# Group by transmission type, bubble size represents weight
+plot_scatter_bubble(
+  data = mtcars,
+  x_var = "hp",
+  y_var = "mpg",
+  size_var = "disp",
+  group_var = "am",
+  size_range = c(2, 12),
+  point_alpha = 0.7,
+  title = "Three-Dimensional Car Performance Comparison"
+)
+```
+
+### Adding Labels
+
+```{r bubble_labels, eval=FALSE}
+# Add labels to each bubble
+plot_scatter_bubble(
+  data = mtcars,
+  x_var = "wt",
+  y_var = "mpg",
+  size_var = "hp",
+  add_labels = TRUE,
+  label_var = "row_names",  # Use row names as labels
+  label_size = 3,
+  title = "Weight, Fuel Efficiency, and Horsepower"
+)
+```
+
+## 4. Density Scatter Plot: plot_scatter_density()
+
+When data points are densely overlapping, the density scatter plot provides multiple methods to address overplotting.
+
+### Alpha Transparency Method
+
+```{r density_alpha}
+# Use transparency to distinguish density
+set.seed(123)
+large_data <- data.frame(
+  x = rnorm(1000),
+  y = rnorm(1000) + 0.5 * rnorm(1000)
+)
+
+plot_scatter_density(
+  data = large_data,
+  x_var = "x",
+  y_var = "y",
+  method = "alpha",
+  point_alpha = 0.4,
+  point_size = 2,
+  title = "High-Density Scatter Plot (Alpha Transparency)"
+)
+```
+
+### Jitter Method
+
+```{r density_jitter}
+# Use jitter to avoid overlap
+plot_scatter_density(
+  data = large_data,
+  x_var = "x",
+  y_var = "y",
+  method = "jitter",
+  jitter_width = 0.1,
+  jitter_height = 0.1,
+  point_alpha = 0.6,
+  title = "High-Density Scatter Plot (Jitter Method)"
+)
+```
+
+### Two-Dimensional Binning Method
+
+```{r density_bins}
+# Use two-dimensional binning
+plot_scatter_density(
+  data = large_data,
+  x_var = "x",
+  y_var = "y",
+  method = "bins",
+  bins = 30,
+  color_low = "yellow",
+  color_high = "red",
+  title = "High-Density Scatter Plot (2D Binning)"
+)
+```
+
+### Density Contour Method
+
+```{r density_contour}
+# Use density contours
+plot_scatter_density(
+  data = large_data,
+  x_var = "x",
+  y_var = "y",
+  method = "density",
+  bins = 20,
+  color_low = "#3498db",
+  color_high = "#e74c3c",
+  title = "High-Density Scatter Plot (Density Contour)"
+)
+```
+
+### Adding Smooth Line
+
+```{r density_smooth, eval=FALSE}
+# Add a smooth line to the density plot
+plot_scatter_density(
+  data = mtcars,
+  x_var = "hp",
+  y_var = "mpg",
+  method = "alpha",
+  add_smooth = TRUE,
+  smooth_method = "loess",
+  title = "Density Scatter Plot with Smooth Line"
+)
+```
+
+## Practical Case Studies
+
+### Case 1: Automobile Performance Analysis
+
+```{r case_study_auto}
+# Comprehensive analysis of the mtcars dataset using multiple scatter plots
+
+# 1. Basic scatter plot: horsepower vs fuel efficiency
+p1 <- plot_scatter_basic(
+  mtcars, "hp", "mpg",
+  title = "Horsepower vs Fuel Efficiency"
+)
+
+# 2. Grouped scatter plot: grouped by cylinder count
+p2 <- plot_scatter_grouped(
+  mtcars, "hp", "mpg", "cyl",
+  title = "Grouped by Cylinder Count"
+)
+
+# 3. Bubble plot: adding weight dimension
+p3 <- plot_scatter_bubble(
+  mtcars, "hp", "mpg", "wt",
+  title = "Adding Weight Dimension"
+)
+
+print(p1)
+```
+
+### Case 2: Iris Data Analysis
+
+```{r case_study_iris}
+# Use the iris dataset to demonstrate grouped and bubble plots
+
+# Grouped scatter plot
+p_iris <- plot_scatter_grouped(
+  data = iris,
+  x_var = "Sepal.Length",
+  y_var = "Petal.Width",
+  group_var = "Species",
+  add_regression = TRUE,
+  add_ci = FALSE,
+  palette = c("setosa" = "#e74c3c", 
+              "versicolor" = "#3498db", 
+              "virginica" = "#2ecc71"),
+  title = "Iris Sepal Length vs Petal Width",
+  subtitle = "Grouped by Species"
+)
+
+print(p_iris)
+```
+
+## Method Selection Guide
+
+| Scenario | Recommended Function | Key Parameters |
+|------|---------|---------|
+| Explore relationship between two variables | `plot_scatter_basic()` | `add_regression=TRUE` |
+| Compare different groups | `plot_scatter_grouped()` | `group_var` |
+| Display three variables | `plot_scatter_bubble()` | `size_var` |
+| Severe data point overlap | `plot_scatter_density()` | `method="alpha/bins/density"` |
+| Need correlation coefficient | `plot_scatter_basic()` | `add_correlation=TRUE` |
+| Nonlinear relationship | `plot_scatter_density()` | `add_smooth=TRUE, smooth_method="loess"` |
+
+## Best Practices
+
+### 1. Choose the Appropriate Sample Size
+
+```{r best_practice_sample, eval=FALSE}
+# Small sample (< 100): Use basic scatter plot
+plot_scatter_basic(data, "x", "y")
+
+# Medium sample (100-500): Can use grouped or bubble plot
+plot_scatter_grouped(data, "x", "y", "group")
+
+# Large sample (> 500): Use density scatter plot
+plot_scatter_density(data, "x", "y", method = "alpha")
+```
+
+### 2. Handling Outliers
+
+```{r best_practice_outliers, eval=FALSE}
+# Detect outliers
+outliers <- which(abs(scale(data$x)) > 3 | abs(scale(data$y)) > 3)
+
+# Annotate outliers
+plot_scatter_basic(data, "x", "y") +
+  geom_point(data = data[outliers, ], color = "red", size = 3)
+```
+
+### 3. Multi-Plot Comparison
+
+```{r best_practice_comparison, eval=FALSE}
+# Use patchwork to combine multiple scatter plots
+library(patchwork)
+
+p1 <- plot_scatter_basic(data, "x1", "y")
+p2 <- plot_scatter_basic(data, "x2", "y")
+p3 <- plot_scatter_basic(data, "x3", "y")
+
+(p1 + p2) / p3
+```
+
+## FAQ
+
+### Q: Regression line not showing?
+
+Make sure `add_regression = TRUE` and the data has a linear relationship:
+
+```{r faq_regression, eval=FALSE}
+plot_scatter_basic(data, "x", "y", add_regression = TRUE)
+```
+
+### Q: How to change the regression line color?
+
+Use the `line_color` parameter:
+
+```{r faq_line_color, eval=FALSE}
+plot_scatter_basic(data, "x", "y", line_color = "red")
+```
+
+### Q: What to do when data points overlap severely?
+
+Use a density scatter plot:
+
+```{r faq_overlap, eval=FALSE}
+plot_scatter_density(data, "x", "y", method = "alpha", point_alpha = 0.3)
+```
+
+## Summary
+
+- `plot_scatter_basic()` is suitable for basic two-dimensional relationship exploration
+- `plot_scatter_grouped()` is suitable for grouped comparison analysis
+- `plot_scatter_bubble()` is suitable for three-dimensional data visualization
+- `plot_scatter_density()` is suitable for addressing overplotting in high-density data
+- All functions support the iQualityR theme system, ensuring consistent plot style
+
+## Further Reading
+
+- [Basic Plotting and Theme System](basic_plotting_theme.html) - Learn about the theme system
+- [Pareto Charts](pareto_charts.html) - Learn about Pareto chart plotting
+- [Advanced Analysis Plots](advanced_plots.html) - Learn about correlation heatmaps and interaction plots

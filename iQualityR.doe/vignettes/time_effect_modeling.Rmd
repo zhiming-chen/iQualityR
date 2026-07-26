@@ -1,0 +1,1065 @@
+---
+title: "Time-Effect Modeling for Pharmaceutical Stability: An ICH Q1A/Q1E Case Study"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Time-Effect Modeling for Pharmaceutical Stability: An ICH Q1A/Q1E Case Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+# Introduction
+
+A pharmaceutical company is developing a new active pharmaceutical
+ingredient (API) and must register a shelf life with the regulatory
+authorities. The ICH Q1A(R2) guideline defines the stability study
+design, and ICH Q1E defines how the shelf life is to be derived from
+the resulting data. The engineering question is concrete:
+
+> *For how many months can the API be stored at 25 °C / 60 % RH while
+> remaining within the specification limit for assay?*
+
+Answering this question rigorously requires three steps:
+
+1. **Model the decay.** Describe how the assay declines over time using
+   a kinetic law $R(t)$, and select among candidate laws by goodness of
+   fit.
+2. **Estimate the shelf life.** Find the time at which the lower
+   one-sided 95 % confidence bound of the response crosses the
+   specification limit, as mandated by ICH Q1E.
+3. **Confirm with accelerated data.** Use the Arrhenius equation to
+   extrapolate accelerated aging data (40, 50, 60 °C) to the storage
+   temperature (25 °C) and verify that the predicted decay rate agrees
+   with the long-term observation.
+
+This vignette walks through the entire workflow end-to-end using the
+`TimeEffectModeler` class of `iQualityR.doe`. Every figure is generated
+by code the reader can re-run; no chunk is suppressed.
+
+# API Overview
+
+The `TimeEffectModeler` class is the central object for time-effect
+decay modelling in **iQualityR.doe**. Its life-cycle is:
+
+```r
+tem <- TimeEffectModeler$new()
+fit <- tem$fit_decay_model(time = df$time, response = df$response, model_type = "weibull")
+tem$plot_time_effect(fit, time = df$time, response = df$response,
+                     prediction_time = seq(0, 36, length.out = 100))
+tem$predict_response(fit, new_time = seq(0, 36, length.out = 100), se_fit = TRUE)
+tem$estimate_shelf_life(fit, specification = 90, confidence_level = 0.95)
+tem$analyze_multi_batch(data = df, response_col = "response")
+tem$fit_arrhenius_model(data = df, response_col = "response", Ea_activation = 100)
+tem$predict_at_target_temp(arrhenius_result = arr, target_temp = 25,
+                           new_time = seq(0, 36, length.out = 100), R0 = 100)
+```
+
+## The `plot_time_effect()` method
+
+```r
+tem$plot_time_effect(fit_result, time, response, prediction_time = NULL, theme_obj = NULL)
+```
+
+| Argument          | Purpose                                                                  |
+|-------------------|--------------------------------------------------------------------------|
+| `fit_result`      | The list returned by `$fit_decay_model()` (or compatible).               |
+| `time`            | Numeric vector of observed time points (for Weibull: must be > 0).       |
+| `response`        | Numeric vector of observed responses.                                    |
+| `prediction_time` | Numeric vector of time points for the predicted curve ribbon. `NULL` builds a grid covering 0–120 % of the observed range. |
+| `theme_obj`       | Optional `ggplot2` theme object added with `+`. `NULL` keeps the built-in `theme_minimal()` styling. |
+
+Returns a `ggplot` object *invisibly* — wrap in `print()` inside R
+Markdown chunks:
+
+```r
+p <- tem$plot_time_effect(fit, time, response,
+                          prediction_time = seq(0, 36, length.out = 100))
+print(p)
+```
+
+## Public methods of `TimeEffectModeler`
+
+| Method                                | Purpose                                                              |
+|---------------------------------------|----------------------------------------------------------------------|
+| `$new()`                              | Constructor (no arguments).                                          |
+| `$fit_decay_model(time, response, model_type)` | Fit one of `"zero_order"`, `"first_order"`, `"weibull"`, `"exponential"`. |
+| `$predict_response(fit_result, new_time, se_fit)` | Predict response + (optional) standard-error band.            |
+| `$estimate_shelf_life(fit_result, specification, confidence_level)` | ICH Q1E shelf-life estimate (one-sided z = qnorm(0.95) = 1.645). |
+| `$analyze_multi_batch(data, response_col)` | Pooled-degradation analysis across batches (ANOVA batch:time interaction). |
+| `$fit_arrhenius_model(data, response_col, Ea_activation)` | Fit Arrhenius model for accelerated stability data.            |
+| `$predict_at_target_temp(arrhenius_result, target_temp, new_time, R0)` | Predict degradation at a use-condition temperature.          |
+| `$plot_time_effect(fit_result, time, response, prediction_time, theme_obj)` | Generate the standard time-effect ggplot.                     |
+
+> **Important: invisible returns.** `$plot_time_effect()` returns its
+> value *invisibly*. In an interactive R session the figure
+> auto-prints, but inside `rmarkdown` / `for` loops / functions you
+> must call `print()` explicitly.
+
+> **Interface style.** `$fit_decay_model()` accepts data in
+> **vector style only** — `time` and `response` must be numeric
+> vectors, typically columns of a data frame (e.g. `df$time` and
+> `df$response`). There is no formula- or data-frame-style
+> interface; pass the columns explicitly. The multi-batch and
+> Arrhenius methods, by contrast, take a `data` argument together
+> with a `response_col` string naming the response column.
+
+# Mathematical Foundations
+
+## Decay Kinetics
+
+The `TimeEffectModeler` class supports four kinetic laws. Each is
+presented below in the form used by the package.
+
+**Zero-order kinetics.** The rate is constant, independent of the
+remaining concentration:
+
+$$
+R(t) = R_0 - k \cdot t.
+$$
+
+**First-order kinetics.** The rate is proportional to the current
+concentration. Separating variables and integrating gives
+
+$$
+R(t) = R_0 \cdot \exp(-k \cdot t).
+$$
+
+The half-life $t_{1/2} = \ln 2 / k$ is independent of $R_0$ — a
+defining feature of first-order decay and the reason it dominates most
+drug-degradation pathways.
+
+**Weibull decay.** A generalisation of first-order decay with a
+time-varying rate:
+
+$$
+R(t) = R_0 \cdot \exp\!\left( -\left( \frac{t}{\lambda} \right)^{\beta} \right),
+$$
+
+with scale $\lambda > 0$ and shape $\beta > 0$. When $\beta = 1$ the
+Weibull reduces to first-order decay with $k = 1/\lambda$.
+
+**Exponential-to-plateau.** For a response that tends to a non-zero
+asymptote $R_\infty$:
+
+$$
+R(t) = R_\infty + (R_0 - R_\infty) \cdot \exp(-k \cdot t).
+$$
+
+## Arrhenius Accelerated Aging
+
+Real-time stability testing of a product with a 30-month shelf life
+takes 30 months to complete — too slow for product development. The
+Arrhenius equation relates the rate constant $k$ to the absolute
+temperature $T$:
+
+$$
+\boxed{k = A \cdot \exp\!\left( -\frac{E_a}{R \, T} \right),}
+$$
+
+where $A$ is the pre-exponential factor, $E_a$ the activation energy
+(J/mol), and $R = 8.314\;\mathrm{J\,mol^{-1}\,K^{-1}}$ the gas constant.
+Taking logarithms linearises the relation:
+
+$$
+\ln k = \ln A - \frac{E_a}{R} \cdot \frac{1}{T}.
+$$
+
+A plot of $\ln k$ versus $1/T$ — the *Arrhenius plot* — is therefore a
+straight line of slope $-E_a / R$ and intercept $\ln A$. Measuring $k$
+at three or more elevated temperatures and fitting this line lets us
+extrapolate $k$ to the storage temperature.
+
+## ICH Q1E Shelf Life
+
+ICH Q1E *Evaluation for Stability Data* specifies that the labelled
+shelf life must be based on the **lower one-sided 95 % confidence
+bound** of the mean response, not on the point estimate. For a
+first-order decay law the response equals the specification limit $L$
+at
+
+$$
+R_0 \exp(-k \, t_{\text{shelf}}) = L
+\;\;\Longrightarrow\;\;
+\boxed{t_{\text{shelf}} = \frac{\ln(R_0 / L)}{k}.}
+$$
+
+Because $k$ and $R_0$ are estimated from data, $t_{\text{shelf}}$ has a
+standard error $\mathrm{SE}(t_{\text{shelf}})$. The conservative,
+ICH Q1E-compliant shelf life is the lower bound
+
+$$
+\boxed{t_{\text{lower}} = t_{\text{shelf}} - z_{0.95} \cdot \mathrm{SE}(t_{\text{shelf}}),}
+$$
+
+where $z_{0.95} = `r round(qnorm(0.95), 3)`$ is the **one-sided** 95 %
+quantile of the standard normal distribution (`qnorm(0.95)` in R). Note
+that this is *not* the two-sided quantile $z_{0.975} = 1.960$; ICH Q1E
+is explicitly one-sided because only the lower tail risks the
+specification.
+
+# Case Study: Drug Substance Stability
+
+## Study Design
+
+A new API is placed on long-term stability at 25 °C / 60 % RH and on
+accelerated stability at three elevated temperatures (40, 50, 60 °C)
+to support Arrhenius extrapolation. Three pilot batches are studied
+long-term; a single batch is studied at each accelerated condition.
+The assay is measured by HPLC, expressed as % of label claim.
+
+| Condition | Batches | Time points (months) | Purpose |
+|:----------|:--------|:---------------------|:--------|
+| 25 °C / 60 % RH (long-term) | A, B, C | 0, 3, 6, 9, 12, 18, 24 | Shelf-life estimation |
+| 40 °C / 75 % RH (accelerated) | A | 0, 1, 2, 3, 4, 5, 6 | Arrhenius |
+| 50 °C (stress) | A | 0, 1, 2, 3, 4, 5, 6 | Arrhenius |
+| 60 °C (stress) | A | 0, 1, 2, 3, 4, 5, 6 | Arrhenius |
+
+The specification limit for assay is 90 % of label claim (lower
+one-sided).
+
+## Long-Term Stability Data
+
+We begin by simulating the long-term data for the three batches. The
+underlying decay is first-order with a batch-specific rate constant
+$k \approx 0.0035\;\mathrm{month^{-1}}$, which yields a theoretical
+shelf life of $\ln(100/90)/0.0035 \approx 30$ months at the 90 %
+specification. Small measurement noise is added.
+
+```{r sim-longterm}
+set.seed(2024)
+
+time_long <- c(0, 3, 6, 9, 12, 18, 24)
+
+# Batch-specific first-order rate constants (per month)
+k_A <- 0.0036
+k_B <- 0.0034
+k_C <- 0.0035
+
+long_term_data <- data.frame(
+  batch = rep(c("Batch_A", "Batch_B", "Batch_C"), each = 7),
+  time  = rep(time_long, times = 3),
+  response = round(c(
+    100 * exp(-k_A * time_long),
+    100 * exp(-k_B * time_long),
+    100 * exp(-k_C * time_long)
+  ) + rnorm(21, sd = 0.3), 2)
+)
+
+knitr::kable(long_term_data, digits = 2,
+             caption = "Long-term stability data (assay, % of label claim).")
+```
+
+A quick visual inspection confirms that all three batches decay
+smoothly from 100 % to roughly 92 % over 24 months, with no visible
+batch-to-batch divergence.
+
+```{r plot-longterm}
+ggplot(long_term_data, aes(x = time, y = response, colour = batch)) +
+  geom_point(size = 2.5) +
+  geom_line(aes(group = batch), linewidth = 0.6) +
+  labs(title = "Long-Term Stability Data at 25 °C",
+       subtitle = "Three batches; assay vs. time",
+       x = "Time (months)", y = "Assay (% of label claim)",
+       colour = "Batch") +
+  theme_minimal(base_size = 12)
+```
+
+## Multi-Batch Poolability Test
+
+ICH Q1E requires stability data from at least three batches. Before
+pooling them into a single fit we must test whether the batches share
+a common degradation rate. The standard test is a two-way ANOVA with a
+batch-by-time interaction term. ICH Q1E uses a *liberal* significance
+level of $\alpha = 0.25$ (rather than 0.05) for this test, because the
+cost of incorrectly pooling non-poolable batches is high:
+
+* $p > 0.25$ — batches are **poolable**; combine into one fit.
+* $p \le 0.25$ — batches must be analysed **separately**; the shortest
+  shelf life is reported.
+
+```{r multi-batch}
+tem <- TimeEffectModeler$new()
+
+batch_result <- tem$analyze_multi_batch(
+  data         = long_term_data,
+  response_col = "response"
+)
+
+cat("ANOVA table:\n")
+print(batch_result$anova_table)
+
+cat("\nBatch x time interaction p-value:",
+    round(batch_result$batch_time_interaction_p, 3), "\n")
+cat("Poolable:", batch_result$poolable, "\n")
+cat("Conclusion:", batch_result$interpretation, "\n")
+```
+
+The interaction p-value is well above 0.25, so the three batches are
+**poolable**. We visualise this conclusion by overlaying the
+batch-specific first-order fits: the three curves are visually
+indistinguishable.
+
+```{r plot-multibatch}
+# Fit each batch separately with first-order kinetics
+batch_fits <- lapply(c("Batch_A", "Batch_B", "Batch_C"), function(b) {
+  d <- long_term_data[long_term_data$batch == b, ]
+  tem$fit_decay_model(d$time, d$response, model_type = "first_order")
+})
+names(batch_fits) <- c("Batch_A", "Batch_B", "Batch_C")
+
+# Build a prediction data frame for the smooth curves
+t_grid <- seq(0, 30, length.out = 100)
+pred_df <- do.call(rbind, lapply(names(batch_fits), function(b) {
+  data.frame(
+    batch    = b,
+    time     = t_grid,
+    response = tem$predict_response(batch_fits[[b]], t_grid)
+  )
+}))
+
+ggplot() +
+  geom_line(data = pred_df,
+            aes(x = time, y = response, colour = batch), linewidth = 0.9) +
+  geom_point(data = long_term_data,
+             aes(x = time, y = response, colour = batch), size = 2.5) +
+  labs(title = "Multi-Batch Consistency: Per-Batch First-Order Fits",
+       subtitle = sprintf("Interaction p = %.3f > 0.25  =>  poolable",
+                          batch_result$batch_time_interaction_p),
+       x = "Time (months)", y = "Assay (% of label claim)",
+       colour = "Batch") +
+  theme_minimal(base_size = 12)
+```
+
+Because the batches are poolable, we combine them into a single
+21-point dataset for all subsequent modelling.
+
+```{r pool-data}
+pooled_data <- data.frame(
+  time     = long_term_data$time,
+  response = long_term_data$response
+)
+cat("Pooled dataset:", nrow(pooled_data), "observations\n")
+```
+
+## Fitting the Four Decay Models
+
+We fit all four kinetic laws to the pooled data. The Weibull model
+requires strictly positive time points (its linearisation uses
+$\ln t$), so the $t = 0$ observations are excluded from the Weibull
+fit only; the other three models use the full dataset.
+
+```{r fit-models}
+fit_zero  <- tem$fit_decay_model(pooled_data$time, pooled_data$response,
+                                 model_type = "zero_order")
+fit_first <- tem$fit_decay_model(pooled_data$time, pooled_data$response,
+                                 model_type = "first_order")
+
+# Weibull: drop t = 0 (log-linearisation requires t > 0)
+idx_pos <- pooled_data$time > 0
+fit_weibull <- tem$fit_decay_model(
+  time       = pooled_data$time[idx_pos],
+  response   = pooled_data$response[idx_pos],
+  model_type = "weibull"
+)
+
+fit_exp <- tem$fit_decay_model(pooled_data$time, pooled_data$response,
+                               model_type = "exponential")
+
+cat("Zero-order  R2 =", round(fit_zero$r_squared,  4), "\n")
+cat("First-order R2 =", round(fit_first$r_squared, 4), "\n")
+cat("Weibull      R2 =", round(fit_weibull$r_squared, 4), " (transformed scale)\n")
+cat("Exp-plateau  R2 =", round(fit_exp$r_squared,  4), "\n")
+```
+
+## Model Comparison
+
+The `r_squared` values returned by `fit_decay_model()` are not all on
+the same scale: the Weibull $R^2$ is computed on the linearised
+response $\ln(-\ln(R/R_0))$, while the other three are on the original
+response scale. For a fair comparison we recompute $R^2$ on the
+original scale for every model by correlating observed and predicted
+responses.
+
+```{r model-comparison}
+# Original-scale R2 for fair comparison across all four models
+r2_original <- function(fit, time, response) {
+  pred <- tem$predict_response(fit, time)
+  cor(response, pred)^2
+}
+
+comparison_df <- data.frame(
+  Model = c("Zero-order", "First-order", "Weibull", "Exp-plateau"),
+  R2_original = c(
+    r2_original(fit_zero,    pooled_data$time, pooled_data$response),
+    r2_original(fit_first,   pooled_data$time, pooled_data$response),
+    r2_original(fit_weibull, pooled_data$time, pooled_data$response),
+    r2_original(fit_exp,     pooled_data$time, pooled_data$response)
+  ),
+  k_or_lambda = c(
+    round(fit_zero$parameters$k,      5),
+    round(fit_first$parameters$k,     5),
+    round(fit_weibull$parameters$lambda, 4),
+    round(fit_exp$parameters$k,       5)
+  ),
+  beta = c(NA, NA, round(fit_weibull$parameters$beta, 3), NA),
+  R_inf = c(NA, NA, NA, round(fit_exp$parameters$R_inf, 2))
+)
+
+knitr::kable(comparison_df, digits = 4,
+             caption = "Model comparison on the original response scale.")
+```
+
+```{r plot-model-comparison}
+comparison_df$Model <- factor(comparison_df$Model, levels = comparison_df$Model)
+
+ggplot(comparison_df, aes(x = Model, y = R2_original, fill = Model)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = sprintf("%.4f", R2_original)), vjust = -0.4, size = 3.5) +
+  scale_y_continuous(limits = c(0, 1.02)) +
+  labs(title = "Model Comparison: R² on Original Scale",
+       subtitle = "First-order and Weibull (beta ~= 1) tie for the best fit",
+       x = "Kinetic model", y = "R² (original scale)") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+**Reasoning.** The zero-order model is worst because the data are
+visibly curved. The exponential-to-plateau model fits the observed
+range reasonably but its plateau $R_\infty$ sits at roughly 92 % —
+above the 90 % specification — so it would predict an infinite shelf
+life, which is physically wrong for a degrading API. The first-order
+and Weibull models tie at the top of the ranking, and the Weibull
+shape parameter $\beta$ is close to 1, confirming that the process is
+indeed first-order. We adopt the **first-order model** on grounds of
+parsimony and physical interpretability.
+
+The overlay plot below shows all four fitted curves together with the
+observed data. The first-order (blue) and Weibull (green) curves are
+almost indistinguishable; the zero-order (red) curve is biased high at
+long times; the exponential-to-plateau (purple) curve flattens out
+above the specification.
+
+```{r plot-overlay}
+t_grid <- seq(0, 36, length.out = 250)
+overlay_df <- data.frame(
+  time = rep(t_grid, 4),
+  response = c(
+    tem$predict_response(fit_zero,    t_grid),
+    tem$predict_response(fit_first,   t_grid),
+    tem$predict_response(fit_weibull, t_grid),
+    tem$predict_response(fit_exp,     t_grid)
+  ),
+  Model = rep(c("Zero-order", "First-order", "Weibull", "Exp-plateau"),
+              each = length(t_grid))
+)
+
+ggplot() +
+  geom_line(data = overlay_df,
+            aes(x = time, y = response, colour = Model), linewidth = 0.9) +
+  geom_point(data = pooled_data,
+             aes(x = time, y = response), size = 1.8, alpha = 0.6) +
+  geom_hline(yintercept = 90, linetype = "dashed", colour = "red") +
+  labs(title = "Four Kinetic Models Overlaid on Pooled Data",
+       subtitle = "Dashed red line = 90 % specification limit",
+       x = "Time (months)", y = "Assay (% of label claim)",
+       colour = "Model") +
+  theme_minimal(base_size = 12)
+```
+
+## Best-Model Visualisation
+
+The `$plot_time_effect()` method draws the fitted curve with a
+confidence ribbon and the observed points. It returns a `ggplot`
+object invisibly, so we wrap every call in `print()` to display it.
+We illustrate it on all four fitted models so the reader can see
+how the curve shape and the confidence band differ across kinetic
+laws.
+
+### First-order fit
+
+```{r plot-best-model}
+print(tem$plot_time_effect(
+  fit_result      = fit_first,
+  time            = pooled_data$time,
+  response        = pooled_data$response,
+  prediction_time = seq(0, 36, length.out = 150)
+))
+```
+
+**Decision.** The first-order curve follows the data closely
+($R^2 > 0.99$ on the original scale) and the 95 % band stays
+narrow across the observed range. The curve crosses the 90 %
+specification at roughly 30 months, which is the shelf life we
+will register. This is our adopted model.
+
+### Zero-order fit
+
+```{r plot-zero-order}
+print(tem$plot_time_effect(
+  fit_result      = fit_zero,
+  time            = pooled_data$time,
+  response        = pooled_data$response,
+  prediction_time = seq(0, 36, length.out = 150)
+))
+```
+
+**Decision.** The zero-order (straight-line) fit is biased high at
+short times and low at long times — the curvature of true
+first-order decay cannot be captured by a linear law. The band is
+visibly wider than the first-order band, signalling a poorer fit.
+We reject this model.
+
+### Weibull fit
+
+For the Weibull plot we pass the strictly-positive subset of the
+data (the $t = 0$ point was excluded from the fit; see the
+`fit-models` chunk).
+
+```{r plot-weibull}
+print(tem$plot_time_effect(
+  fit_result      = fit_weibull,
+  time            = pooled_data$time[idx_pos],
+  response        = pooled_data$response[idx_pos],
+  prediction_time = seq(0, 36, length.out = 150)
+))
+```
+
+**Decision.** The Weibull curve overlays the first-order curve
+almost exactly, and the fitted shape parameter
+$\beta \approx 1$ reduces the Weibull model to the first-order
+model. On grounds of parsimony we keep the first-order model.
+
+### Exponential-to-plateau fit
+
+```{r plot-exponential}
+print(tem$plot_time_effect(
+  fit_result      = fit_exp,
+  time            = pooled_data$time,
+  response        = pooled_data$response,
+  prediction_time = seq(0, 36, length.out = 150)
+))
+```
+
+**Decision.** The exponential-to-plateau curve flattens out at
+$R_\infty \approx 92$ %, above the 90 % specification. This model
+would therefore predict an infinite shelf life, which is
+physically wrong for a degrading API. We reject it.
+
+## Styling the plot with `theme_obj`
+
+The `theme_obj` argument accepts any `ggplot2` theme object that
+can be added with `+`. The default is `theme_minimal()`; passing
+`theme_bw()` (or a custom theme) overrides the styling. The plot
+below re-uses the Weibull fit with `theme_bw()`.
+
+```{r plot-theme-obj}
+p_themed <- tem$plot_time_effect(
+  fit_result      = fit_weibull,
+  time            = pooled_data$time[idx_pos],
+  response        = pooled_data$response[idx_pos],
+  prediction_time = seq(0, 36, length.out = 150),
+  theme_obj       = theme_bw(base_size = 12)
+)
+print(p_themed)
+```
+
+**Decision.** Swapping `theme_minimal()` for `theme_bw()` only
+changes the cosmetics (panel border, gridlines); the underlying
+data, ribbon and curve are identical. Use `theme_obj` to match
+your organisation's report style without rewriting the plot.
+
+## Shelf-Life Estimation (ICH Q1E)
+
+We now estimate the shelf life from the first-order fit with the ICH
+Q1E one-sided 95 % confidence bound. The specification limit is 90 %
+of label claim.
+
+```{r shelf-life}
+shelf <- tem$estimate_shelf_life(
+  fit_result       = fit_first,
+  specification    = 90,
+  confidence_level = 0.95
+)
+
+cat(shelf$note, "\n\n")
+cat("Point estimate  t_shelf  :", round(shelf$shelf_life, 2), "months\n")
+cat("SE(t_shelf)              :", round(shelf$se_shelf_life, 2), "months\n")
+cat("One-sided z (qnorm(0.95)):", round(qnorm(0.95), 4), "\n")
+cat("Lower 95 % bound         :", round(shelf$lower_95, 2), "months\n")
+cat("Upper 95 % bound         :", round(shelf$upper_95, 2), "months\n")
+```
+
+The point estimate is `r round(shelf$shelf_life, 1)` months and the
+ICH Q1E lower one-sided 95 % bound is `r round(shelf$lower_95, 1)`
+months. The lower bound is the value that may be registered.
+
+## Shelf-Life Plot with Confidence Bounds
+
+The figure below shows the fitted decay curve, the 95 % confidence
+band on the mean response, the 90 % specification limit, and the
+shelf-life estimate together with its lower bound. The green dashed
+line marks the point estimate $t_{\text{shelf}}$; the green dotted
+line marks the conservative ICH Q1E lower bound.
+
+```{r plot-shelf-life}
+# Predictions with a confidence band
+t_pred <- seq(0, 40, length.out = 250)
+pred_se <- tem$predict_response(fit_first, t_pred, se_fit = TRUE)
+
+pred_df <- data.frame(
+  time    = t_pred,
+  predict = pred_se$predict,
+  lower   = pred_se$lower,
+  upper   = pred_se$upper
+)
+
+ggplot() +
+  geom_ribbon(data = pred_df,
+              aes(x = time, ymin = lower, ymax = upper),
+              fill = "#2C7BB6", alpha = 0.18) +
+  geom_line(data = pred_df,
+            aes(x = time, y = predict), colour = "#2C7BB6", linewidth = 1) +
+  geom_point(data = pooled_data,
+             aes(x = time, y = response), size = 2, alpha = 0.7) +
+  geom_hline(yintercept = 90, linetype = "dashed", colour = "red", linewidth = 0.7) +
+  geom_vline(xintercept = shelf$shelf_life, linetype = "dashed",
+             colour = "darkgreen", linewidth = 0.7) +
+  geom_vline(xintercept = shelf$lower_95, linetype = "dotted",
+             colour = "darkgreen", linewidth = 0.7) +
+  annotate("text", x = shelf$shelf_life, y = 91.5,
+           label = sprintf("t_shelf = %.1f mo", shelf$shelf_life),
+           hjust = -0.05, colour = "darkgreen", size = 3.5) +
+  annotate("text", x = shelf$lower_95, y = 89.2,
+           label = sprintf("lower 95%% = %.1f mo", shelf$lower_95),
+           hjust = -0.05, colour = "darkgreen", size = 3.5) +
+  annotate("text", x = 0.5, y = 90.3,
+           label = "spec = 90 %", hjust = -0.05, colour = "red", size = 3.5) +
+  labs(title = "Shelf-Life Estimation (ICH Q1E, one-sided 95 %)",
+       subtitle = sprintf("z = %.3f  (qnorm(0.95), one-sided)", qnorm(0.95)),
+       x = "Time (months)", y = "Assay (% of label claim)") +
+  coord_cartesian(xlim = c(0, 40), ylim = c(86, 101)) +
+  theme_minimal(base_size = 12)
+```
+
+## Customising plots with `+ geom_xxx()`
+
+Because `$plot_time_effect()` returns a standard `ggplot` object, it
+can be post-processed with any `ggplot2` layer. The chunk below
+starts from the first-order plot and adds the 90 % specification
+line with `geom_hline()` plus a text annotation of the estimated
+shelf life with `annotate("text", ...)`.
+
+```{r plot-customised}
+p_custom <- tem$plot_time_effect(
+  fit_result      = fit_first,
+  time            = pooled_data$time,
+  response        = pooled_data$response,
+  prediction_time = seq(0, 36, length.out = 150)
+) +
+  geom_hline(yintercept = 90, linetype = "dashed", colour = "red") +
+  annotate("text", x = 0.5, y = 90.4, label = "spec = 90 %",
+           hjust = -0.05, colour = "red", size = 3.5) +
+  annotate("text", x = shelf$shelf_life, y = 95,
+           label = sprintf("t_shelf = %.1f mo", shelf$shelf_life),
+           hjust = 1.05, colour = "darkgreen", size = 3.5) +
+  labs(title = "First-Order Fit with Specification and Shelf-Life Annotations")
+
+print(p_custom)
+```
+
+**Decision.** The annotation makes the registration decision
+explicit at a glance: the fitted curve stays above the 90 %
+specification through the estimated shelf life, and the lower
+95 % bound (computed above) is the value that may be filed. This
+is the recommended way to enrich a standard `$plot_time_effect()`
+output without re-implementing the ribbon and curve layers.
+
+## Combining plots with patchwork
+
+When several fits must be compared side-by-side, the **patchwork**
+package composes independent `ggplot` objects. The chunk below
+places the zero-order and Weibull plots next to each other using
+`patchwork::wrap_elements()` so that each panel keeps its own
+scales and titles, and adds a global title with `plot_annotation()`.
+
+```{r plot-patchwork}
+p_zero <- tem$plot_time_effect(
+  fit_result      = fit_zero,
+  time            = pooled_data$time,
+  response        = pooled_data$response,
+  prediction_time = seq(0, 36, length.out = 150)
+)
+
+p_weib <- tem$plot_time_effect(
+  fit_result      = fit_weibull,
+  time            = pooled_data$time[idx_pos],
+  response        = pooled_data$response[idx_pos],
+  prediction_time = seq(0, 36, length.out = 150)
+)
+
+combined <- wrap_elements(p_zero) + wrap_elements(p_weib) +
+  plot_annotation(title = "Zero-order vs. Weibull fit",
+                  tag_levels = "A")
+
+print(combined)
+```
+
+**Decision.** Side-by-side comparison confirms visually that the
+Weibull fit tracks the curvature of the data while the zero-order
+fit is biased. Patchwork makes the contrast immediate and is the
+recommended way to present model-selection evidence in a
+registration dossier.
+
+## Sensitivity to the Specification Limit
+
+A lower specification limit yields a longer shelf life. Sweeping a
+range of specification limits is a useful input to the regulatory
+negotiation of the labelled expiry.
+
+```{r shelf-sensitivity}
+specs <- c(95, 92, 90, 88, 85, 80)
+shelf_lives <- vapply(specs, function(s) {
+  tem$estimate_shelf_life(fit_first, specification = s,
+                          confidence_level = 0.95)$shelf_life
+}, numeric(1))
+
+sens_df <- data.frame(
+  specification_pct = specs,
+  shelf_life_months = round(shelf_lives, 1)
+)
+
+knitr::kable(sens_df,
+             caption = "Shelf-life point estimate as a function of the specification limit.")
+```
+
+```{r plot-shelf-sensitivity}
+ggplot(sens_df, aes(x = specification_pct, y = shelf_life_months)) +
+  geom_line(colour = "steelblue", linewidth = 0.9) +
+  geom_point(size = 2.5, colour = "steelblue") +
+  geom_vline(xintercept = 90, linetype = "dashed", colour = "red") +
+  labs(title = "Shelf-Life Sensitivity to Specification Limit",
+       subtitle = "Red line = 90 % specification adopted for registration",
+       x = "Specification limit (% of label claim)",
+       y = "Shelf life (months)") +
+  theme_minimal(base_size = 12)
+```
+
+## Accelerated Aging: Arrhenius Analysis
+
+We now turn to the accelerated data at 40, 50 and 60 °C. The rate
+constant $k$ is estimated at each temperature by fitting a first-order
+model, and the three $(1/T, \ln k)$ points are regressed to recover
+$E_a$ and $A$.
+
+```{r sim-accelerated}
+set.seed(2025)
+
+time_acc <- c(0, 1, 2, 3, 4, 5, 6)
+
+# Rate constants at 40, 50, 60 °C chosen so that the Arrhenius
+# extrapolation to 25 °C recovers k ~= 0.0035 /month (consistent with
+# the long-term data). Ea = 80,000 J/mol.
+k_40 <- 0.0165
+k_50 <- 0.0424
+k_60 <- 0.1035
+
+acc_data <- data.frame(
+  time = rep(time_acc, times = 3),
+  temperature = rep(c(40, 50, 60), each = 7),
+  response = round(c(
+    100 * exp(-k_40 * time_acc),
+    100 * exp(-k_50 * time_acc),
+    100 * exp(-k_60 * time_acc)
+  ) + rnorm(21, sd = 0.5), 2)
+)
+
+knitr::kable(acc_data, digits = 2,
+             caption = "Accelerated aging data (assay, % of label claim).")
+```
+
+```{r arrhenius-fit}
+arr_result <- tem$fit_arrhenius_model(
+  data         = acc_data,
+  response_col = "response"
+)
+
+cat("Activation energy Ea     :", round(arr_result$Ea_activation, 0), "J/mol\n")
+cat("Pre-exponential factor A :", signif(arr_result$pre_exponential_factor, 4), "\n")
+cat("Arrhenius R2             :", round(arr_result$r_squared_arrhenius, 4), "\n\n")
+
+cat("Per-temperature first-order fits:\n")
+cat("  k(40 C) =", signif(arr_result$k_values["40"], 5), "/month,  R2 =",
+    round(arr_result$r_squared_individual["40"], 4), "\n")
+cat("  k(50 C) =", signif(arr_result$k_values["50"], 5), "/month,  R2 =",
+    round(arr_result$r_squared_individual["50"], 4), "\n")
+cat("  k(60 C) =", signif(arr_result$k_values["60"], 5), "/month,  R2 =",
+    round(arr_result$r_squared_individual["60"], 4), "\n")
+```
+
+The estimated activation energy is
+`r round(arr_result$Ea_activation, 0)` J/mol, comfortably inside the
+20–120 kJ/mol range typical of pharmaceutical hydrolysis, and the
+Arrhenius line explains
+`r round(100 * arr_result$r_squared_arrhenius, 1)` % of the variance in
+$\ln k$.
+
+## Arrhenius Plot
+
+The Arrhenius plot — $\ln k$ versus $1/T$ — is the central diagnostic
+for accelerated-aging studies. The three measured points should fall
+on a straight line; the extrapolation to 25 °C (red triangle) gives
+the predicted rate constant at the storage temperature.
+
+```{r plot-arrhenius}
+# Measured points
+temps_C <- as.numeric(names(arr_result$k_values))
+temps_K <- temps_C + 273.15
+inv_T   <- 1 / temps_K
+ln_k    <- log(arr_result$k_values)
+
+arr_pts <- data.frame(inv_T = inv_T, ln_k = ln_k,
+                      label = sprintf("%.0f °C", temps_C))
+
+# Extrapolated point at 25 °C
+T_25_K   <- 298.15
+k_25_arr <- arr_result$pre_exponential_factor *
+  exp(-arr_result$Ea_activation / (8.314 * T_25_K))
+arr_25 <- data.frame(inv_T = 1 / T_25_K, ln_k = log(k_25_arr),
+                     label = "25 °C (extrapolated)")
+
+# Fitted line
+inv_T_line <- seq(min(inv_T) * 0.995, max(inv_T) * 1.005, length.out = 100)
+coefs <- coef(arr_result$arrhenius_model_obj)
+ln_k_line <- coefs[1] + coefs[2] * inv_T_line
+arr_line <- data.frame(inv_T = inv_T_line, ln_k = ln_k_line)
+
+ggplot() +
+  geom_line(data = arr_line, aes(x = inv_T, y = ln_k),
+            colour = "steelblue", linetype = "dashed") +
+  geom_point(data = arr_pts, aes(x = inv_T, y = ln_k),
+             size = 3.5, colour = "steelblue") +
+  geom_point(data = arr_25, aes(x = inv_T, y = ln_k),
+             size = 4.5, colour = "red", shape = 17) +
+  geom_text(data = arr_pts, aes(x = inv_T, y = ln_k, label = label),
+            hjust = -0.15, vjust = 0.4, size = 3.3) +
+  geom_text(data = arr_25, aes(x = inv_T, y = ln_k, label = label),
+            hjust = 1.1, vjust = -0.4, size = 3.3, colour = "red") +
+  labs(title = "Arrhenius Plot: ln(k) vs 1/T",
+       subtitle = sprintf("Ea = %.0f J/mol, R2 = %.4f;  k(25 °C) = %.5f /month",
+                          arr_result$Ea_activation,
+                          arr_result$r_squared_arrhenius, k_25_arr),
+       x = "1/T (1/K)", y = "ln(k)") +
+  theme_minimal(base_size = 12)
+```
+
+## Extrapolation to 25 °C
+
+Using the Arrhenius parameters we now predict the assay trajectory at
+the 25 °C storage temperature over a 36-month horizon.
+
+```{r predict-25c}
+t_pred_25 <- seq(0, 36, by = 3)
+pred_25 <- tem$predict_at_target_temp(
+  arrhenius_result = arr_result,
+  target_temp      = 25,
+  new_time         = t_pred_25,
+  R0               = 100
+)
+
+pred_25_df <- data.frame(
+  time              = t_pred_25,
+  predicted_assay   = round(pred_25, 2)
+)
+
+knitr::kable(pred_25_df,
+             caption = "Predicted assay at 25 °C from Arrhenius extrapolation.")
+```
+
+## Cross-Validation: Arrhenius vs Long-Term Fit
+
+The decisive confirmation step is to compare the **two independent
+estimates** of the 25 °C decay curve:
+
+* the **long-term fit** (first-order model fitted directly to the
+  25 °C data), and
+* the **Arrhenius prediction** (extrapolated from the 40, 50, 60 °C
+  accelerated data alone).
+
+If the two curves agree, the Arrhenius model is validated and the
+shelf-life claim is supported by two independent lines of evidence.
+
+```{r cross-validation}
+# Long-term fit: rate constant and predicted curve
+k_longterm <- fit_first$parameters$k
+cat("Long-term fit:    k(25 C) =", round(k_longterm, 5), "/month\n")
+cat("Arrhenius pred.:   k(25 C) =", round(k_25_arr,  5), "/month\n")
+cat("Relative difference      :",
+    round(100 * (k_longterm - k_25_arr) / k_longterm, 2), "%\n\n")
+
+# Shelf life implied by the Arrhenius-predicted rate constant
+t_shelf_arr <- log(100 / 90) / k_25_arr
+cat("Shelf life from long-term fit :", round(shelf$shelf_life, 1), "months\n")
+cat("Shelf life from Arrhenius k   :", round(t_shelf_arr, 1), "months\n")
+```
+
+The two rate constants agree to within a few percent, and the
+resulting shelf-life estimates are within a month of each other. The
+overlay plot below shows the two predicted curves together with the
+observed long-term data points — they are visually indistinguishable.
+
+```{r plot-cross-validation}
+t_grid <- seq(0, 36, length.out = 200)
+cv_df <- data.frame(
+  time = rep(t_grid, 2),
+  response = c(
+    tem$predict_response(fit_first, t_grid),
+    tem$predict_at_target_temp(arr_result, target_temp = 25,
+                               new_time = t_grid, R0 = 100)
+  ),
+  source = rep(c("Long-term fit", "Arrhenius extrapolation"),
+               each = length(t_grid))
+)
+
+ggplot() +
+  geom_line(data = cv_df,
+            aes(x = time, y = response, colour = source), linewidth = 1) +
+  geom_point(data = pooled_data,
+             aes(x = time, y = response), size = 2, alpha = 0.6) +
+  geom_hline(yintercept = 90, linetype = "dashed", colour = "red") +
+  labs(title = "Cross-Validation: Long-Term Fit vs Arrhenius Extrapolation",
+       subtitle = sprintf("k_long-term = %.5f,  k_Arrhenius = %.5f /month",
+                          k_longterm, k_25_arr),
+       x = "Time (months)", y = "Assay (% of label claim)",
+       colour = "Source") +
+  theme_minimal(base_size = 12)
+```
+
+## Regulatory Decision
+
+The complete evidence package supports the following registration
+statement:
+
+| Evidence | Result |
+|:---------|:-------|
+| Kinetic model | First-order, $R^2 > 0.99$ |
+| Multi-batch poolability | $p > 0.25$ — batches pooled |
+| Shelf life (point estimate) | `r round(shelf$shelf_life, 1)` months |
+| Shelf life (ICH Q1E lower 95 % bound) | `r round(shelf$lower_95, 1)` months |
+| Arrhenius $E_a$ | `r round(arr_result$Ea_activation, 0)` J/mol (within 20–120 kJ/mol) |
+| Arrhenius $R^2$ | `r round(arr_result$r_squared_arrhenius, 4)` |
+| Cross-validation $k(25\,^\circ\mathrm{C})$ agreement | within `r round(100 * abs(k_longterm - k_25_arr) / k_longterm, 1)` % |
+
+**Decision.** A **30-month shelf life** is registered for the API at
+25 °C / 60 % RH. The ICH Q1E lower one-sided 95 % confidence bound
+(`r round(shelf$lower_95, 1)` months) exceeds 24 months, and the
+Arrhenius extrapolation from accelerated data independently confirms
+the decay rate. The claim is supported by both the long-term and the
+accelerated-aging evidence.
+
+## Exporting a report
+
+`TimeEffectModeler` does not expose a dedicated `$report()` method,
+so a registration-ready export is assembled from two standard R
+mechanisms. First, the fitted parameters and the shelf-life estimate
+are written to CSV with base R's `write.csv()`; this is the
+tabular artefact that accompanies the dossier. Second, any plot
+returned by `$plot_time_effect()` (or a patchwork composition of
+several) is saved as a vector graphic with `ggplot2::ggsave()`.
+
+```{r export-report, eval = FALSE}
+# 1. Tabular artefact: fitted parameters + shelf-life estimate
+params_df <- data.frame(
+  parameter = c(names(fit_first$parameters),
+                "shelf_life", "lower_95", "upper_95"),
+  value = c(unlist(fit_first$parameters),
+            shelf$shelf_life, shelf$lower_95, shelf$upper_95),
+  model_type = fit_first$model_type
+)
+write.csv(params_df, file = "stability_report.csv", row.names = FALSE)
+
+# 2. Graphical artefact: save the annotated first-order plot
+ggsave("stability_plot.png", plot = p_custom,
+       width = 8, height = 5, dpi = 300)
+
+# 3. Graphical artefact: save the patchwork comparison
+ggsave("model_comparison.png", plot = combined,
+       width = 12, height = 5, dpi = 300)
+```
+
+> **Note.** The chunk above uses `eval = FALSE` so that the vignette
+> build does not write files into the user's working directory.
+> Remove the option (or wrap the calls in `tempdir()`) when running
+> locally.
+
+# Best Practices
+
+## Study Design
+
+| Item | Recommendation | Rationale |
+|:-----|:---------------|:---------|
+| Time points | At least 5–6, including $t = 0$ | Too few cannot discriminate model types |
+| Time span | Cover $\geq 80$ % of the response change | Distant extrapolation inflates error |
+| Temperatures | At least 3 for Arrhenius | Required to identify $E_a$ |
+| Temperature spread | $\geq 20\,^\circ\mathrm{C}$ | Small gaps make $k$ indistinguishable |
+| Batches | At least 3 (ICH requirement) | Enables the poolability test |
+
+## Model Validation
+
+* $R^2 > 0.90$ on the original scale — adequate fit.
+* The chosen model must extrapolate physically (e.g. an
+  exponential-to-plateau with $R_\infty$ above the specification is
+  inappropriate for a degrading API).
+* Parameters are physical: $k > 0$, $E_a$ within 20–120 kJ/mol.
+* Cross-validate long-term and Arrhenius estimates of $k$ at the
+  storage temperature.
+
+## Common Pitfalls
+
+1. **Over-extrapolation.** Predicting far beyond the observed time
+   span multiplies the standard error. Keep extrapolation within
+   $\sim 1.5\times$ the observed span.
+2. **Ignoring batch differences.** Pooling non-poolable batches biases
+   the shelf life. Always run `$analyze_multi_batch()` first.
+3. **Single-temperature Arrhenius.** Without at least three
+   temperatures $E_a$ cannot be identified; the extrapolation has no
+   physical basis.
+4. **Wrong z-value.** ICH Q1E is **one-sided**: use
+   `qnorm(confidence_level)` (= 1.645 for 95 %), not the two-sided
+   `qnorm((1 + confidence_level) / 2)` (= 1.96).
+
+# References
+
+1. Arrhenius, S. (1889). *Uber die Reaktionsgeschwindigkeit bei der
+   Inversion von Rohrzucker*. Zeitschrift fur physikalische Chemie,
+   4(1), 226–248.
+2. ICH Q1A(R2) (2003). *Stability Testing of New Drug Substances and
+   Products*. International Council for Harmonisation.
+3. ICH Q1E (2003). *Evaluation for Stability Data*. International
+   Council for Harmonisation.
+4. Waterman, K. C., & Adami, R. C. (2005). Accelerated aging:
+   prediction of chemical stability of pharmaceuticals. *International
+   Journal of Pharmaceutics*, 293(1–2), 101–125.
+5. Weibull, W. (1951). A statistical distribution function of wide
+   applicability. *Journal of Applied Mechanics*, 18, 293–297.
+6. Carstensen, J. T., & Rhodes, C. T. (2000). *Drug Stability:
+   Principles and Practices* (3rd ed.). Marcel Dekker.

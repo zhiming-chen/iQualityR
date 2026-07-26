@@ -1,0 +1,195 @@
+---
+title: "Advanced SPC: Time-Weighted, Multivariate, and Rare-Event Charts"
+author: "iQualityR.spc"
+date: "2026-07-05"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Advanced SPC: Time-Weighted, Multivariate, and Rare-Event Charts}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE,
+  error = TRUE
+)
+```
+
+```{r setup, echo = FALSE}
+library(iQualityR.spc)
+library(ggplot2)
+set.seed(2026)
+
+# Helper: save plot via ggsave() and display via include_graphics().
+# This avoids knitr's inline graphics device which can crash in R CMD check.
+iqr_plot <- function(task, type = "full", name) {
+  dir.create("figures", showWarnings = FALSE)
+  path <- file.path("figures", paste0(name, ".png"))
+  p <- task$plot(type = type)
+  ggplot2::ggsave(path, p, width = 7, height = 4.5, dpi = 100, bg = "white")
+  knitr::include_graphics(path)
+}
+```
+
+## Overview
+
+This vignette covers the advanced control charts in `iQualityR.spc`:
+
+- **Time-weighted charts**: EWMA, CUSUM, Moving Average
+- **Multivariate charts**: Hotelling T2, MEWMA
+- **Rare-event charts**: G chart, T chart
+- **Phase / stage analysis**
+
+These charts extend the Shewhart family to scenarios where traditional
+variables / attributes charts are insufficient: small sustained shifts,
+correlated measurements, or rare defects.
+
+## 1. Time-Weighted Charts
+
+### 1.1 EWMA
+
+The Exponentially Weighted Moving Average (EWMA) chart is sensitive to
+small sustained shifts (1 to 1.5 sigma). The smoothing parameter `lambda`
+controls the trade-off between sensitivity and noise:
+
+```{r}
+df <- data.frame(
+  measurement = c(rnorm(20, 100, 1), rnorm(10, 102, 1))
+)
+task <- run_spc_ewma(df, "measurement", lambda = 0.2)
+task$summary()
+iqr_plot(task, "summary", "spc_advanced_ewma")
+```
+
+Smaller `lambda` (e.g. 0.1) detects smaller shifts but reacts slower.
+Larger `lambda` (e.g. 0.4) is more responsive but less sensitive.
+
+### 1.2 CUSUM
+
+The Cumulative Sum chart accumulates deviations from target. Parameters:
+
+- `k`: reference value (sigma units). Default 0.5 detects 0.5 sigma shifts.
+- `h`: decision interval (sigma units). Default 4.77 gives ARL0 ~ 370.
+
+```{r}
+df <- data.frame(
+  measurement = c(rnorm(20, 50, 1), rnorm(10, 51.5, 1))
+)
+task <- run_spc_cusum(df, "measurement", k = 0.5, h = 4.77)
+task$summary()
+```
+
+### 1.3 Moving Average
+
+The MA chart averages the most recent `ma_window` observations:
+
+```{r}
+df <- data.frame(measurement = rnorm(30, 100, 1))
+task <- run_spc_ma(df, "measurement", ma_window = 3)
+```
+
+## 2. Multivariate Charts
+
+### 2.1 Hotelling T2
+
+Use T2 when monitoring multiple correlated variables simultaneously:
+
+```{r}
+df <- data.frame(
+  x1 = c(rnorm(25, 50, 1), rnorm(5, 53, 1)),
+  x2 = c(rnorm(25, 30, 0.8), rnorm(5, 32.5, 0.8))
+)
+task <- run_spc_t2(df)
+task$summary()
+iqr_plot(task, "summary", "spc_advanced_t2")
+```
+
+### 2.2 MEWMA
+
+The Multivariate EWMA (Lowry et al. 1992) is the multivariate extension
+of EWMA and is sensitive to small sustained shifts in the mean vector:
+
+```{r}
+df <- data.frame(
+  x1 = rnorm(30, 50, 1),
+  x2 = rnorm(30, 30, 0.8)
+)
+task <- run_spc_mewma(df, lambda = 0.2)
+```
+
+## 3. Rare-Event Charts
+
+### 3.1 G Chart
+
+For monitoring the number of opportunities between rare defects
+(geometric distribution):
+
+```{r}
+df <- data.frame(opportunities = rgeom(30, prob = 0.05) + 1)
+task <- run_spc_g(df, "opportunities")
+task$summary()
+```
+
+### 3.2 T Chart
+
+For monitoring time between rare events (exponential distribution):
+
+```{r}
+df <- data.frame(time_between = rexp(30, rate = 0.1))
+task <- run_spc_t(df, "time_between")
+task$summary()
+```
+
+## 4. Phase / Stage Analysis
+
+Phase analysis splits the data at specified boundaries and computes
+control limits separately for each phase. This is useful for assessing
+whether a process improvement has shifted the mean or reduced variation:
+
+```{r}
+df <- data.frame(
+  measurement = c(rnorm(20, 100, 1), rnorm(15, 102, 1))
+)
+phases <- run_spc_phase(df, "measurement", "imr",
+                        phase_boundaries = c(21))
+print(phases)
+```
+
+The output shows center, sigma, UCL/LCL, and violations for each phase.
+Compare phases to assess whether the improvement was effective.
+
+## 5. Choosing a Chart
+
+| Scenario | Recommended Chart |
+|----------|--------------------|
+| Continuous data, subgroups of 2-10 | Xbar-R |
+| Continuous data, subgroups > 10 | Xbar-S |
+| Continuous data, individual values | I-MR |
+| Proportion defective, equal n | NP |
+| Proportion defective, unequal n | P |
+| Defects per unit, equal n | C |
+| Defects per unit, unequal n | U |
+| Large sample P chart over-dispersion | Laney P' |
+| Large sample U chart over-dispersion | Laney U' |
+| Small sustained mean shifts | EWMA or CUSUM |
+| Correlated multivariate data | T2 or MEWMA |
+| Rare defects (low rate) | G chart |
+| Rare events (time-based) | T chart |
+
+## References
+
+- Lowry, C. A., Woodall, W. H., Champ, C. W., & Rigdon, S. E. (1992). A
+  multivariate exponentially weighted moving average control chart.
+  *Technometrics*, 34(1), 46-53.
+- Lucas, J. M. (1982). Combined Shewhart-CUSUM quality control schemes.
+  *Journal of Quality Technology*, 14(2), 51-61.
+- Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+  (7th ed.).
+- NIST/SEMATECH e-Handbook of Statistical Methods, Section 6.3.

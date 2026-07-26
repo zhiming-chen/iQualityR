@@ -1,0 +1,45 @@
+Package: iQualityR.predict
+Title: Predictive Quality Modeling for iQualityR
+Version: 0.1.0
+Description: Provides predictive quality modeling tools, including
+  classification and regression analysis, model training and evaluation,
+  diagnostic analysis, explainability engines, and prediction-related
+  visualizations and reporting.
+Authors@R: c(
+    person("iQualityR", "Team", role = c("aut", "cre"),
+           email = "iQualityR@example.com")
+  )
+Depends:
+    R (>= 4.1.0)
+Imports:
+    R6,
+    ggplot2,
+    stats,
+    rlang,
+    utils,
+    iQualityR.core (>= 0.1.0)
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat,
+    knitr,
+    rmarkdown,
+    dplyr,
+    magrittr,
+    gridExtra,
+    patchwork,
+    reshape2,
+    randomForest,
+    xgboost,
+    e1071,
+    glmnet,
+    pls,
+    car,
+    pROC
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+VignetteBuilder: knitr
+NeedsCompilation: no

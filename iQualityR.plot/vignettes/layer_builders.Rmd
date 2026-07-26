@@ -1,0 +1,379 @@
+---
+title: "Layer Builders"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Layer Builders}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Layer Builders
+
+## Overview
+
+The underlying architecture of `iQualityR.plot` is based on the ggplot2 layer system, providing a series of reusable layer builder functions. These functions are the foundation of high-level plotting functions and can also be called directly by users to customize plots.
+
+This chapter introduces:
+
+- `layers_histogram_density()` - Histogram + density curve layer
+- `layers_qq()` - QQ plot layer
+- `layers_boxplot()` - Box plot layer
+- `layers_trend_line()` - Trend line layer
+- `layers_spec_limits()` - Specification limits layer
+- The architectural philosophy of the layer system
+
+## Load Data
+
+```{r setup}
+library(ggplot2)
+library(datasets)
+library(iQualityR.core)
+
+library(iQualityR.plot)
+
+
+
+data("mtcars")
+data("iris")
+```
+
+## 1. Layer System Architecture
+
+### What is a Layer?
+
+The core idea of ggplot2 is the "Grammar of Graphics", which decomposes a plot into multiple independent layers:
+
+- **Data layer**: Defines data and aesthetic mappings
+- **Geometry layer**: Defines plot types (points, lines, areas, etc.)
+- **Statistics layer**: Defines statistical transformations (smoothing, binning, etc.)
+- **Coordinate layer**: Defines the coordinate system
+- **Facet layer**: Defines facet layout
+- **Theme layer**: Defines visual style
+
+### iQualityR Layer Functions
+
+`iQualityR.plot` encapsulates common plot combinations as layer functions that can be directly added to base plots:
+
+```{r layer_concept, eval=FALSE}
+# Conceptual example
+base_plot(data, aes(x, y)) +
+  layers_histogram_density() +  # Add histogram + density curve
+  layers_qq() +                  # Add QQ plot elements
+  theme_iqr()                    # Apply theme
+```
+
+## 2. Histogram + Density Curve Layer
+
+`layers_histogram_density()` is a commonly used distribution visualization layer combination.
+
+### Basic Usage
+
+```{r histogram_density, warning=FALSE,dev="png"}
+p <- base_plot(mtcars, aes(x = mpg)) +
+  layers_histogram_density(bins = 15,
+                           hist_args = list(fill = "#3498db", color = "white", alpha = 0.7),
+                           density_args = list(color = "#e74c3c", linewidth = 1.2)) +
+  labs(
+    title = "Car Fuel Efficiency Distribution",
+    x = "MPG",
+    y = "Density"
+  )
+
+print(p)
+```
+
+### Adding a Normal Curve
+
+```{r histogram_normal, warning=FALSE}
+x_vals <- seq(min(mtcars$mpg), max(mtcars$mpg), length.out = 100)
+normal_df <- data.frame(
+  x = x_vals,
+  y = dnorm(x_vals, mean = mean(mtcars$mpg), sd = sd(mtcars$mpg))
+)
+
+p_normal <- base_plot(mtcars, aes(x = mpg)) +
+  layers_histogram_density(bins = 12,
+                           hist_args = list(fill = "#2ecc71", color = "white", alpha = 0.6),
+                           density_args = list(color = "#e74c3c", linewidth = 1.2)) +
+  geom_line(data = normal_df, aes(x = x, y = y),
+            color = "#9b59b6", linewidth = 1.2, linetype = "dashed") +
+  labs(
+    title = "MPG Distribution with Normal Fit",
+    x = "MPG",
+    y = "Density"
+  )
+
+print(p_normal)
+```
+
+## 3. QQ Plot Layer
+
+The QQ plot layer is used to quickly create quantile-quantile plots.
+
+### Basic Usage
+
+```{r qq_layer, warning=FALSE}
+p_qq <- base_plot(mtcars, aes(sample = mpg)) +
+  layers_qq(distribution = "norm",
+            qq_args = list(color = "#3498db", size = 3, alpha = 0.7),
+            line_args = list(color = "#e74c3c", linetype = "dashed", linewidth = 1)) +
+  labs(
+    title = "MPG Normal QQ Plot",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  )
+
+print(p_qq)
+```
+
+## 4. Box Plot Layer
+
+The box plot layer is used to display the five-number summary of data distribution.
+
+### Basic Usage
+
+```{r boxplot_layer, warning=FALSE}
+p_box <- base_plot(mtcars, aes(x = factor(cyl), y = mpg)) +
+  layers_boxplot(add_jitter = TRUE,
+                 boxplot_args = list(fill = "#e67e22", alpha = 0.7,
+                                     outlier.color = "#e74c3c", outlier.size = 3),
+                 jitter_args = list(width = 0.15, alpha = 0.5, size = 2,
+                                    color = "#2c3e50")) +
+  labs(
+    title = "MPG Box Plot by Cylinder Count",
+    x = "Cylinders",
+    y = "MPG"
+  )
+
+print(p_box)
+```
+
+### Adding Statistical Annotations
+
+```{r boxplot_stats,   warning=FALSE}
+# Add statistical annotations (mean, median, etc.)
+library(dplyr)
+
+stats <- mtcars %>%
+  group_by(cyl) %>%
+  summarise(
+    mean_mpg = mean(mpg),
+    median_mpg = median(mpg),
+    .groups = "drop"
+  )
+
+p_box +
+  geom_point(data = stats, 
+             aes(x = factor(cyl), y = mean_mpg),
+             color = "red", size = 4, shape = 17) +
+  geom_text(data = stats,
+            aes(x = factor(cyl), y = mean_mpg, 
+                label = sprintf("Mean: %.1f", mean_mpg)),
+            vjust = -1, color = "blue", size = 4)
+```
+
+## 5. Custom Layer Combinations
+
+The greatest advantage of the layer system is the ability to freely combine layers to create plots that meet specific needs.
+
+### Combination Example: Distribution Diagnostic Plot
+
+```{r custom_combo, warning=FALSE}
+x_vals <- seq(min(mtcars$mpg), max(mtcars$mpg), length.out = 100)
+normal_df <- data.frame(
+  x = x_vals,
+  y = dnorm(x_vals, mean = mean(mtcars$mpg), sd = sd(mtcars$mpg))
+)
+
+p_diagnostic <- base_plot(mtcars, aes(x = mpg)) +
+  layers_histogram_density(bins = 10,
+                           hist_args = list(fill = "#3498db", color = "white", alpha = 0.5),
+                           density_args = list(fill = "#e74c3c", alpha = 0.2,
+                                               color = "#e74c3c", linewidth = 1.2)) +
+  geom_line(data = normal_df, 
+            aes(x = x, y = y),
+            color = "#2c3e50",
+            linewidth = 1,
+            linetype = "dashed") +
+  geom_vline(xintercept = mean(mtcars$mpg),
+             color = "#e67e22",
+             linewidth = 1,
+             linetype = "dotted") +
+  labs(
+    title = "MPG Distribution Diagnostic Plot",
+    subtitle = sprintf("Mean = %.1f, SD = %.1f, n = %d",
+                       mean(mtcars$mpg), sd(mtcars$mpg), nrow(mtcars)),
+    x = "MPG",
+    y = "Density"
+  )
+
+print(p_diagnostic)
+```
+
+## 6. Relationship Between Layers and High-Level Functions
+
+The high-level plotting functions of `iQualityR.plot` are all built on these layers:
+
+### Layer Structure of plot_qq()
+
+```{r qq_structure, eval=FALSE}
+# plot_qq() internally uses the following layers:
+# 1. geom_point() - Sample quantile points
+# 2. geom_abline() - Reference line
+# 3. geom_ribbon() - Confidence band (optional)
+# 4. annotate() - Statistical test annotation
+```
+
+### Layer Structure of plot_scatter_basic()
+
+```{r scatter_structure, eval=FALSE}
+# plot_scatter_basic() internally uses the following layers:
+# 1. geom_point() - Scatter points
+# 2. geom_smooth(method = "lm") - Regression line
+# 3. annotate() - Correlation coefficient and equation annotation
+```
+
+## Practical Case Studies
+
+### Case 1: Multi-Variable Distribution Comparison
+
+```{r case_multivariate, warning=FALSE}
+# Compare MPG distribution by cylinder count
+p_multi <- base_plot(mtcars, aes(x = mpg, fill = factor(cyl))) +
+  geom_density(alpha = 0.5) +
+  labs(
+    title = "MPG Density Distribution by Cylinder Count",
+    x = "MPG",
+    y = "Density",
+    fill = "Cylinders"
+  ) +
+  scale_fill_brewer(palette = "Set1")
+
+print(p_multi)
+```
+
+### Case 2: Process Capability Visualization
+
+```{r case_capability, warning=FALSE}
+set.seed(123)
+process_data <- rnorm(100, mean = 50, sd = 2)
+process_df <- data.frame(value = process_data)
+
+USL <- 56
+LSL <- 44
+
+p_capa <- base_plot(process_df, aes(x = value)) +
+  layers_histogram_density(bins = 15,
+                           hist_args = list(fill = "#3498db", color = "white", alpha = 0.6),
+                           density_args = list(color = "#e74c3c", linewidth = 1.2)) +
+  layers_spec_limits(lsl = LSL, usl = USL) +
+  geom_vline(xintercept = mean(process_data), 
+             color = "#2c3e50", linewidth = 1) +
+  labs(
+    title = "Process Capability Visualization",
+    subtitle = sprintf("Cp = %.2f, Cpk = %.2f",
+                       (USL - LSL) / (6 * sd(process_data)),
+                       min((USL - mean(process_data)), 
+                           (mean(process_data) - LSL)) / (3 * sd(process_data))),
+    x = "Measurement Value",
+    y = "Density"
+  )
+
+print(p_capa)
+```
+
+## Best Practices
+
+### 1. Layer Order
+
+```{r best_practice_order, eval=FALSE}
+# Recommended layer addition order:
+# 1. Geometry layer (points, lines, areas)
+# 2. Statistics layer (smoothing, binning)
+# 3. Annotation layer (text, labels)
+# 4. Theme layer (style)
+
+base_plot(data, aes(x, y)) +
+  geom_point() +           # Geometry layer
+  geom_smooth() +          # Statistics layer
+  annotate() +             # Annotation layer
+  theme_iqr()              # Theme layer
+```
+
+### 2. Layer Reuse
+
+```{r best_practice_reuse, eval=FALSE}
+# Create reusable layer combinations
+my_layers <- list(
+  geom_point(color = "#3498db", alpha = 0.7),
+  geom_smooth(method = "lm", color = "#e74c3c"),
+  theme_minimal()
+)
+
+# Reuse across different plots
+p1 <- base_plot(data1, aes(x, y)) + my_layers
+p2 <- base_plot(data2, aes(a, b)) + my_layers
+```
+
+### 3. Performance Optimization
+
+```{r best_practice_performance, eval=FALSE}
+# For large datasets, use stat_summary instead of geom_point
+base_plot(large_data, aes(x, y)) +
+  stat_summary(fun = mean, geom = "point", size = 2) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2)
+```
+
+## FAQ
+
+### Q: How to create a custom layer function?
+
+```{r faq_custom_layer, eval=FALSE}
+# Create a custom layer function
+my_custom_layer <- function(color = "blue", size = 1) {
+  list(
+    geom_point(color = color, size = size),
+    geom_smooth(method = "lm", color = color)
+  )
+}
+
+# Usage
+base_plot(data, aes(x, y)) + my_custom_layer("red", 2)
+```
+
+### Q: What to do about layer conflicts?
+
+If multiple layers use the same aesthetic mapping, the later-added layer will override the previous one. Use `inherit.aes = FALSE` to avoid inheritance conflicts:
+
+```{r faq_conflict, eval=FALSE}
+geom_line(data = other_df, aes(x = x, y = y), inherit.aes = FALSE)
+```
+
+## Summary
+
+- The layer system is the core architecture of ggplot2 and `iQualityR.plot`
+- Layer functions can be used individually or combined to create complex plots
+- High-level plotting functions are all built on layers
+- Understanding the layer system helps in creating custom visualizations
+
+## Further Reading
+
+- [Basic Plotting and Theme System](basic_plotting_theme.html) - Learn about the theme system
+- [Scatter Plots](scatter_plots.html) - Learn about scatter plot plotting
+- [Advanced Analysis Plots](advanced_plots.html) - Learn about correlation heatmaps and interaction plots

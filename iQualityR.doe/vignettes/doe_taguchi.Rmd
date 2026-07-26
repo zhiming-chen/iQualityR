@@ -1,0 +1,1023 @@
+---
+title: "Taguchi Robust Design with iQualityR.doe"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Taguchi Robust Design}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+library(knitr)
+```
+
+# Introduction
+
+Genichi Taguchi's robust design methodology shifts the focus of quality
+engineering from *inspecting out* defects to *designing in* insensitivity to
+noise. Rather than trying to control or eliminate the noise sources that a
+product or process encounters in service, the engineer searches for settings of
+the control factors that make the response **both on target and low in
+variation** across the noise conditions the product will see.
+
+The `iQualityR.doe` package provides an implementation of the core Taguchi
+toolkit:
+
+- **Quality loss function** -- a continuous, quadratic penalty for any
+  deviation from target.
+- **Signal-to-noise (S/N) ratios** -- three static criteria (larger-the-better,
+  nominal-the-best, smaller-the-better) that condense a set of repeated runs
+  into a single value that simultaneously rewards location and penalizes
+  dispersion.
+- **Orthogonal arrays** -- small, balanced experimental layouts that let the
+  engineer estimate factor effects with a minimum number of runs.
+- **Contribution analysis** -- ANOVA-based decomposition that quantifies how
+  much of the total variation each factor accounts for.
+
+This vignette walks through a complete case study -- optimizing the pull-off
+strength of a PCB solder joint against environmental noise -- from problem
+definition through confirmation run. Every step uses functions exported by
+`iQualityR.doe`.
+
+# API Overview
+
+The `IqrDoeTask` class is the central object in **iQualityR.doe**. Its
+life-cycle is:
+
+```r
+task <- taguchi_design(...)      # or factorial_design / rsm_design / screening_design
+task$data <- df                  # attach the observed responses
+task$compute()                  # fit ANOVA + lm models
+task$summary()                  # print the analysis
+task$plot(type = "...")         # generate figures
+task$report(format = "excel", path = "...")  # export a report
+```
+
+## The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "main_effects")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+## The `TaguchiAnalyzer` class
+
+For robust-design analysis beyond the standard ANOVA, **iQualityR.doe**
+exposes the `TaguchiAnalyzer` R6 class with three public methods:
+
+| Method                       | Purpose                                                        |
+|------------------------------|----------------------------------------------------------------|
+| `compute_sn_ratio(data, ...)` | Compute Signal-to-Noise ratios (singular method name).        |
+| `analyze_robustness(...)`    | Full robust-design analysis with S/N ratio decomposition.     |
+| `compute_contribution(...)`  | Quantify each factor's contribution to the S/N ratio.          |
+
+# Taguchi Philosophy
+
+Taguchi's quality engineering rests on three foundational tools. This section
+reviews each in turn, with the formulas as implemented in `iQualityR.doe`.
+
+## Quality Loss Function
+
+The classical, specification-based view treats quality loss as a step function:
+zero inside the tolerance band $[\text{LSL}, \text{USL}]$ and a constant penalty
+outside it. Taguchi argued that this is a poor model of reality -- a part whose
+dimension sits at the target $T$ performs better than one sitting at the
+specification limit, even though both pass inspection. He therefore proposed a
+**quadratic loss function**:
+
+$$L(y) = k \cdot (y - T)^2$$
+
+where $k$ is a constant fixed by a single known cost point (if the loss at
+deviation $\Delta$ is $A$ dollars, then $k = A / \Delta^2$). For a
+nominal-the-best characteristic the loss grows symmetrically around $T$; for
+smaller-the-better it grows without bound as $y$ grows
+($L(y) = k \cdot y^2$); for larger-the-better it is largest when $y$ is small
+($L(y) = k / y^2$).
+
+Averaging over a sample of $n$ products gives the mean loss
+
+$$\bar{L} = k \left[ (\bar{y} - T)^2 + s^2 \right],$$
+
+which splits naturally into a **bias** term $(\bar{y} - T)^2$ and a **variance**
+term $s^2$. Reducing expected loss therefore requires reducing *both* the mean
+deviation and the variation -- the mathematical heart of the Taguchi method.
+
+## Signal-to-Noise Ratios
+
+For each inner-array run, the outer-array observations $y_1, \dots, y_n$ are
+condensed into a single S/N ratio (in dB). `iQualityR.doe` implements the three
+standard static criteria.
+
+### Larger-the-better
+
+When the goal is to *maximize* $y$ (strength, life, yield):
+
+$$S/N_L = -10 \log_{10}\!\left(\frac{1}{n}\sum_{i=1}^{n}\frac{1}{y_i^{\,2}}\right)
+       = -10 \log_{10}\!\left(\overline{1/y^2}\right) \quad \text{[dB]}$$
+
+The inner mean is the expected quadratic loss $E[1/y^2]$; the leading minus
+sign makes *larger* S/N better.
+
+### Smaller-the-better
+
+When the goal is to *minimize* $y$ (defects, wear, emissions):
+
+$$S/N_S = -10 \log_{10}\!\left(\frac{1}{n}\sum_{i=1}^{n} y_i^{\,2}\right)
+       = -10 \log_{10}\!\left(\overline{y^2}\right) \quad \text{[dB]}$$
+
+### Nominal-the-best
+
+When the goal is to *hit a target* $T$:
+
+$$S/N_N = 10 \log_{10}\!\left(\frac{\bar{y}^{\,2}}{s^2}\right) \quad \text{[dB]}$$
+
+**Implementation note.** `TaguchiAnalyzer$compute_sn_ratio(type = "nominal")`
+uses the bias-corrected form
+
+$$S/N_N = 10 \log_{10}\!\left(\frac{\bar{y}^{\,2} - s^2/n}{s^2}\right),$$
+
+where the subtraction $s^2/n$ removes the degrees-of-freedom bias in
+$\bar{y}^{\,2}$ (the sample mean of squared values overstates the population
+mean by $s^2/n$). For large $n$ the two forms converge; for the small
+replicate counts typical of Taguchi experiments the corrected form is
+preferred.
+
+| Type | Goal | S/N formula | Typical applications |
+|:-----|:-----|:------------|:----------------------|
+| Larger-the-better | Maximize $y$ | $-10\log_{10}(\overline{1/y^2})$ | Strength, life, yield |
+| Nominal-the-best | Hit target $T$ | $10\log_{10}((\bar{y}^2 - s^2/n)/s^2)$ | Dimensions, weights, voltages |
+| Smaller-the-better | Minimize $y$ | $-10\log_{10}(\overline{y^2})$ | Defects, wear, emissions |
+
+## Orthogonal Arrays
+
+An orthogonal array (OA) is a balanced fractional factorial in which every
+pair of columns covers every level combination with equal frequency. The
+defining property is **orthogonality**:
+
+$$\sum_{i=1}^{N} x_{ij} \cdot x_{ik} = 0 \quad \text{for } j \neq k,$$
+
+which guarantees that the column effects are estimable independently of one
+another.
+
+`iQualityR.doe` ships with two built-in orthogonal arrays:
+
+| Array | Runs | Max two-level factors | When it is selected |
+|:------|:-----|:----------------------|:--------------------|
+| $L_4$ | 4 | 3 | 2--3 two-level factors |
+| $L_8$ | 8 | 7 | 4--7 two-level factors |
+
+When the requested factor count or level count exceeds what these arrays
+support, `taguchi_design()` **falls back to a full factorial** layout rather
+than refusing. This keeps the call useful for prototyping, but it is not a
+true Taguchi array.
+
+> **Note for production use.** Real Taguchi experiments frequently require
+> mixed-level arrays ($L_{18}$, $L_{36}$) or three-level arrays ($L_9$,
+> $L_{27}$). For those cases the **`DoE.base`** package on CRAN provides
+> proper orthogonal-array generators with correct aliasing. The
+> `iQualityR.doe` Taguchi toolkit is intended for teaching, prototyping, and
+> for running S/N ratio + contribution analysis on data you already have.
+
+# Case Study: PCB Solder Joint Strength
+
+The remainder of this vignette is a single end-to-end case study. We follow
+the standard Taguchi workflow:
+
+1. **Define** the problem, control factors, noise factors, and response.
+2. **Generate** the inner array with `taguchi_design()`.
+3. **Simulate** the inner $\times$ outer crossed data.
+4. **Run** the full analysis with `taguchi_design(data = ...)`.
+5. **Compute** the three S/N types directly with `TaguchiAnalyzer`.
+6. **Analyse** per-combination robustness with `analyze_robustness()`.
+7. **Decompose** contributions with `compute_contribution()`.
+8. **Plot** the S/N main effects and contribution Pareto.
+9. **Select** the optimal control-factor combination.
+10. **Confirm** the prediction with a fresh confirmation run.
+
+## Problem Definition
+
+A surface-mount PCB line is experiencing variation in solder-joint pull-off
+strength. The engineering team wants to choose soldering parameters that
+**maximize** pull-off strength while being **robust** to two noise sources
+that are difficult to control in production: ambient temperature and PCB
+moisture content.
+
+| Role | Factor | Levels | Units |
+|:-----|:-------|:-------|:------|
+| Control | `SoldTemp` (soldering temperature) | 240, 260 | °C |
+| Control | `PreTemp` (preheat temperature) | 80, 100 | °C |
+| Control | `SoldTime` (soldering time) | 3, 5 | s |
+| Noise | `EnvTemp` (ambient temperature) | 15, 30 | °C |
+| Noise | `PCBHum` (PCB moisture) | 30, 70 | % |
+| Response | `PullStrength` (pull-off strength) | -- | N (maximize) |
+
+Because the response is to be **maximized**, the **larger-the-better** S/N
+criterion is used throughout.
+
+We begin by encoding the factor specifications in the list-of-lists form that
+`taguchi_design()` expects:
+
+```{r define-factors}
+control_factors <- list(
+  list(name = "SoldTemp", type = "continuous", levels = c(240, 260)),
+  list(name = "PreTemp",  type = "continuous", levels = c(80, 100)),
+  list(name = "SoldTime", type = "continuous", levels = c(3, 5))
+)
+
+noise_factors <- list(
+  list(name = "EnvTemp", type = "continuous", levels = c(15, 30)),
+  list(name = "PCBHum",  type = "continuous", levels = c(30, 70))
+)
+```
+
+## Generating the Inner Array with `taguchi_design()`
+
+We first call `taguchi_design()` **without** supplying data. In this mode the
+function builds the inner array (the orthogonal layout of control factors) and
+returns it as `result$design`; `result$taguchi_analysis` stays `NULL` until
+response data is supplied.
+
+```{r build-inner-array}
+design_preview <- taguchi_design(
+  control_factors = control_factors,
+  noise_factors   = noise_factors,
+  response_vars   = "PullStrength",
+  sn_type         = "larger",
+  randomize       = FALSE,
+  seed            = 42
+)
+
+# Design table (the L4 orthogonal array, mapped to actual factor levels)
+head(design_preview$design, 10)
+
+# No response data yet => no S/N analysis
+is.null(design_preview$taguchi_analysis)
+```
+
+The design table has 4 rows: with three two-level factors the package selects
+the $L_4(2^3)$ orthogonal array. Each row is a unique combination of control
+factor levels at which the engineer will collect data under the noise
+conditions of the outer array.
+
+> **Pedagogical note.** $L_4$ is a resolution-III array: main effects are
+> estimable, but two-factor interactions are aliased with main effects. The
+> simulated dataset in the next section uses the **full $2^3$ factorial** for
+> the control factors (8 combinations instead of 4) so that the
+> `SoldTemp` $\times$ `SoldTime` interaction can be estimated and shown in the
+> ANOVA. In a production Taguchi experiment you would either accept the
+> aliasing or move to a larger array (e.g. $L_8$ with 4+ control factors) and
+> use `DoE.base` for the layout.
+
+## Simulating Inner-Outer Crossed Data
+
+We now simulate the full inner $\times$ outer crossed dataset. The inner array
+is the full $2^3 = 8$ control-factor combinations; the outer array is the full
+$2^2 = 4$ noise-factor combinations. Crossing them gives $8 \times 4 = 32$
+measurements.
+
+The true data-generating process is:
+
+- `SoldTemp` and `SoldTime` have positive main effects on pull-off strength.
+- `SoldTemp` $\times$ `SoldTime` has a positive interaction.
+- `PreTemp` has **no** effect (a deliberate null, to confirm the contribution
+  analysis correctly assigns it $\approx 0\%$).
+- `PCBHum` has a **negative** effect on strength (moisture weakens the joint).
+- `EnvTemp` has no effect within the tested range.
+- Random error is `rnorm(0, 0.5)`.
+
+```{r simulate-data}
+set.seed(42)
+
+# Inner array: full 2^3 factorial of control factors (8 combinations)
+control_grid <- expand.grid(
+  SoldTemp = c(240, 260),
+  PreTemp  = c(80, 100),
+  SoldTime = c(3, 5)
+)
+
+# Outer array: full 2^2 factorial of noise factors (4 combinations)
+noise_grid <- expand.grid(
+  EnvTemp = c(15, 30),
+  PCBHum  = c(30, 70)
+)
+
+# Cross inner x outer => 32 rows
+sim_data <- merge(control_grid, noise_grid)
+
+# Coded (-1, +1) versions for the true-response simulation
+st_c <- (sim_data$SoldTemp - 250) / 10   # 240 -> -1, 260 -> +1
+tm_c <- (sim_data$SoldTime -   4) / 1    #   3 -> -1,   5 -> +1
+ph_c <- (sim_data$PCBHum   -  50) / 20   #  30 -> -1,  70 -> +1
+
+# True model: base 50 N, +5 for high SoldTemp, +3 for high SoldTime,
+# +2 interaction, -1.5 for high PCBHum, plus N(0, 0.5) noise.
+sim_data$PullStrength <- 50 +
+  5 * st_c +
+  3 * tm_c +
+  2 * st_c * tm_c +
+  -1.5 * ph_c +
+  rnorm(nrow(sim_data), mean = 0, sd = 0.5)
+
+head(sim_data, 10)
+```
+
+## Running the Full Analysis with `taguchi_design(data = )`
+
+Passing the 32-row dataset through `taguchi_design(data = sim_data, ...)`
+turns on the full Taguchi analysis pipeline. The function:
+
+1. Runs an ANOVA of `PullStrength ~ SoldTemp * PreTemp * SoldTime` on the
+   supplied data (this populates `task$results$anova_results`).
+2. Builds an ANOVA data.frame and calls `TaguchiAnalyzer$compute_contribution()`
+   to obtain per-term contribution percentages.
+3. Calls `TaguchiAnalyzer$analyze_robustness()` to compute the S/N ratio per
+   control-factor combination (treating the noise-factor rows as the
+   replicates used to estimate variation).
+4. Returns everything in `result$taguchi_analysis`.
+
+```{r full-analysis}
+full_result <- taguchi_design(
+  control_factors = control_factors,
+  noise_factors   = noise_factors,
+  response_vars   = "PullStrength",
+  data            = sim_data,
+  sn_type         = "larger",
+  randomize       = FALSE,
+  seed            = 42
+)
+
+# taguchi_analysis is now populated (no longer NULL)
+is.null(full_result$taguchi_analysis)
+
+# Top-level S/N summary
+sn_summary <- full_result$taguchi_analysis$sn_ratios$PullStrength
+cat("Overall S/N ratio (dB):  ", round(sn_summary$overall_sn_ratio, 3), "\n")
+cat("S/N type:                ", sn_summary$sn_type, "\n")
+cat("Number of observations:  ", sn_summary$n_observations, "\n")
+
+# S/N type used for the whole analysis
+full_result$taguchi_analysis$sn_type
+```
+
+### Inspecting the run layout with `plot(type = "design")`
+
+Before trusting any ANOVA or S/N number, it is good practice to inspect the
+run layout itself. `plot(type = "design")` renders a tile view of the
+experimental design -- one tile per run, coloured by factor level -- so that
+mistakes in factor coding, randomization, or missing runs are visible at a
+glance.
+
+```{r task-design, fig.cap = "Design layout tile view produced by task$plot(type = 'design'). Each cell is one run; colour encodes the factor level."}
+print(full_result$task$plot(type = "design"))
+```
+
+**Decision.** The tile view shows a balanced $2^3$ layout with all eight
+control-factor combinations present and no obvious gaps in the run order.
+Because we set `randomize = FALSE` the runs are in standard order, which is
+convenient for pedagogy but would not be acceptable in a production experiment
+where randomization protects against time drift. Proceed with the ANOVA and
+S/N analysis.
+
+## Three S/N Types Computed Directly
+
+To make the three S/N formulas concrete, we call
+`TaguchiAnalyzer$compute_sn_ratio()` directly on a small sample of four
+pull-strength measurements taken from a single inner-array run.
+
+```{r sn-types}
+analyzer <- TaguchiAnalyzer$new()
+
+# Four pull-strength measurements (N) from one inner-array run
+y_sample <- sim_data$PullStrength[1:4]
+cat("Sample y:", paste(round(y_sample, 2), collapse = ", "), "\n\n")
+
+sn_larger  <- analyzer$compute_sn_ratio(y_sample, type = "larger")
+sn_nominal <- analyzer$compute_sn_ratio(y_sample, type = "nominal")
+sn_smaller <- analyzer$compute_sn_ratio(y_sample, type = "smaller")
+
+sn_table <- data.frame(
+  Type        = c("Larger-the-better", "Nominal-the-best", "Smaller-the-better"),
+  Goal        = c("Maximize y", "Hit target T", "Minimize y"),
+  Formula     = c("-10*log10(mean(1/y^2))",
+                  "10*log10((ybar^2 - s^2/n)/s^2)",
+                  "-10*log10(mean(y^2))"),
+  SN_dB       = round(c(sn_larger, sn_nominal, sn_smaller), 3)
+)
+kable(sn_table, caption = "Three S/N types computed on the same sample.")
+```
+
+Note that the three values are **not** comparable across types -- each is
+optimized for its own goal. The engineer picks the type that matches the
+engineering objective (here: **larger**, because pull-off strength is to be
+maximized) and uses it consistently throughout the analysis.
+
+## Per-Combination Robustness Analysis
+
+The `taguchi_analysis$sn_ratios$PullStrength$by_control_combination` element
+holds the per-combination robustness table. It is produced by
+`TaguchiAnalyzer$analyze_robustness()`, which groups the data by control-factor
+combination and computes the S/N ratio, mean, standard deviation, and
+replicate count from the noise-condition rows within each group.
+
+```{r per-combo-from-result}
+per_combo <- full_result$taguchi_analysis$sn_ratios$PullStrength$by_control_combination
+print(per_combo)
+```
+
+We can also call `analyze_robustness()` directly on the raw data -- the result
+is identical, which confirms that `taguchi_design(data = )` is a thin wrapper
+around the `TaguchiAnalyzer` API:
+
+```{r per-combo-direct}
+robust_direct <- analyzer$analyze_robustness(
+  data            = sim_data,
+  control_factors = c("SoldTemp", "PreTemp", "SoldTime"),
+  noise_factors   = c("EnvTemp", "PCBHum"),
+  response        = "PullStrength",
+  sn_type         = "larger"
+)
+print(robust_direct)
+```
+
+Each row is one control-factor combination; the four noise combinations within
+each group are the replicates that drive the S/N computation. The combination
+with the highest `SN_Ratio` is the most *robust* (best location combined with
+least sensitivity to noise).
+
+### Bar chart of per-combination S/N
+
+```{r per-combo-bar, fig.cap = "S/N ratio per control-factor combination. The dashed line marks the mean S/N across combinations."}
+per_combo$Combo <- paste(per_combo$SoldTemp, per_combo$PreTemp,
+                         per_combo$SoldTime, sep = " / ")
+
+ggplot(per_combo, aes(x = reorder(Combo, SN_Ratio), y = SN_Ratio,
+                      fill = SN_Ratio)) +
+  geom_col(show.legend = FALSE) +
+  geom_hline(yintercept = mean(per_combo$SN_Ratio),
+             linetype = "dashed", color = "firebrick") +
+  geom_text(aes(label = sprintf("%.1f", SN_Ratio)),
+            hjust = -0.1, size = 3.2) +
+  coord_flip() +
+  scale_fill_gradient(low = "#F4A582", high = "#2166AC") +
+  labs(
+    title = "S/N ratio per control-factor combination",
+    subtitle = "Larger-the-better; dashed line = mean S/N",
+    x = "Control combination (SoldTemp / PreTemp / SoldTime)",
+    y = "S/N ratio (dB)"
+  ) +
+  theme_minimal()
+```
+
+## ANOVA Contribution Analysis
+
+`taguchi_design(data = )` runs an ANOVA of the response on the control factors
+and feeds the resulting table into `TaguchiAnalyzer$compute_contribution()`.
+The contribution table is returned in
+`taguchi_analysis$contributions$PullStrength`.
+
+```{r contribution-from-result}
+contrib <- full_result$taguchi_analysis$contributions$PullStrength
+print(contrib)
+```
+
+The `Contribution_Pct` column gives each term's share of the total sum of
+squares; `Cumulative_Pct` is the running total (rows are sorted by descending
+contribution). We can reproduce the same table by calling
+`compute_contribution()` directly on the ANOVA table:
+
+```{r contribution-direct}
+anova_tbl <- full_result$task$results$anova_results$PullStrength$anova
+anova_df  <- data.frame(
+  Term    = rownames(anova_tbl),
+  Df      = anova_tbl$Df,
+  Sum_Sq  = anova_tbl$`Sum Sq`,
+  Mean_Sq = anova_tbl$`Mean Sq`,
+  stringsAsFactors = FALSE
+)
+contrib_direct <- analyzer$compute_contribution(anova_df)
+print(contrib_direct)
+```
+
+As expected, `SoldTemp` dominates, `SoldTime` is second, and the
+`SoldTemp:SoldTime` interaction is third. `PreTemp` and its interactions
+contribute negligibly, which matches the way the data were simulated.
+
+### Built-in main-effects plot
+
+The `IqrDoeTask` object also exposes a built-in main-effects plot via
+`$plot(type = "main_effects")`. It displays the regression coefficient (slope)
+of each control factor from the fitted linear model.
+
+```{r task-main-effects, fig.cap = "Built-in main-effects plot from the IqrDoeTask object. Bars show the regression slope of each control factor."}
+print(full_result$task$plot(type = "main_effects"))
+```
+
+> **Interpretation caveat.** Because the control factors carry different
+> units (°C, °C, s), their slopes are not directly comparable. The
+> **contribution percentages** from `compute_contribution()`, which are based
+> on sums of squares and therefore unit-free, are the correct way to rank
+> factor importance.
+
+### Built-in interaction plot
+
+The case study was deliberately simulated with a `SoldTemp` $\times$
+`SoldTime` interaction, and the contribution table above ranks the
+`SoldTemp:SoldTime` term third. The ANOVA table confirms it, but a single
+$p$-value does not communicate *what the interaction does*. We render it
+explicitly with `plot(type = "interaction")`, passing `response_name =
+"PullStrength"` because the task carries a single response but the plotter
+requires the name to be explicit when the task has multiple responses.
+
+```{r task-interaction, fig.cap = "Interaction plot for the SoldTemp x SoldTime term produced by task$plot(type = 'interaction'). Non-parallel lines signal a real two-factor interaction."}
+print(full_result$task$plot(type = "interaction",
+                            response_name = "PullStrength"))
+```
+
+**Decision.** The two lines in the `SoldTemp:SoldTime` panel are clearly
+**non-parallel**: the slope of `PullStrength` versus `SoldTemp` is steeper at
+`SoldTime = 5 s` than at `SoldTime = 3 s`. The interaction is therefore
+**real and positive**, which is exactly what the simulation encoded
+(coefficient $+2$ on the coded interaction term). For the robust design this
+means the two factors must be optimized **jointly**, not separately: picking
+`SoldTemp = 260 °C` gives a larger pull-strength gain when `SoldTime` is
+also at its high level (5 s). The additive main-effects S/N model used in
+the confirmation step below will therefore slightly *under-predict* the
+true optimum, because it cannot see this synergy.
+
+### Built-in residual diagnostics
+
+A linear model is only as trustworthy as its assumptions.
+`plot(type = "residual")` returns a `patchwork` panel of the three standard
+diagnostics (Normal Q-Q, residuals vs. fitted, scale-location) so the
+engineer can check normality, homoscedasticity, and non-linearity in one
+glance.
+
+```{r task-residual, fig.cap = "Residual diagnostics from task$plot(type = 'residual'). Use to validate the ANOVA model assumptions."}
+print(full_result$task$plot(type = "residual",
+                            response_name = "PullStrength"))
+```
+
+**Decision.** The Normal Q-Q points lie close to the reference line, the
+residuals-vs-fitted cloud is structureless and centred on zero, and the
+scale-location plot is flat -- there is no obvious heteroscedasticity or
+non-normality. The ANOVA $p$-values and contribution percentages reported
+above can therefore be read at face value. If the Q-Q plot had shown heavy
+tails or the residuals-vs-fitted plot had shown a funnel shape, a variance-
+stabilizing transform (e.g. `log`) or a higher-order model term would have
+to be added before trusting the contribution rankings.
+
+### Combined panel with `plot(type = "full")`
+
+For quick reporting, `plot(type = "full")` returns a single `patchwork`
+object combining the main-effects, interaction, and residual panels.
+
+```{r task-full, fig.cap = "Combined panel from task$plot(type = 'full'). Useful as a one-figure model summary for reports."}
+print(full_result$task$plot(type = "full",
+                            response_name = "PullStrength"))
+```
+
+**Decision.** The combined panel is a one-figure model summary suitable for
+inclusion in a design-review slide. It simultaneously shows (i) which
+factors have large slopes, (ii) which interaction is active, and (iii)
+whether the model assumptions hold. In our case all three sub-panels agree
+with the conclusions drawn individually above: `SoldTemp` and `SoldTime`
+are the active factors, their interaction is visible, and the residuals are
+well-behaved.
+
+## S/N Main Effects Plot
+
+The standard Taguchi selection tool is the **S/N main-effects plot**: for each
+control factor, the mean S/N is plotted at each level, and the level with the
+largest mean S/N is selected. We build this plot with `ggplot2` from the
+per-combination table.
+
+```{r sn-main-effects, fig.cap = "S/N main-effects plot. For each control factor, the line connects the mean S/N at the two levels. Steeper lines indicate stronger influence on robustness."}
+control_names <- c("SoldTemp", "PreTemp", "SoldTime")
+
+effects_list <- lapply(control_names, function(fn) {
+  means <- tapply(per_combo$SN_Ratio, per_combo[[fn]], mean)
+  data.frame(
+    Factor = fn,
+    Level  = as.numeric(names(means)),
+    SN     = as.numeric(means)
+  )
+})
+effects_df <- do.call(rbind, effects_list)
+
+overall_mean_sn <- mean(per_combo$SN_Ratio)
+
+ggplot(effects_df, aes(x = factor(Level), y = SN, group = Factor)) +
+  geom_hline(yintercept = overall_mean_sn, linetype = "dashed",
+             color = "gray50") +
+  geom_line(linewidth = 1.1, color = "#2166AC") +
+  geom_point(size = 3.5, color = "#2166AC") +
+  geom_text(aes(label = sprintf("%.2f", SN)),
+            vjust = -1.2, size = 3.3) +
+  facet_wrap(~ Factor, scales = "free_x") +
+  labs(
+    title = "S/N main-effects plot",
+    subtitle = "Select the level with the larger mean S/N at each factor",
+    x = "Factor level",
+    y = "Mean S/N (dB)"
+  ) +
+  theme_minimal()
+```
+
+Reading the plot:
+
+- **SoldTemp**: S/N rises sharply from 240 °C to 260 °C -- a strong dispersion
+  lever. Pick **260 °C**.
+- **SoldTime**: S/N rises from 3 s to 5 s. Pick **5 s**.
+- **PreTemp**: the line is nearly flat. Either level works for robustness;
+  `PreTemp` is a candidate **adjustment factor** for a later location-tuning
+  step.
+
+## Contribution Pareto Plot
+
+The contribution Pareto plot ranks the ANOVA terms by their contribution to
+the total sum of squares. It is the single most useful plot for answering
+"which factors actually matter?".
+
+```{r pareto-plot, fig.cap = "Contribution Pareto plot. Bars are sorted by descending Contribution_Pct; the red line is the cumulative percentage."}
+contrib$Term <- factor(contrib$Term,
+                       levels = contrib$Term[order(contrib$Contribution_Pct)])
+
+ggplot(contrib, aes(x = Term, y = Contribution_Pct)) +
+  geom_col(fill = "#4393C3") +
+  geom_text(aes(label = sprintf("%.1f%%", Contribution_Pct)),
+            hjust = -0.15, size = 3.2) +
+  geom_path(aes(x = Term, y = Cumulative_Pct, group = 1),
+            color = "firebrick", linewidth = 0.8) +
+  geom_point(aes(x = Term, y = Cumulative_Pct),
+             color = "firebrick", size = 2) +
+  scale_y_continuous(
+    name = "Contribution (%)",
+    sec.axis = sec_axis(~ ., name = "Cumulative (%)")
+  ) +
+  coord_flip() +
+  labs(
+    title = "ANOVA contribution Pareto plot",
+    subtitle = "Bars: term contribution; red line: cumulative contribution",
+    x = "ANOVA term"
+  ) +
+  theme_minimal()
+```
+
+The first two bars (`SoldTemp`, `SoldTime`) plus their interaction account for
+most of the variation; `PreTemp` and its interactions sit at the bottom of the
+chart. In a refinement step these small terms would be **pooled into error**
+to stabilize the contribution estimates of the remaining terms.
+
+## Optimal Control Factor Combination
+
+The optimal combination is the row of the per-combination table with the
+highest S/N ratio.
+
+```{r optimal-combo}
+optimal_idx   <- which.max(per_combo$SN_Ratio)
+optimal_combo <- per_combo[optimal_idx, ]
+
+optimal_table <- optimal_combo[, c(control_names,
+                                   "SN_Ratio", "Mean", "SD", "N_Reps")]
+rownames(optimal_table) <- "Optimal"
+print(optimal_table)
+```
+
+This matches the levels suggested by the S/N main-effects plot:
+**SoldTemp = 260 °C, SoldTime = 5 s**, with `PreTemp` at whichever level
+happened to score highest (it is statistically indistinguishable from the
+other level and serves as a free adjustment factor).
+
+## Confirmation Run
+
+The Taguchi workflow requires a **confirmation run** at the predicted optimal
+settings to verify that the predicted S/N is achievable in practice. The
+standard additive prediction formula is
+
+$$\hat{\eta}_{\text{opt}} = \bar{\eta}
+  + \sum_{f}\left(\bar{\eta}_{f,\,\text{opt level}} - \bar{\eta}\right),$$
+
+where $\bar{\eta}$ is the overall mean S/N and $\bar{\eta}_{f,\,\text{opt level}}$
+is the mean S/N at the chosen optimal level of factor $f$.
+
+```{r confirmation}
+# --- Predicted S/N from the additive main-effects model -------------------
+overall_mean_sn <- mean(per_combo$SN_Ratio)
+
+level_means <- lapply(control_names, function(fn) {
+  tapply(per_combo$SN_Ratio, per_combo[[fn]], mean)
+})
+
+predicted_sn <- overall_mean_sn
+for (i in seq_along(control_names)) {
+  fn    <- control_names[i]
+  level <- as.character(optimal_combo[[fn]])
+  predicted_sn <- predicted_sn +
+    (as.numeric(level_means[[i]][level]) - overall_mean_sn)
+}
+
+# --- Confirmation run: fresh data at the optimal control combination -----
+set.seed(123)  # different seed from the training data
+confirm_data <- merge(
+  optimal_combo[, control_names, drop = FALSE],
+  noise_grid
+)
+
+# Apply the SAME data-generating process as the training data
+cf_st <- (confirm_data$SoldTemp - 250) / 10
+cf_tm <- (confirm_data$SoldTime -   4) / 1
+cf_ph <- (confirm_data$PCBHum   -  50) / 20
+
+confirm_data$PullStrength <- 50 +
+  5 * cf_st +
+  3 * cf_tm +
+  2 * cf_st * cf_tm +
+  -1.5 * cf_ph +
+  rnorm(nrow(confirm_data), mean = 0, sd = 0.5)
+
+actual_sn <- analyzer$compute_sn_ratio(confirm_data$PullStrength, type = "larger")
+
+# --- Comparison table ----------------------------------------------------
+confirmation_table <- data.frame(
+  Metric = c("Overall mean S/N (all 8 combos)",
+             "Predicted S/N at optimum (additive model)",
+             "Actual S/N (confirmation run, 4 noise reps)",
+             "Absolute prediction error",
+             "Relative prediction error (%)"),
+  Value  = c(overall_mean_sn,
+             predicted_sn,
+             actual_sn,
+             abs(predicted_sn - actual_sn),
+             100 * abs(predicted_sn - actual_sn) / abs(predicted_sn))
+)
+confirmation_table$Value <- round(confirmation_table$Value, 3)
+kable(confirmation_table,
+      caption = "Predicted vs. actual S/N at the optimal control-factor combination.")
+```
+
+The actual confirmation S/N sits within a few percent of the prediction, which
+is the expected outcome when the additive main-effects model is adequate and
+no significant unmodeled interaction is present. A gap larger than ~10% would
+signal an interaction that the inner array could not resolve and would
+motivate a follow-up experiment at higher resolution.
+
+### Visual comparison
+
+```{r confirmation-bar, fig.cap = "Predicted vs. actual S/N at the optimal combination. Close agreement validates the additive model."}
+confirm_plot_df <- data.frame(
+  Source = c("Overall mean", "Predicted", "Actual (confirmation)"),
+  SN     = c(overall_mean_sn, predicted_sn, actual_sn)
+)
+confirm_plot_df$Source <- factor(confirm_plot_df$Source,
+                                 levels = confirm_plot_df$Source)
+
+ggplot(confirm_plot_df, aes(x = Source, y = SN, fill = Source)) +
+  geom_col(show.legend = FALSE, width = 0.6) +
+  geom_text(aes(label = sprintf("%.2f dB", SN)),
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("Overall mean"   = "gray60",
+                               "Predicted"      = "#4393C3",
+                               "Actual (confirmation)" = "#D6604D")) +
+  labs(
+    title = "Confirmation: predicted vs. actual S/N at the optimum",
+    subtitle = "Agreement within a few percent validates the additive model",
+    x = "",
+    y = "S/N ratio (dB)"
+  ) +
+  ylim(0, max(confirm_plot_df$SN) * 1.15) +
+  theme_minimal()
+```
+
+# Customising and Combining Plots
+
+The built-in `task$plot()` methods return ordinary `ggplot` / `patchwork`
+objects, so they can be post-processed with the standard `ggplot2` `+`
+operator and combined with `patchwork`. This section shows the two most
+common customisations.
+
+## Customising plots
+
+`task$plot(type = "main_effects")` returns a `ggplot` object. We capture
+it into a variable and then add a horizontal reference line at the
+overall mean S/N ratio (a useful target line for the robust design) plus
+custom `labs()` and a `theme_minimal()` reskin.
+
+```{r customise-plot, fig.cap = "Customised main-effects plot: the returned ggplot object has been augmented with geom_hline() for the target S/N and custom labs()."}
+p_main <- full_result$task$plot(type = "main_effects",
+                                response_name = "PullStrength")
+
+# Mean S/N ratio across all 8 control-factor combinations, used as the
+# robustness target line for the customisation.
+target_sn <- mean(per_combo$SN_Ratio)
+
+p_custom <- p_main +
+  geom_hline(yintercept = target_sn, linetype = "dashed",
+             color = "firebrick", linewidth = 0.6) +
+  labs(
+    title = "Pull-strength main effects (customised)",
+    subtitle = sprintf("Dashed line: target S/N = %.2f dB", target_sn),
+    caption = "Source: iQualityR.doe case study vignette"
+  ) +
+  theme_minimal()
+
+print(p_custom)
+```
+
+**Decision.** The dashed target line makes it immediately obvious which
+factor levels lie above and below the mean robustness target. Bars that
+cross the line from below (e.g. `SoldTemp` at its low level) are the
+candidates to abandon; bars that clear the line comfortably (e.g. `SoldTemp`
+at 260 °C) are the candidates to keep. Because the returned object is a
+plain `ggplot`, any further `ggplot2` layer (annotations, facets, themes)
+can be appended without re-running the analysis.
+
+## Combining plots with patchwork
+
+When the engineer needs a single composite figure for a report,
+`patchwork::wrap_elements()` lets two or more `task$plot()` outputs be
+placed side by side. Here we combine the `main_effects` and
+`interaction` plots into a 1-row, 2-column layout.
+
+```{r patchwork-combine, fig.width = 11, fig.height = 5, fig.cap = "Two task$plot() outputs combined with patchwork::wrap_elements(). Left: main effects; right: interaction panel."}
+p_effects <- full_result$task$plot(type = "main_effects",
+                                   response_name = "PullStrength")
+p_inter   <- full_result$task$plot(type = "interaction",
+                                   response_name = "PullStrength")
+
+combined <- wrap_elements(p_effects) + wrap_elements(p_inter) +
+  plot_layout(nrow = 1, widths = c(1, 1)) +
+  plot_annotation(
+    title = "Main effects and interaction, combined panel",
+    tag_levels = "A"
+  )
+
+print(combined)
+```
+
+**Decision.** Side-by-side composition makes the link between marginal
+effects and interactions explicit: panel A shows that `SoldTemp` has the
+steepest main effect, and panel B shows *why* -- the `SoldTemp:SoldTime`
+interaction amplifies the marginal gain. For a design-review slide this is
+a much more compact message than two separate figures. Use
+`plot_annotation(tag_levels = ...)` to add panel labels (A, B, ...) that
+match the figure caption in a written report.
+
+## Exporting a report
+
+For delivering the full analysis to a non-R audience, the `IqrDoeTask`
+class exposes a `report()` method that writes an Excel or HTML bundle
+containing the design table, ANOVA, S/N ratios, contribution table, and
+the rendered figures. The bundle is a self-contained artefact suitable
+for archival.
+
+```{r export-report, eval = FALSE}
+# Not run: writes a multi-sheet .xlsx workbook to disk.
+xlsx_path <- tempfile(fileext = ".xlsx")
+full_result$task$report(format = "excel", path = xlsx_path)
+message("Wrote Excel report to: ", xlsx_path)
+
+# Not run: writes a stand-alone HTML report (figures embedded as base64).
+html_path <- tempfile(fileext = ".html")
+full_result$task$report(format = "html", path = html_path)
+message("Wrote HTML  report to: ", html_path)
+```
+
+**Decision.** Prefer the **Excel** format when the recipient will re-run
+calculations or filter/sort the tables themselves; prefer the **HTML**
+format when the report is meant to be read-only and shared by email or
+placed on an intranet. In a regulated (GxP) environment, hash the report
+file and store both the report and its hash in the quality records so the
+analysis can be reproduced exactly.
+
+# Best Practices
+
+1. **Pick the S/N type that matches the engineering goal.** Larger-the-better
+   for strength / yield / life; smaller-the-better for defects / wear /
+   emissions; nominal-the-best for dimensions. Mixing types within one
+   analysis is meaningless.
+
+2. **Always include noise.** Optimizing on the inner array alone produces
+   settings that look good in the lab but are unstable in production. Cross
+   the inner array with at least 2--4 noise combinations (or replicate the
+   inner array if true noise factors cannot be identified) so that variation
+   is exposed and the S/N ratio has something to measure.
+
+3. **Use contribution percentages, not slopes, to rank factors.** The slope
+   of a numeric factor depends on its units; the sum-of-squares contribution
+   is unit-free. Always consult the Pareto plot before deciding which factors
+   to keep and which to pool.
+
+4. **Pool small effects into error.** Terms with contribution $\lesssim 2\%$
+   are usually noise; pooling them stabilizes the contribution estimates of
+   the remaining terms and simplifies the optimum selection. Re-run the
+   contribution analysis after pooling.
+
+5. **Do not skip the confirmation run.** The additive prediction is only a
+   model; a confirmation experiment at the predicted optimum is the only way
+   to validate it. A prediction gap larger than ~10% typically indicates an
+   unmodeled interaction.
+
+6. **Know the limits of the built-in arrays.** `iQualityR.doe` ships with
+   $L_4$ and $L_8$ only; anything larger falls back to a full factorial. For
+   real Taguchi experiments with mixed levels ($L_{18}$, $L_{36}$) or
+   three-level arrays ($L_9$, $L_{27}$), generate the layout with
+   `DoE.base::oa.design()` and then feed the resulting data to
+   `TaguchiAnalyzer` for the S/N and contribution analysis.
+
+# Comparison with Other R Packages
+
+| Feature | `iQualityR.doe` | `DoE.base` | `qualityTools` | `Taguchi` |
+|:--------|:---------------:|:----------:|:--------------:|:---------:|
+| S/N ratio computation (3 types)        | Yes | No  | Yes | Yes |
+| Orthogonal-array generation ($L_4$/$L_8$) | Yes | Yes (full library) | No  | Yes |
+| Mixed-level / 3-level arrays ($L_9$, $L_{18}$, ...) | No (falls back to full factorial) | Yes | No  | Limited |
+| Per-combination robustness table       | Yes | No  | No  | No  |
+| ANOVA contribution / Pareto analysis   | Yes | No  | No  | No  |
+| R6 class API for direct S/N computation | Yes | No  | No  | No  |
+| Quality loss function                  | Conceptual | No | No | No |
+
+The sweet spot for `iQualityR.doe` is the **analysis** side of Taguchi
+robust design: given a crossed inner $\times$ outer dataset, the package takes
+you from raw response to S/N ratios, per-combination robustness, ANOVA
+contributions, and the optimal-factor selection in a single
+`taguchi_design(data = ...)` call. For the **design** side -- particularly
+mixed-level and three-level orthogonal arrays -- `DoE.base` is the
+complementary tool: generate the layout with `DoE.base`, collect the data, then
+hand the data frame to `TaguchiAnalyzer` for the S/N and contribution
+analysis.
+
+# References
+
+1. Taguchi, G., Chowdhury, S., & Wu, Y. (2005). *Taguchi's Quality Engineering
+   Handbook*. Wiley.
+2. Phadke, M. S. (1989). *Quality Engineering Using Robust Design*.
+   Prentice Hall.
+3. Ross, P. J. (1996). *Taguchi Techniques for Quality Engineering* (2nd ed.).
+   McGraw-Hill.
+4. Montgomery, D. C. (2019). *Design and Analysis of Experiments* (10th ed.),
+   Chapter 13. Wiley.
+5. Wu, C. F. J., & Hamada, M. S. (2009). *Experiments: Planning, Analysis, and
+   Optimization* (2nd ed.). Wiley.
+6. Nair, V. N. (Ed.). (1992). Taguchi's Parameter Design: A Panel Discussion.
+   *Technometrics*, 34(2), 127--161.
+7. Box, G. E. P. (1988). Signal-to-Noise Ratios, Performance Criteria, and
+   Transformations. *Technometrics*, 30(1), 1--17.
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

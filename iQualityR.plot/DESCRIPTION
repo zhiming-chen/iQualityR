@@ -1,0 +1,44 @@
+Package: iQualityR.plot
+Title: Quality Control and Visualization Tools for iQualityR
+Version: 0.1.0
+Authors@R: person(given = "Zhiming", family = "Chen", email = "zhimingc383@gmail.com", role = c("aut", "cre"))
+Description: A collection of modular and elegant ggplot2 plotting functions
+    that are consistent with the iQualityR ecosystem. Provides tools for
+    quality control charts, Pareto analysis, distribution visualization,
+    hypothesis testing, fishbone diagrams, turtle diagrams, and other
+    statistical graphics commonly used in quality management.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.0.0)
+Imports:
+    iQualityR.core,
+    ggplot2,
+    DiagrammeR,
+    dplyr,
+    tidyr,
+    pROC,
+    scales,
+    patchwork,
+    grid,
+    gridExtra,
+    png,
+    rlang,
+    utils,
+    stats
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    rsvg,
+    DiagrammeRsvg,
+    hexbin,
+    MASS,
+    nortest
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+NeedsCompilation: no

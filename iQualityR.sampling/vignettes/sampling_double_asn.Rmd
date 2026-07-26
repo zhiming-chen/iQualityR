@@ -1,0 +1,276 @@
+---
+title: "Double and Multiple Sampling Plans"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Double and Multiple Sampling Plans}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center"
+)
+```
+
+## 1. Introduction
+
+A **single sampling plan** inspects one sample and makes a single accept/reject
+decision. A **double sampling plan** offers a second chance: if the first
+sample is inconclusive, a second sample is drawn and a combined decision is
+made. **Multiple sampling plans** extend this idea to three or more stages.
+
+The advantage of multi-stage plans is a lower **Average Sample Number (ASN)**:
+when quality is very good or very bad, the decision is usually reached after
+the first stage, saving inspection effort.
+
+This vignette demonstrates:
+
+- Building double and multiple sampling plans
+- OC curves for multi-stage plans
+- ASN curves
+- Comparing single vs. double sampling
+- Full workflow with `IqrSamplingTask`
+
+## 2. Double sampling: theory
+
+A double sampling plan is defined by two stages:
+
+- Stage 1: sample `n1`, accept if `d1 <= c1`, reject if `d1 >= r1`,
+  otherwise continue to stage 2.
+- Stage 2: sample `n2`, accept if `d1 + d2 <= c2`, otherwise reject.
+
+Here `r1` is the rejection number of stage 1, with `r1 > c1 + 1` typically.
+
+The probability of acceptance is:
+
+```
+Pa(p) = P(D1 <= c1) + P(c1 < D1 < r1) * P(D1 + D2 <= c2 | c1 < D1 < r1)
+```
+
+Under the simplified independent-sample approximation, this becomes:
+
+```
+Pa(p) = F_Binom(c1; n1, p)
+        + [F_Binom(r1-1; n1, p) - F_Binom(c1; n1, p)]
+          * F_Binom(c2 - c1; n2, p)
+```
+
+The expected sample size (ASN) is:
+
+```
+ASN(p) = n1 + n2 * P(continue to stage 2)
+       = n1 + n2 * [F_Binom(r1-1; n1, p) - F_Binom(c1; n1, p)]
+```
+
+## 3. Loading the package
+
+```{r setup}
+library(iQualityR.sampling)
+library(ggplot2)
+```
+
+## 4. Building a double sampling plan
+
+We use the `sampling_double()` convenience function. Each stage is a list
+with `n` (sample size), `c` (acceptance number), and optionally `r`
+(rejection number). If `r` is omitted, it defaults to `c + 1`.
+
+```{r build-double}
+task_d <- sampling_double(
+  stage1 = list(n = 32, c = 0, r = 2),
+  stage2 = list(n = 32, c = 1),
+  aql    = 0.01,
+  rql    = 0.10
+)
+```
+
+## 5. OC curve for double sampling
+
+```{r oc-double}
+task_d$plot(type = "oc")
+```
+
+The OC curve shape is similar to single sampling but is the result of
+combining two binomial probabilities.
+
+## 6. ASN curve
+
+The **Average Sample Number** curve shows how many units we expect to inspect
+on average for each lot fraction defective `p`:
+
+```{r asn-plot}
+task_d$plot(type = "asn")
+```
+
+Key observations:
+
+- When `p` is very small (good quality), we usually accept at stage 1, so
+  ASN approaches `n1 = 32`.
+- When `p` is very large (bad quality), we usually reject at stage 1, so
+  ASN also approaches `n1 = 32`.
+- For intermediate `p`, we often continue to stage 2, so ASN peaks near
+  `n1 + n2 = 64`.
+
+```{r asn-summary}
+asn <- task_d$results$asn_curve
+cat(sprintf("Single-stage n: %d\n", asn$single_sample_n))
+cat(sprintf("Mean ASN over curve: %.2f\n", mean(asn$asn_values, na.rm = TRUE)))
+cat(sprintf("Max ASN over curve: %.2f\n", max(asn$asn_values, na.rm = TRUE)))
+```
+
+## 7. Risk analysis
+
+```{r risk-double}
+rk <- task_d$results$risk_analysis
+cat(sprintf("Producer's risk: %.4f\n", rk$producer_risk))
+cat(sprintf("Consumer's risk: %.4f\n", rk$consumer_risk))
+```
+
+```{r risk-plot}
+task_d$plot(type = "risk")
+```
+
+## 8. Multiple sampling plans
+
+A **multiple sampling plan** extends double sampling to three or more
+stages. The implementation in `iQualityR.sampling` uses a simplified
+independence-based approximation:
+
+```
+Pa(p) = Pa_1(p) + (1 - Pa_1(p)) * Pa_2(p) + ...
+```
+
+This is an upper bound on the true acceptance probability; the exact
+computation requires convolution over all possible cumulative paths.
+
+```{r build-multiple}
+task_m <- sampling_multiple(
+  stages = list(
+    list(n = 20, c = 0),
+    list(n = 20, c = 1),
+    list(n = 20, c = 2)
+  ),
+  aql = 0.01,
+  rql = 0.10
+)
+```
+
+```{r multiple-oc}
+task_m$plot(type = "oc")
+```
+
+```{r multiple-asn}
+task_m$plot(type = "asn")
+```
+
+> **Note**: The ASN curve for multiple sampling is computed with a simplified
+> reach-probability approximation in the current implementation. For
+> production use against ANSI/ASQ Z1.4 tables, please consult the standard
+> directly.
+
+## 9. Comparing single vs. double sampling
+
+Let's build a single sampling plan with comparable discrimination and
+compare OC and ASN curves:
+
+```{r compare}
+task_s <- sampling_single(
+  sample_size       = 50,
+  acceptance_number = 1,
+  aql = 0.01,
+  rql = 0.10
+)
+
+# Compare risk and ASN
+cat(sprintf(
+  "Single: producer's risk = %.4f, consumer's risk = %.4f\n",
+  task_s$results$risk_analysis$producer_risk,
+  task_s$results$risk_analysis$consumer_risk
+))
+cat(sprintf(
+  "Double: producer's risk = %.4f, consumer's risk = %.4f\n",
+  task_d$results$risk_analysis$producer_risk,
+  task_d$results$risk_analysis$consumer_risk
+))
+
+# Single-stage n vs. mean ASN
+cat(sprintf(
+  "Single-stage n = %d; Double plan mean ASN = %.2f\n",
+  task_s$plan$sample_size,
+  mean(task_d$results$asn_curve$asn_values, na.rm = TRUE)
+))
+```
+
+A well-designed double sampling plan can achieve similar protection (similar
+OC curve) with a lower average sample number than a single plan.
+
+## 10. Full panel
+
+```{r full-panel, fig.width=9, fig.height=7}
+task_d$plot(type = "full")
+```
+
+## 11. Console report
+
+```{r console, results = "hold"}
+task_d$summary()
+```
+
+## 12. Excel export
+
+```{r excel, eval = FALSE}
+tmp <- tempfile(fileext = ".xlsx")
+task_d$report(path = tmp)
+```
+
+The workbook contains separate sheets for the Summary, OC Curve, Power Curve,
+and ASN Curve (when applicable).
+
+## 13. Designing your own plan
+
+When designing a double sampling plan, consider:
+
+1. **Stage 1 sample size `n1`**: typically half of an equivalent single
+   plan's `n`.
+2. **Acceptance number `c1`**: usually 0 or 1, to provide early acceptance
+   for very good lots.
+3. **Rejection number `r1`**: should satisfy `r1 > c1 + 1` to give the
+   plan a "continue" zone.
+4. **Stage 2 sample size `n2`**: typically equal to `n1`.
+5. **Acceptance number `c2`**: should be larger than `c1` but not too large,
+   to keep consumer's risk under control.
+
+You can iterate on these values and use `sampling_double()` to evaluate
+producer's risk, consumer's risk, and ASN.
+
+## 14. Common pitfalls
+
+- **Setting `r1 <= c1`**: This is invalid because stage 1 would have no
+  "continue" zone. `SamplingPlan$validate()` will reject this.
+- **Forgetting to specify `r`**: When `r` is omitted, the plan defaults to
+  `c + 1`, which creates a minimal "continue" zone of just one value.
+  This is often too narrow; consider `c + 2`.
+- **Comparing plans only by OC curves**: Two plans with similar OC curves
+  may have very different ASN. Always check ASN.
+
+## 15. References
+
+- Schilling, E. G., & Neubauer, D. V. (2017). *Acceptance Sampling in Quality
+  Control* (3rd ed.). CRC Press.
+- Montgomery, D. C. (2020). *Introduction to Statistical Quality Control*
+  (9th ed.). Wiley.
+- ANSI/ASQ Z1.4-2003. *American National Standard: Sampling Procedures and
+  Tables for Inspection by Attributes*.
+
+## 16. Session info
+
+```{r session-info}
+sessionInfo()
+```

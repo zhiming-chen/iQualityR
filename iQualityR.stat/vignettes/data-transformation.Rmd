@@ -1,0 +1,166 @@
+---
+title: "Data Transformation and Distribution Fitting"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Data Transformation and Distribution Fitting}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+
+```
+
+```{r setup, echo = FALSE,include=FALSE}
+library(iQualityR.stat)
+library(R6)
+library(patchwork)
+library(iQualityR.core)
+library(iQualityR.plot)
+
+```
+
+
+## Overview
+
+When data does not follow a normal distribution, data transformation and distribution fitting are two commonly used strategies. This module provides 6 transformation methods and automatic distribution fitting.
+
+## Data Transformation
+
+### Supported Transformation Methods
+
+| Method | Description | Data Requirements |
+|--------|-------------|-------------------|
+| Box-Cox | Optimal lambda transformation | All positive values |
+| Yeo-Johnson | Supports positive and negative values | Any real number |
+| Johnson | Johnson distribution family | Any real number |
+| Log | Logarithmic transformation | All positive values |
+| Square Root | Square root transformation | Non-negative values |
+| Reciprocal | Reciprocal transformation | Non-zero values |
+
+### Box-Cox Transformation
+
+```{r box_cox}
+library(iQualityR.stat)
+
+set.seed(123)
+x <- rexp(100, rate = 0.5)
+
+result <- box_cox_transform(x)
+result$lambda
+result$normality_before
+result$normality_after
+```
+
+### Yeo-Johnson Transformation
+
+```{r yeo_johnson}
+set.seed(123)
+x <- rnorm(100, mean = -1, sd = 2)
+
+result <- yeo_johnson_transform(x)
+result$lambda
+result$normality_after
+```
+
+### Logarithmic Transformation
+
+```{r log_transform}
+set.seed(123)
+x <- rexp(100, rate = 0.5)
+
+result <- log_transform(x, base = "natural")
+result$normality_before
+result$normality_after
+```
+
+### Auto-Select Best Transformation
+
+```{r auto_transform}
+set.seed(123)
+x <- rexp(100, rate = 0.5)
+
+result <- auto_transform(x)
+result$best_method
+result$scores
+```
+
+### Inverse Transformation
+
+```{r inverse}
+set.seed(123)
+x <- rexp(100, rate = 0.5)
+
+result <- box_cox_transform(x)
+original <- inverse_transform(result$transformed, result$method,
+                               list(lambda = result$lambda))
+
+head(original)
+```
+
+## Distribution Fitting
+
+### Single Distribution Fitting
+
+```{r fit_single}
+set.seed(123)
+x <- rnorm(100)
+
+result <- fit_distribution(x, "norm")
+result$params
+result$AIC
+result$BIC
+result$ks_test
+```
+
+### Auto Distribution Fitting
+
+```{r auto_fit}
+set.seed(123)
+x <- rexp(100, rate = 0.5)
+
+result <- auto_fit_distribution(x)
+result$best_dist
+result$ranking
+```
+
+### Compare Fits
+
+```{r compare}
+set.seed(123)
+x <- rnorm(100)
+
+f1 <- fit_distribution(x, "norm")
+f2 <- fit_distribution(x, "logis")
+
+result <- compare_fits(list(norm = f1, logis = f2))
+result$best_by_ks
+result$test_results
+```
+
+### Empirical Distribution
+
+```{r empirical}
+set.seed(123)
+x <- rnorm(100)
+
+result <- empirical_distribution(x)
+head(result$points)
+```
+
+### QQ Data Calculation
+
+```{r qq_data}
+set.seed(123)
+x <- rnorm(100)
+
+result <- calc_qq_data(x, "norm", list(mean = 0, sd = 1))
+head(result)
+```

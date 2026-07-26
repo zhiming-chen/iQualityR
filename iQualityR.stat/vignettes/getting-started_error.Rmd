@@ -1,0 +1,92 @@
+---
+title: "iQualityR.stat Quick Start"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{iQualityR.stat Quick Start}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r include=FALSE}
+library(iQualityR.stat)
+library(R6)
+
+library(patchwork)
+library(iQualityR.core)
+library(iQualityR.plot)
+
+```
+
+## Overview
+
+`iQualityR.stat` is the statistical infrastructure layer of the iQualityR ecosystem, providing core statistical tools for quality management scenarios. This package covers descriptive statistics, probability distributions, Sigma estimation, hypothesis testing, normality testing, distribution fitting, model diagnostics, data transformation, sample size calculation, outlier detection, and SPC control rule evaluation.
+
+## Installation and Loading
+
+```{r setup}
+library(iQualityR.stat)
+
+```
+
+## Quick Examples
+
+### Descriptive Statistics
+
+```{r desc}
+set.seed(123)
+data <- data.frame(
+  length = rnorm(100, mean = 50, sd = 2),
+  width = rnorm(100, mean = 30, sd = 1.5)
+)
+
+results <- desc_analyze(data)
+desc_summary_table(results)
+```
+
+### Probability Distribution Calculation
+
+```{r prob}
+prob_calc("norm", x = 1.96, mean = 0, sd = 1)
+```
+
+### Quality Metrics Calculation
+
+```{r metrics}
+capability_to_ppm(cpk = 1.33, usl = 6, lsl = 0)
+sigma_to_ppm(sigma = 4)
+throughput_yield(yield = c(0.95, 0.98, 0.99))
+```
+
+### Hypothesis Testing
+
+```{r htest}
+set.seed(123)
+x <- rnorm(30, mean = 5, sd = 1)
+result <- htest_run(test_type = "t_test_1s", x = x, mu = 5)
+result$p.value
+```
+
+### Normality Testing
+
+```{r normality}
+set.seed(123)
+x <- rnorm(50)
+result <- normality_test(x, method = "sw")
+result$p.value
+```
+
+## Next Steps
+
+- See `vignette("probability-distributions")` for 16+ probability distributions
+- See `vignette("hypothesis-testing")` for hypothesis testing visualization
+- See `vignette("data-transformation")` for data transformation methods
+- See `vignette("model-diagnostics")` for model diagnostics tools

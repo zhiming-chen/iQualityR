@@ -1,0 +1,50 @@
+Package: iQualityR.spc
+Title: Statistical Process Control Charts for iQualityR
+Version: 0.6.0
+Description: Provides comprehensive statistical process control (SPC) tools
+  aligned with Minitab's Stat > Control Charts menu, including Shewhart
+  variables charts (Xbar-R, Xbar-S, I-MR), attributes charts (P, NP, U, C,
+  Laney P' and U'), time-weighted charts (EWMA, CUSUM, MA), multivariate
+  charts (Hotelling T2, MEWMA), rare-event charts (G, T), and Nelson rules
+  detection. Version 0.2 adds statistical enhancement charts: adaptive
+  rolling-window chart, ARIMA residual chart, adaptive EWMA, change-point
+  detection, KDE nonparametric chart, and T2+MEWMA hybrid. Version 0.6 adds
+  AI/ML enhancement charts: LSTM anomaly detection, Autoencoder, Isolation
+  Forest, BOCPD (Bayesian Online Change Point Detection), and SHAP
+  attribution with soft dependencies on keras/isotree/fastshap. Built on
+  top of the iQualityR.core, iQualityR.stat, and iQualityR.plot subpackages.
+Authors@R: c(
+    person("iQualityR", "Team", role = c("aut", "cre"),
+           email = "iQualityR@example.com")
+  )
+Depends:
+    R (>= 4.1.0)
+Imports:
+    R6,
+    iQualityR.core (>= 0.1.0),
+    iQualityR.stat (>= 0.1.0),
+    iQualityR.plot (>= 0.1.0),
+    ggplot2,
+    data.table,
+    patchwork,
+    stats,
+    utils
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat,
+    withr,
+    knitr,
+    rmarkdown,
+    changepoint,
+    jsonlite,
+    keras,
+    tensorflow,
+    isotree,
+    fastshap
+VignetteBuilder: knitr
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+NeedsCompilation: no

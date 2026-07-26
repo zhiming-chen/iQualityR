@@ -1,0 +1,230 @@
+---
+title: "Single Sampling Plans and OC Curves"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Single Sampling Plans and OC Curves}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center"
+)
+```
+
+## 1. Introduction
+
+Acceptance sampling is a fundamental technique in statistical quality control.
+Rather than inspecting every unit in a lot, we inspect a random sample of size
+`n` and decide whether to accept or reject the lot based on the number of
+defectives `d` found. If `d <= c` (the acceptance number), the lot is accepted;
+otherwise it is rejected.
+
+This vignette walks through the **single sampling plan** workflow provided by
+`iQualityR.sampling`, including:
+
+- Building a sampling plan
+- Computing the **Operating Characteristic (OC) curve**
+- Evaluating **producer's risk** and **consumer's risk**
+- Performing **power analysis**
+- Visualizing the plan
+- Exporting results to Excel
+
+## 2. Theoretical background
+
+### 2.1 Binomial model
+
+For a lot with true fraction defective `p`, the number of defectives `D` in a
+random sample of size `n` follows (approximately, for large lots) a binomial
+distribution:
+
+```
+D ~ Binomial(n, p)
+```
+
+The probability of acceptance is therefore:
+
+```
+Pa(p) = P(D <= c) = sum_{k=0}^{c} C(n, k) * p^k * (1 - p)^(n - k)
+        = F_Binom(c; n, p)
+```
+
+where `F_Binom` is the binomial CDF. In R this is `pbinom(c, n, p)`.
+
+### 2.2 Key quality levels
+
+- **AQL** (Acceptable Quality Level): the maximum fraction defective that is
+  still considered acceptable. The producer wants Pa(AQL) to be high
+  (typically >= 1 - alpha, with alpha = 0.05).
+- **RQL** (Rejectable Quality Level, also called LTPD): the fraction
+  defective that is clearly unacceptable. The consumer wants Pa(RQL) to be
+  low (typically <= beta, with beta = 0.10).
+
+### 2.3 Risks
+
+- **Producer's risk** (`alpha`): the probability of rejecting a good lot
+  (i.e., a lot at AQL). Computed as `1 - Pa(AQL)`.
+- **Consumer's risk** (`beta`): the probability of accepting a bad lot
+  (i.e., a lot at RQL). Computed as `Pa(RQL)`.
+
+## 3. Loading the package
+
+```{r setup}
+library(iQualityR.sampling)
+library(ggplot2)
+```
+
+## 4. Building a single sampling plan
+
+We use `sampling_single()` to create a plan with `n = 50` and `c = 1`:
+
+```{r build-plan}
+task <- sampling_single(
+  sample_size      = 50,
+  acceptance_number = 1,
+  aql              = 0.01,
+  rql              = 0.05,
+  alpha            = 0.05,
+  beta             = 0.10
+)
+```
+
+The returned object is an `IqrSamplingTask` that already contains the computed
+results. We can inspect the plan configuration:
+
+```{r plan-summary}
+plan <- task$plan
+cat(sprintf("n = %d, c = %d, AQL = %.3f, RQL = %.3f\n",
+            plan$sample_size, plan$acceptance_number,
+            plan$aql, plan$rql))
+```
+
+## 5. OC curve
+
+The OC curve plots `Pa(p)` against `p`. It is stored in `task$results$oc_curve`:
+
+```{r oc-curve-plot}
+task$plot(type = "oc")
+```
+
+Key points on the OC curve:
+
+```{r oc-key-points}
+kp <- task$results$oc_curve$key_points
+cat(sprintf("Pa(AQL = %.3f) = %.4f\n",
+            kp$aql_point$p, kp$aql_point$prob))
+cat(sprintf("Pa(RQL = %.3f) = %.4f\n",
+            kp$rql_point$p, kp$rql_point$prob))
+```
+
+A good plan should have `Pa(AQL)` close to `1 - alpha = 0.95` and `Pa(RQL)`
+close to `beta = 0.10`.
+
+## 6. Risk analysis
+
+```{r risk}
+rk <- task$results$risk_analysis
+cat(sprintf("Producer's risk (actual): %.4f (target alpha = %.4f)\n",
+            rk$producer_risk, rk$risk_profile$target_alpha))
+cat(sprintf("Consumer's risk (actual): %.4f (target beta  = %.4f)\n",
+            rk$consumer_risk, rk$risk_profile$target_beta))
+```
+
+We can also visualize the risk profile as a bar chart, with the targets
+shown as diamonds:
+
+```{r risk-plot}
+task$plot(type = "risk")
+```
+
+## 7. Power analysis
+
+The **power** of a sampling plan at a given `p` is `1 - Pa(p)`, i.e., the
+probability of correctly rejecting a lot with fraction defective `p`. At RQL,
+the power should be at least `1 - beta = 0.90`.
+
+```{r power}
+pw <- task$results$power_analysis
+cat(sprintf("Achieved power at RQL: %.4f\n", pw$achieved_power))
+cat(sprintf("Required n for 80%% power at RQL: %s\n",
+            if (is.null(pw$required_sample_size)) "N/A"
+            else as.character(pw$required_sample_size)))
+```
+
+```{r power-plot}
+task$plot(type = "power")
+```
+
+## 8. Full panel
+
+A combined view of all available plots:
+
+```{r full-panel, fig.width=9, fig.height=7}
+task$plot(type = "full")
+```
+
+## 9. Console report
+
+```{r console-report, results = "hold"}
+task$summary()
+```
+
+## 10. Excel export
+
+If the `openxlsx` package is installed, you can export all results to an Excel
+workbook with separate sheets for the summary, OC curve, and power curve:
+
+```{r excel-export, eval = FALSE}
+tmp <- tempfile(fileext = ".xlsx")
+task$report(path = tmp)
+# file.path(tmp) is an .xlsx workbook
+```
+
+## 11. Choosing `n` and `c`
+
+The trade-off in designing a sampling plan is between inspection cost (small
+`n`) and protection (low `alpha` and `beta`). Larger `n` produces a steeper
+OC curve, which means better discrimination between good and bad lots, at
+the cost of more inspection.
+
+| Plan | n  | c | Pa(AQL) | Pa(RQL) | Comment |
+|------|----|---|---------|---------|---------|
+| A    | 20 | 0 | high    | high    | Cheap but permissive |
+| B    | 50 | 1 | high    | lower   | Balanced |
+| C    | 125| 3 | ~0.95   | ~0.10   | Tight protection |
+
+You can compare plans by building multiple `sampling_single()` tasks and
+plotting their OC curves side by side.
+
+## 12. Common pitfalls
+
+1. **AQL >= RQL**: The plan requires AQL strictly less than RQL. Otherwise,
+   the producer's and consumer's risk targets cannot both be met.
+2. **c >= n**: An acceptance number larger than the sample size is
+   nonsensical; a warning is issued.
+3. **Small `n`, large `c`**: A permissive plan with `c` close to `n` accepts
+   almost any lot, including bad ones. Always check `Pa(RQL)`.
+4. **Ignoring lot size**: For small lots, the hypergeometric distribution
+   is more accurate than the binomial approximation. The current
+   implementation uses the binomial model (large-lot approximation).
+
+## 13. References
+
+- Schilling, E. G., & Neubauer, D. V. (2017). *Acceptance Sampling in Quality
+  Control* (3rd ed.). CRC Press.
+- Montgomery, D. C. (2020). *Introduction to Statistical Quality Control*
+  (9th ed.). Wiley.
+- ISO 2859-1:1999. *Sampling procedures for inspection by attributes -- Part 1*.
+
+## 14. Session info
+
+```{r session-info}
+sessionInfo()
+```

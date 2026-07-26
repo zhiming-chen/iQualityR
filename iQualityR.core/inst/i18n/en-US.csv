@@ -1,0 +1,28 @@
+key,text
+common.success,Success.
+common.analysis_failed,Analysis failed.
+common.invalid_input,Input validation failed.
+common.missing_required_column,Required column '{column}' was not found.
+common.unsupported_format,Unsupported format: {format}.
+common.output_dir_required,An output directory is required.
+common.file_saved,File saved to: {path}.
+term.quality_engineering,Quality Engineering
+term.measurement_system_analysis,Measurement System Analysis
+term.type1_gage_study,Type 1 Gage Study
+term.attribute_agreement,Attribute Agreement
+term.process_capability,Process Capability
+term.control_chart,Control Chart
+term.confidence_level,Confidence Level
+term.lower_spec_limit,Lower Specification Limit
+term.upper_spec_limit,Upper Specification Limit
+term.measurement,Measurement
+term.value,Value
+plot.theme.workbench,Workbench
+plot.theme.academic,Report
+prob.param.missing,Missing required parameter '{param}' for distribution '{dist}'.
+prob.param.type,Parameter '{param}' for distribution '{dist}' must be {rule}.
+prob.param.range,Parameter '{param}' for distribution '{dist}' must be {rule}.
+prob.dist.unknown,Unknown distribution '{dist}'. Available distributions: {available}.
+msa.type1.name,Type 1 Gage Study
+msa.type1.reference_value.required,Reference value is required for a Type 1 bias study.
+msa.type1.bias_plot.title,Type 1 Bias Plot

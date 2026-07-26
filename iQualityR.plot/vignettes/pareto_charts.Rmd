@@ -1,0 +1,420 @@
+---
+title: "Pareto Charts"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Pareto Charts}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Pareto Charts
+
+## Overview
+
+The Pareto Chart is one of the most important tools in quality management. Based on the "80/20 rule" (Pareto principle), it helps identify the few critical causes that lead to the majority of problems. `iQualityR.plot` provides multiple Pareto chart functions:
+
+- `plot_pareto_enhanced()` - Enhanced Pareto chart (supports grouping, weighting, summary tables)
+- `quick_pareto()` - Quick Pareto chart
+- `plot_pareto_image_labels()` - Pareto chart with image labels
+- `plot_pareto_emoji_labels()` - Pareto chart with Emoji labels
+
+## Load Data
+
+```{r setup}
+knitr::opts_chunk$set(warning = FALSE)
+library(ggplot2)
+library(iQualityR.plot)
+library(iQualityR.core)
+
+```
+
+## 1. Enhanced Pareto Chart: plot_pareto_enhanced()
+
+This is the most feature-rich Pareto chart function, supporting multiple input formats and advanced features.
+
+### Create from Data Frame
+
+```{r pareto_dataframe}
+# Defect type statistics
+defect_data <- data.frame(
+  defect = c("Scratch", "Dent", "Missing part", "Color issue", "Dimension error", "Weight issue"),
+  count = c(45, 23, 15, 8, 5, 3)
+)
+
+plot_pareto_enhanced(
+  data = defect_data,
+  category_col = "defect",
+  count_col = "count",
+  title = "Product Defect Pareto Analysis",
+  subtitle = "Identifying Key Defect Types"
+)
+```
+
+### Create from Named Vector
+
+```{r pareto_vector}
+# Using a named vector (more concise)
+defect_counts <- c(
+  "Scratch" = 45,
+  "Dent" = 23,
+  "Missing part" = 15,
+  "Color issue" = 8,
+  "Dimension error" = 5,
+  "Weight issue" = 3
+)
+
+plot_pareto_enhanced(
+  data = defect_counts,
+  title = "Product Defect Pareto Chart",
+  subtitle = "Data source: Quality inspection records"
+)
+```
+
+### Display Summary Table
+
+```{r pareto_with_table, eval=FALSE}
+# Display a statistics table below the chart
+plot_pareto_enhanced(
+  data = defect_counts,
+  show_table = TRUE,
+  title = "Pareto Chart with Statistics Table"
+)
+```
+
+### Grouped Pareto Chart
+
+```{r pareto_grouped}
+# Compare defect distribution across different periods
+grouped_data <- data.frame(
+  defect = rep(c("Scratch", "Dent", "Missing part", "Color issue"), 2),
+  count = c(45, 23, 15, 8, 30, 18, 10, 5),
+  period = rep(c("Before improvement", "After improvement"), each = 4)
+)
+
+plot_pareto_enhanced(
+  data = grouped_data,
+  category_col = "defect",
+  count_col = "count",
+  group_col = "period",
+  title = "Defect Comparison Before and After Improvement",
+  subtitle = "Grouped Pareto Analysis"
+)
+```
+
+### "Other" Category Aggregation
+
+```{r pareto_other}
+# Aggregate small categories into "Other"
+small_defects <- c(
+  "Scratch" = 45,
+  "Dent" = 23,
+  "Missing part" = 15,
+  "Color issue" = 8,
+  "Dimension error" = 5,
+  "Weight issue" = 3,
+  "Packaging issue" = 2,
+  "Label error" = 1
+)
+
+plot_pareto_enhanced(
+  data = small_defects,
+  threshold = 0.05,  # Categories after cumulative 95% are grouped as "Other"
+  title = "Pareto Chart with 'Other' Aggregation",
+  subtitle = "threshold = 0.05"
+)
+```
+
+### Weighted Pareto Analysis
+
+```{r pareto_weighted}
+# Weighted analysis considering defect severity
+weighted_data <- data.frame(
+  defect = c("Scratch", "Dent", "Missing part", "Color issue"),
+  count = c(45, 23, 15, 8),
+  severity = c(2, 3, 5, 1)  # Severity weight
+)
+
+plot_pareto_enhanced(
+  data = weighted_data,
+  category_col = "defect",
+  count_col = "count",
+  weight_col = "severity",
+  title = "Weighted Pareto Analysis",
+  subtitle = "Considering Defect Severity"
+)
+```
+
+## 2. Quick Pareto Chart: quick_pareto()
+
+`quick_pareto()` is a shortcut version of `plot_pareto_enhanced()`, suitable for quick exploratory analysis.
+
+### Basic Usage
+
+```{r quick_pareto_basic}
+# Quick creation from a named vector
+quick_pareto(
+  data = c("A" = 30, "B" = 25, "C" = 20, "D" = 15, "E" = 10),
+  title = "Quick Pareto Chart"
+)
+```
+
+### Quick Creation from Data Frame
+
+```{r quick_pareto_df}
+# Quick creation from a data frame
+df <- data.frame(
+  category = c("Process issue", "Equipment issue", "Material issue", "Personnel issue", "Environment issue"),
+  count = c(35, 28, 20, 12, 5)
+)
+
+quick_pareto(
+  data = df,
+  category_col = "category",
+  count_col = "count",
+  title = "Quality Issue Root Cause Analysis"
+)
+```
+
+## 3. Pareto Chart with Image Labels: plot_pareto_image_labels()
+
+In quality management, using actual defect images can enhance the persuasiveness of reports.
+
+### Basic Usage
+
+```{r pareto_image, eval=FALSE}
+# Prepare defect image paths
+defect_data <- data.frame(
+  defect = c("Scratch", "Dent", "Missing part"),
+  count = c(45, 23, 15)
+)
+
+image_paths <- c(
+  "Scratch" = "path/to/scratch.png",
+  "Dent" = "path/to/dent.png",
+  "Missing part" = "path/to/missing.png"
+)
+
+plot_pareto_image_labels(
+  data = defect_data,
+  category_col = "defect",
+  count_col = "count",
+  image_paths = image_paths,
+  image_size = 30,
+  title = "Pareto Chart with Defect Images"
+)
+```
+
+## 4. Pareto Chart with Emoji Labels: plot_pareto_emoji_labels()
+
+Use Emoji icons to make charts more vivid and intuitive.
+
+### Basic Usage
+
+```{r pareto_emoji, eval=FALSE, warning=FALSE}
+# Use text labels to represent defect types
+emoji_data <- data.frame(
+  defect = c("Scratch", "Dent", "Missing part", "Color issue"),
+  count = c(45, 23, 15, 8)
+)
+
+label_map <- c(
+  "Scratch" = "[Scratch]",
+  "Dent" = "[Dent]",
+  "Missing part" = "[Missing]",
+  "Color issue" = "[Color]"
+)
+
+plot_pareto_emoji_labels(
+  data = emoji_data,
+  category_col = "defect",
+  count_col = "count",
+  emojis = label_map,
+  emoji_size = 5,
+  title = "Pareto Chart with Text Labels"
+)
+```
+
+## Practical Case Studies
+
+### Case 1: Manufacturing Defect Analysis
+
+```{r case_manufacturing, warning=FALSE}
+# Defect statistics from a manufacturing plant
+manufacturing_defects <- c(
+  "Surface scratch" = 52,
+  "Dimension deviation" = 31,
+  "Welding defect" = 24,
+  "Uneven coating" = 15,
+  "Assembly error" = 12,
+  "Material defect" = 8,
+  "Other" = 5
+)
+
+plot_pareto_enhanced(
+  data = manufacturing_defects,
+  threshold = 0.05,
+  title = "Manufacturing Defect Pareto Analysis",
+  subtitle = "Identifying Key Quality Improvement Areas"
+)
+```
+
+### Case 2: Service Industry Customer Complaint Analysis
+
+```{r case_service, warning=FALSE}
+# Customer complaint type statistics
+complaints <- data.frame(
+  type = c("Slow response", "Poor attitude", "Unresolved", "Complex process", "Inaccurate info"),
+  count = c(120, 85, 65, 45, 30),
+  department = c("Customer Service", "Customer Service", "Technical", "Operations", "Operations")
+)
+
+plot_pareto_enhanced(
+  data = complaints,
+  category_col = "type",
+  count_col = "count",
+  group_col = "department",
+  title = "Customer Complaint Pareto Analysis",
+  subtitle = "Grouped by Department"
+)
+```
+
+### Case 3: Software Defect Priority Analysis
+
+```{r case_software, warning=FALSE}
+# Software bug statistics (considering severity weight)
+software_bugs <- data.frame(
+  bug_type = c("Crash", "Functional error", "Performance issue", "UI issue", "Compatibility issue"),
+  count = c(15, 45, 28, 60, 20),
+  severity = c(5, 4, 3, 1, 2)  # 1-5 severity
+)
+
+plot_pareto_enhanced(
+  data = software_bugs,
+  category_col = "bug_type",
+  count_col = "count",
+  weight_col = "severity",
+  title = "Software Defect Weighted Pareto Analysis",
+  subtitle = "Weight = Severity (1-5)"
+)
+```
+
+## Parameter Details
+
+### plot_pareto_enhanced() Parameters
+
+| Parameter | Type | Description | Default |
+|------|------|------|--------|
+| `data` | data.frame/list/vector | Input data | Required |
+| `category_col` | character | Category column name | NULL |
+| `count_col` | character | Count column name | NULL |
+| `group_col` | character | Grouping column name (optional) | NULL |
+| `weight_col` | character | Weight column name (optional) | NULL |
+| `threshold` | numeric | "Other" aggregation threshold | 0.05 |
+| `show_table` | logical | Whether to show table | FALSE |
+| `theme` | character | Theme name | "academic" |
+| `title` | character | Chart title | NULL |
+| `subtitle` | character | Subtitle | NULL |
+
+### threshold Parameter Description
+
+```{r threshold_explain, eval=FALSE}
+# threshold = 0.05: Categories after cumulative percentage reaches 95% are grouped as "Other"
+# threshold = 0.10: Categories after cumulative percentage reaches 90% are grouped as "Other"
+# threshold = 0: No aggregation, show all categories
+
+plot_pareto_enhanced(data, threshold = 0.10)  # More aggressive aggregation
+plot_pareto_enhanced(data, threshold = 0)     # No aggregation
+```
+
+## Best Practices
+
+### 1. Choose the Appropriate Threshold
+
+```{r best_practice_threshold, eval=FALSE}
+# When there are many categories (> 10), use threshold aggregation
+plot_pareto_enhanced(data, threshold = 0.05)
+
+# When there are few categories (< 8), no aggregation
+plot_pareto_enhanced(data, threshold = 0)
+```
+
+### 2. Use Weighted Analysis
+
+```{r best_practice_weight, eval=FALSE}
+# When different categories have different impact levels, use weighting
+weighted_data <- data.frame(
+  category = c("A", "B", "C"),
+  count = c(100, 50, 30),
+  impact = c(1, 3, 5)  # Impact level
+)
+
+plot_pareto_enhanced(weighted_data, weight_col = "impact")
+```
+
+### 3. Grouped Comparison
+
+```{r best_practice_group, eval=FALSE}
+# Compare changes before and after improvement
+before <- data.frame(defect = defects, count = before_counts, period = "Before improvement")
+after <- data.frame(defect = defects, count = after_counts, period = "After improvement")
+
+combined <- rbind(before, after)
+plot_pareto_enhanced(combined, group_col = "period")
+```
+
+## FAQ
+
+### Q: How to customize colors?
+
+Use the theme parameter:
+
+```{r faq_color, eval=FALSE}
+plot_pareto_enhanced(data, theme = "tech")  # Tech style
+plot_pareto_enhanced(data, theme = "prism") # Prism style
+```
+
+### Q: What if the data contains negative values?
+
+Pareto charts require positive values; filter first:
+
+```{r faq_negative, eval=FALSE}
+valid_data <- data[data$count > 0, ]
+plot_pareto_enhanced(valid_data, ...)
+```
+
+### Q: How to export high-quality images?
+
+```{r faq_export, eval=FALSE}
+p <- plot_pareto_enhanced(data)
+ggsave("pareto.png", p, width = 10, height = 6, dpi = 300)
+```
+
+## Summary
+
+- `plot_pareto_enhanced()` is the most feature-rich Pareto chart function
+- Supports multiple input formats: data frame, named vector, list
+- Grouping feature supports comparison analysis across different groups
+- Weighted analysis can consider the impact level of different categories
+- "Other" aggregation simplifies the chart and highlights key categories
+
+## Further Reading
+
+- [Scatter Plots](scatter_plots.html) - Learn about scatter plot plotting
+- [Fishbone Diagrams](fishbone_diagrams.html) - Learn about root cause analysis tools
+- [Basic Plotting and Theme System](basic_plotting_theme.html) - Learn about the theme system

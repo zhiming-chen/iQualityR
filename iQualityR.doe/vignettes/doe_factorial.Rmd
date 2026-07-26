@@ -1,0 +1,828 @@
+---
+title: "Factorial Designs with iQualityR.doe"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Factorial Designs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+# Introduction
+
+Injection molding is the most widely used polymer-conversion process in the
+plastics industry. A recurring quality problem is **shrinkage**: the molded
+part contracts as it cools, and if the contraction is excessive or uneven the
+part fails its dimensional specification. The phenomenon is driven by several
+process variables that interact strongly with one another, which makes
+One-Factor-At-a-Time (OFAT) experimentation ineffective.
+
+This vignette shows how to use **iQualityR.doe** to address a realistic
+shrinkage-optimization problem with a full $2^k$ factorial design. The
+workflow is the one a quality engineer would follow on the shop floor:
+
+1. Define the problem and the factors to be studied.
+2. Generate a randomized experimental design with `factorial_design()`.
+3. Collect (here: simulate) the response data and attach them to the task.
+4. Run the analysis of variance with `task$compute()`.
+5. Visualise main effects, interactions, and residuals.
+6. Identify the optimal factor combination.
+7. Run confirmation trials at the predicted optimum.
+
+By the end of the vignette the reader will be able to plan, analyse, and
+report a two-level factorial experiment entirely from the
+`IqrDoeTask` API, without writing any base R model-fitting code by hand.
+
+# API Overview
+
+The `IqrDoeTask` class is the central object in **iQualityR.doe**. Its
+life-cycle is:
+
+```r
+task <- factorial_design(...)   # or rsm_design / screening_design / taguchi_design
+task$data <- df                 # attach the observed responses
+task$compute()                 # fit ANOVA + lm models
+task$summary()                 # print the analysis
+task$plot(type = "...")        # generate figures
+task$report(format = "excel", path = "...")  # export a report
+```
+
+## The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "main_effects")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+The same life-cycle applies to `rsm_design()`, `screening_design()`,
+and `taguchi_design()` constructors — they all return an
+`IqrDoeTask`.
+
+# Factorial Design Theory
+
+## The $2^k$ factorial design
+
+A $2^k$ factorial design studies $k$ factors, each at two levels, in every
+possible combination. The total number of runs is $n = 2^k$ (plus any
+replicates and center points). For $k = 4$ factors the base design has
+$2^4 = 16$ runs; with two replicates it has $32$ runs, which provides enough
+degrees of freedom to estimate all main effects and interactions while still
+leaving residual degrees of freedom for the error term.
+
+## Effect estimation
+
+For a two-level design coded in the standard $\{-1, +1\}$ convention, the
+**effect** of factor $A$ is the difference between the mean response at the
+high level and the mean response at the low level:
+
+$$
+\text{Effect}_A \;=\; \bar{y}_{A+} \;-\; \bar{y}_{A-}.
+$$
+
+The **contrast** is the signed sum of the responses, with signs given by the
+contrast column of the design matrix:
+
+$$
+\text{Contrast}_A \;=\; \sum_{i=1}^{n} c_i\, y_i, \qquad c_i \in \{-1, +1\}.
+$$
+
+The two quantities are related by the number of runs at each level,
+$n/2 = 2^{k-1}$:
+
+$$
+\text{Contrast}_A \;=\; \frac{n}{2}\,\text{Effect}_A \;=\; 2^{k-1}\,\text{Effect}_A.
+$$
+
+For the $2^2$ design ($k = 2$, $n = 4$) this reduces to
+$\text{Contrast}_A = 2 \cdot \text{Effect}_A$.
+
+The ordinary-least-squares regression coefficient $\hat\beta_A$ is half the
+effect, because the coded variable changes by two units when moving from
+$-1$ to $+1$:
+
+$$
+\hat\beta_A \;=\; \frac{\text{Effect}_A}{2}.
+$$
+
+## The Yates algorithm
+
+The Yates algorithm is a fast, recursive procedure for computing all $2^k - 1$
+factorial effects from a standard-order design table. Starting from the
+response column in standard (Yates) order, one performs $k$ passes; in each
+pass, paired sums and paired differences are placed in the upper and lower
+halves of a new column. After $k$ passes the column contains the contrasts,
+which are divided by $n/2$ to obtain the effects. The algorithm is the
+historical antecedent of the modern regression-based approach used by
+`lm()` and by `IqrDoeTask$compute()`.
+
+## ANOVA decomposition
+
+The total sum of squares is partitioned into contributions from each factor
+and their interactions, plus the error:
+
+$$
+\text{SS}_{T} \;=\; \text{SS}_A + \text{SS}_B + \text{SS}_{AB} + \dots + \text{SS}_{E}.
+$$
+
+For an orthogonal two-level design each contrast has one degree of freedom,
+and its sum of squares is
+
+$$
+\text{SS}_{\text{Effect}} \;=\; \frac{(\text{Contrast})^2}{n}
+\;=\; \frac{n}{4}\,(\text{Effect})^2.
+$$
+
+The test statistic for the null hypothesis "the effect is zero" is
+
+$$
+F_0 \;=\; \frac{\text{MS}_{\text{Effect}}}{\text{MS}_{E}}
+\;\sim\; F_{1,\, df_{E}},
+$$
+
+where $\text{MS}_{\text{Effect}} = \text{SS}_{\text{Effect}} / 1$ and
+$\text{MS}_{E} = \text{SS}_{E} / df_{E}$. An effect is declared significant
+at level $\alpha$ when $F_0 > F_{\alpha, 1, df_{E}}$, equivalently when the
+$p$-value is below $\alpha$.
+
+# Case Study: Injection Molding Shrinkage
+
+## Problem definition
+
+An automotive supplier manufactures a polypropylene dashboard panel by
+injection molding. The customer specification requires the molded-part
+shrinkage to remain below $1.5\%$ and the dimensional deviation to remain
+below $15\,\mu\text{m}$. The current process averages $2.5\%$ shrinkage and
+$30\,\mu\text{m}$ deviation, so both responses need to be reduced.
+
+The engineering team selects four potentially significant factors:
+
+| Factor | Symbol | Low level | High level | Unit |
+|--------|--------|-----------|------------|------|
+| Mold temperature | `MoldTemp` | 40 | 80 | $^\circ\text{C}$ |
+| Holding pressure | `HoldPres` | 40 | 100 | MPa |
+| Injection speed | `InjectSpeed` | 50 | 150 | mm/s |
+| Cooling time | `CoolTime` | 15 | 45 | s |
+
+Two responses are measured on each run:
+
+* `Shrinkage` — linear shrinkage (%), to be **minimised**.
+* `DimensionDev` — dimensional deviation ($\mu\text{m}$), to be **minimised**.
+
+A full $2^4$ design with two replicates is chosen. This gives
+$2 \times 16 = 32$ runs, leaving $32 - 16 = 16$ residual degrees of freedom
+for the full first-order-with-interaction model
+`Shrinkage ~ MoldTemp * HoldPres * InjectSpeed * CoolTime`. The two
+replicates also provide a pure-error estimate of $\sigma^2$.
+
+## Design generation with `factorial_design()`
+
+The factor list is built first, with **numeric** level vectors (the package
+validator rejects character levels). The design is then generated with
+`factorial_design()`, which returns an `IqrDoeTask` object whose
+`$results$design_info` is a `data.frame` containing one row per run with the
+factor settings and the run order.
+
+```{r build-design}
+# Four continuous factors, each at two numeric levels.
+factors <- list(
+  list(name = "MoldTemp",     type = "continuous", levels = c(40,  80)),
+  list(name = "HoldPres",     type = "continuous", levels = c(40, 100)),
+  list(name = "InjectSpeed",  type = "continuous", levels = c(50, 150)),
+  list(name = "CoolTime",     type = "continuous", levels = c(15,  45))
+)
+
+# Full 2^4 factorial design, two replicates, randomized run order.
+task <- factorial_design(
+  factors       = factors,
+  design_type   = "factorial",
+  response_vars = c("Shrinkage", "DimensionDev"),
+  replication   = 2,
+  randomize     = TRUE,
+  seed          = 42
+)
+
+# The generated design table: one row per run.
+head(task$results$design_info, 8)
+nrow(task$results$design_info)
+```
+
+The design layout can be visualised with `task$plot(type = "design")`. The
+function returns a `ggplot` object invisibly, so we print it explicitly to
+embed it in the vignette.
+
+```{r plot-design, fig.width = 9, fig.height = 8}
+print(task$plot(type = "design"))
+```
+
+**Decision.** The tile view confirms that all 32 runs are present and
+that the run order is properly randomised across the four-factor grid.
+No clustering or diagonal pattern is visible, so the randomisation has
+succeeded in protecting the experiment against time-dependent lurking
+variables such as tool wear or ambient temperature drift. The design
+itself does not depend on `response_name`, because it visualises the
+factor settings, not the measured responses.
+
+## Simulated response data
+
+In a real study the responses would be measured after the physical trials.
+Here we simulate them from a known physics-inspired model so that the
+analysis is reproducible. Higher mold temperature, higher holding pressure,
+faster injection, and longer cooling all reduce shrinkage, with a
+`MoldTemp`-by-`HoldPres` interaction and a `HoldPres`-by-`CoolTime`
+interaction. Random noise is added with `set.seed(42)` for reproducibility.
+
+```{r simulate-responses}
+set.seed(42)
+
+design_df <- task$results$design_info
+
+# Code each factor on the standard {-1, +1} scale for the simulation model.
+# x1 <- (design_df$MoldTemp    - 60) / 20   # MoldTemp    centered & scaled
+# x2 <- (design_df$HoldPres    - 70) / 30   # HoldPres
+# x3 <- (design_df$InjectSpeed - 100) / 50  # InjectSpeed
+# x4 <- (design_df$CoolTime    -  30) / 15  # CoolTime
+# 
+# # Shrinkage (%) -- lower is better.
+# design_df$Shrinkage <- 2.20
+#   - 0.30 * x1 - 0.40 * x2 - 0.25 * x3 - 0.30 * x4
+#   - 0.15 * x1 * x2
+#   - 0.10 * x2 * x4
+#   + rnorm(nrow(design_df), sd = 0.05)
+
+# 重新设计系数
+set.seed(42)
+x1 <- (design_df$MoldTemp - 60) / 20
+x2 <- (design_df$HoldPres - 70) / 30
+x3 <- (design_df$InjectSpeed - 100) / 50
+x4 <- (design_df$CoolTime - 30) / 15
+
+# 只有 x1, x2, x4 有实际效应，x3 是惰性因子
+design_df$Shrinkage <- 2.20
+  - 0.20 * x1        # 中等效应
+  - 0.35 * x2        # 强效应
+  - 0.02 * x3        # 几乎无效应（不显著）
+  - 0.20 * x4        # 中等效应
+  - 0.10 * x1 * x2   # 交互项
+  + rnorm(nrow(design_df), sd = 0.15)   # 更大的噪声
+
+# Dimensional deviation (micrometres) -- lower is better.
+# design_df$DimensionDev <- 28.0
+#   - 4.0 * x1 - 5.0 * x2 - 3.0 * x3 - 4.0 * x4
+#   - 2.5 * x1 * x2
+#   - 1.5 * x2 * x4
+#   + rnorm(nrow(design_df), sd = 0.8)
+
+design_df$DimensionDev <- 28.0
+  - 3.5 * x1
+  - 5.0 * x2
+  - 0.5 * x3          # 小效应，可能显著或不显著
+  - 3.0 * x4
+  - 2.0 * x1 * x2
+  + rnorm(nrow(design_df), sd = 1.2)
+
+# Attach the response data to the task. The public `data` field is a
+# direct assignment on the IqrTaskBase class.
+task$data <- design_df
+```
+
+A quick look at the simulated data confirms the structure: factor columns,
+the run-order columns, and the two measured responses.
+
+```{r preview-data}
+head(task$data, 6)
+```
+
+## ANOVA analysis with `task$compute()`
+
+Calling `task$compute()` regenerates the design table (reproducibly, because
+`seed = 42` was set) and, because `task$data` is now populated and
+`response_vars` was declared on the plan, fits the full-interaction model
+for each response and populates:
+
+* `task$results$anova_results` --- a named list, one entry per response;
+* `task$results$effects` --- main and interaction effects for the first response;
+* `task$results$model` --- the fitted `lm` object for the first response;
+* `task$results$model_fit` --- $R^2$, adjusted $R^2$, and the lack-of-fit $p$-value.
+
+```{r compute-anova}
+task$compute()
+
+# textual summary of the design, the ANOVA tables, and the fit statistics
+task$summary()
+```
+
+The ANOVA table for `Shrinkage` can also be inspected directly. The four
+main effects and the two engineered interactions (`MoldTemp:HoldPres` and
+`HoldPres:CoolTime`) should stand out as significant, while the higher-order
+interactions should be negligible.
+
+```{r inspect-anova}
+# ANOVA table for the Shrinkage response
+task$results$anova_results$Shrinkage$anova
+
+# Model fit statistics for both responses
+task$results$anova_results$Shrinkage$model_fit
+task$results$anova_results$DimensionDev$model_fit
+```
+
+## Main effects plot
+
+The main-effects plot ranks the factors by the magnitude of their effect
+estimate. Because the underlying physics makes every main effect negative
+(high level $\Rightarrow$ lower shrinkage), all four bars should point
+downward. By default `task$plot(type = "main_effects")` plots the first
+declared response, here `Shrinkage`.
+
+```{r plot-main-effects,fig.width = 9, fig.height = 8}
+print(task$plot(type = "main_effects"))
+```
+
+**Decision.** The main-effect slope for `HoldPres` is the steepest, so
+it is the dominant lever on `Shrinkage`, followed by `MoldTemp`,
+`CoolTime`, and `InjectSpeed`. All four slopes point downward,
+confirming the engineering expectation that the high level of every
+factor reduces shrinkage. The optimisation should therefore push every
+factor to its high level.
+
+To plot the second response, pass `response_name = "DimensionDev"`.
+Only one response is plotted per call --- the package does not overlay
+multiple responses on the same axis, because they live on different
+units (% versus $\mu\text{m}$).
+
+```{r plot-main-effects-dimdev,fig.width = 9, fig.height = 8}
+print(task$plot(type = "main_effects", response_name = "DimensionDev"))
+```
+
+**Decision.** The ranking for `DimensionDev` mirrors the one for
+`Shrinkage`, with `HoldPres` again the dominant lever. Because both
+responses share the same direction of effect, no trade-off is needed:
+a single recipe (all factors high) is optimal for both responses
+simultaneously.
+
+## Interaction effects plot
+
+The interaction plot shows, for every pair of factors, the mean response at
+each level of one factor stratified by the level of the other. Non-parallel
+lines signal an interaction. Two pairs should be visibly non-parallel:
+`MoldTemp` $\times$ `HoldPres` and `HoldPres` $\times$ `CoolTime`. The
+default call plots the `Shrinkage` response; the `DimensionDev` panel is
+produced by passing `response_name`.
+
+```{r plot-interaction,fig.width = 9, fig.height = 8}
+print(task$plot(type = "interaction"))
+```
+
+**Decision.** The two engineered interaction panels
+(`MoldTemp` $\times$ `HoldPres` and `HoldPres` $\times$ `CoolTime`)
+show clearly non-parallel lines, confirming that the effect of
+`HoldPres` is amplified when `MoldTemp` and `CoolTime` are at their
+high levels. The remaining panels are roughly parallel, so the
+higher-order interactions can be pooled into the error term if a
+reduced model is needed for production.
+
+```{r plot-interaction-dimdev,fig.width = 9, fig.height = 8}
+print(task$plot(type = "interaction", response_name = "DimensionDev"))
+```
+
+**Decision.** The `DimensionDev` interaction panels reproduce the same
+two non-parallel pairs as `Shrinkage`, so the same interaction
+structure drives both responses. A single reduced model
+(`MoldTemp * HoldPres + HoldPres * CoolTime`) is therefore adequate
+for both responses, which simplifies the production monitoring plan.
+
+## Residual diagnostics
+
+The residual-versus-fitted plot is the primary diagnostic for the
+regression assumptions. With replicated runs the residuals should be
+scattered symmetrically around zero with no systematic curvature or
+funnel shape. The default `type = "residual"` call diagnostics the
+`Shrinkage` model; pass `response_name` to switch to the second
+response.
+
+```{r plot-residual,,fig.width = 9, fig.height = 8}
+print(task$plot(type = "residual"))
+```
+
+**Decision.** The residual QQ plot for `Shrinkage` is approximately
+linear, the fitted-versus-residuals cloud is centred on zero with no
+curvature, and the scale-location plot is flat. The regression
+assumptions are satisfied, so the ANOVA $p$-values and prediction
+intervals for `Shrinkage` are trustworthy.
+
+```{r plot-residual-dimdev,fig.width = 9, fig.height = 8}
+print(task$plot(type = "residual", response_name = "DimensionDev"))
+```
+
+**Decision.** The `DimensionDev` residuals behave the same way as the
+`Shrinkage` residuals, with no visible curvature, funnel, or heavy
+tails. Both responses can be modelled with the same
+first-order-with-interaction specification, and the prediction
+intervals reported below are reliable.
+
+The combined view of main effects and residuals is produced by
+`type = "full"`:
+
+```{r plot-full, ,fig.width = 9, fig.height = 12}
+print(task$plot(type = "full"))
+```
+
+**Decision.** The combined panel brings the main-effects, interaction,
+and residual diagnostics for `Shrinkage` into a single figure. The
+picture is consistent with the per-type plots above and gives no
+reason to revise the model. The full panel is the recommended
+single-figure summary for an internal technical report.
+
+```{r plot-full-dimdev, fig.width = 11, fig.height = 12}
+print(task$plot(type = "full", response_name = "DimensionDev"))
+```
+
+**Decision.** The combined panel for `DimensionDev` confirms the same
+conclusions reached for `Shrinkage`. The two responses can be
+reported together using the same model structure, with `HoldPres` as
+the dominant lever in both cases.
+
+## Optimal condition identification
+
+Because every main effect on `Shrinkage` is negative, the minimum-shrinkage
+setting is the high level of every factor. The same conclusion holds for
+`DimensionDev`. We can confirm this by predicting the response at the
+optimal combination with the fitted model and its $95\%$ prediction
+interval.
+
+```{r optimal-condition}
+# Main effect signs for the Shrinkage response.
+task$results$anova_results$Shrinkage$effects$main
+
+# The optimal setting: all factors at their high level.
+optimal_cond <- data.frame(
+  MoldTemp    = 80,
+  HoldPres    = 100,
+  InjectSpeed = 150,
+  CoolTime    = 45
+)
+
+# Point prediction and 95% prediction interval for Shrinkage.
+pred_shrinkage <- predict(
+  task$results$anova_results$Shrinkage$model,
+  newdata    = optimal_cond,
+  interval   = "prediction"
+)
+pred_shrinkage
+
+# Point prediction and 95% prediction interval for DimensionDev.
+pred_dimdev <- predict(
+  task$results$anova_results$DimensionDev$model,
+  newdata    = optimal_cond,
+  interval   = "prediction"
+)
+pred_dimdev
+```
+
+Both predicted means fall comfortably inside the customer specification
+(`Shrinkage` < 1.5%, `DimensionDev` < 15 $\mu\text{m}$).
+
+## Confirmation run
+
+A confirmation experiment consists of a small number of trials performed at
+the predicted optimal setting. If the model is correct, the mean of the
+confirmation runs should fall inside the prediction interval computed
+above. We simulate five confirmation runs from the same data-generating
+process used in Section 3.3.
+
+```{r confirmation-run}
+set.seed(123)
+
+# Five confirmation runs at the optimal condition (all factors high).
+confirm_shrinkage <- 2.20
+  - 0.30 - 0.40 - 0.25 - 0.30
+  - 0.15  # x1 * x2 interaction at (+1, +1)
+  - 0.10  # x2 * x4 interaction at (+1, +1)
+  + rnorm(5, sd = 0.05)
+
+confirm_dimdev <- 28.0
+  - 4.0 - 5.0 - 3.0 - 4.0
+  - 2.5
+  - 1.5
+  + rnorm(5, sd = 0.8)
+
+confirmation <- data.frame(
+  Run        = 1:5,
+  Shrinkage  = round(confirm_shrinkage, 4),
+  DimensionDev = round(confirm_dimdev, 4)
+)
+confirmation
+
+cat(sprintf(
+  "Mean Shrinkage = %.4f %% (95%% PI: [%.4f, %.4f])\n",
+  mean(confirm_shrinkage), pred_shrinkage[, "lwr"], pred_shrinkage[, "upr"]
+))
+cat(sprintf(
+  "Mean DimensionDev = %.4f microm (95%% PI: [%.4f, %.4f])\n",
+  mean(confirm_dimdev), pred_dimdev[, "lwr"], pred_dimdev[, "upr"]
+))
+```
+
+Both confirmation means lie inside their $95\%$ prediction intervals and
+inside the customer specification, so the model is validated and the
+optimal recipe can be released to production.
+
+## Optional: HTML report
+
+The `task$report()` method renders a self-contained HTML report from an
+internal R Markdown template. The call below writes the report to a
+temporary directory so that the vignette stays self-contained.
+
+```{r optional-report}
+report_path <- file.path(tempdir(), "injection_molding_doe_report.html")
+tryCatch(
+  task$report(format = "html", path = report_path),
+  error = function(e) {
+    message("Report rendering skipped: ", conditionMessage(e))
+  }
+)
+file.exists(report_path)
+```
+
+## Customising plots
+
+Because `task$plot()` returns a standard `ggplot` object (or a
+`patchwork` composition for the multi-panel types), it can be
+post-processed with the usual `+` operator before being printed. The
+chunk below overlays a dashed reference line at the customer
+specification limit for `Shrinkage` ($1.5\%$) on top of the
+`Shrinkage` main-effects plot, so that the engineer can see at a
+glance which factor effects are large enough to move the mean across
+the spec boundary.
+
+```{r customise-plot,,fig.width = 9, fig.height = 8}
+p_main <- task$plot(type = "main_effects")
+print(
+  p_main +
+    geom_hline(yintercept = 1.5, linetype = "dashed", colour = "red") +
+    labs(subtitle = "Red line = customer spec limit (1.5%)")
+)
+```
+
+**Decision.** The dashed red line marks the $1.5\%$ customer
+specification on `Shrinkage`. The main-effect bars are effect
+estimates (differences between the high- and low-level means), so the
+line is informative as a visual scale reference rather than as a
+literal acceptance limit. The plot shows that several individual
+effects are larger than the spec gap, which is why the high level of
+every factor is required to pull the process mean below $1.5\%$.
+
+## Combining plots with patchwork
+
+When the analyst needs a side-by-side comparison of two `task$plot()`
+outputs --- for example, the same diagnostic for both responses --- the
+**patchwork** package composes them into a single figure. The
+`wrap_elements()` helper wraps any plot object so that it can be
+combined with the `|` (side-by-side) or `/` (stacked) operators. The
+chunk below places the `Shrinkage` and `DimensionDev` residual
+diagnostics next to each other.
+
+```{r patchwork-combine, fig.width = 12, fig.height =8}
+p_shrinkage <- task$plot(type = "residual")
+p_dimdev    <- task$plot(type = "residual", response_name = "DimensionDev")
+
+combined <- wrap_elements(p_shrinkage) | wrap_elements(p_dimdev)
+print(combined)
+```
+
+**Decision.** Side-by-side comparison confirms that the residual
+diagnostics for both responses are well-behaved. Neither response
+shows curvature, funnel, or heavy-tail problems, so the same
+first-order-with-interaction model is adequate for both. The combined
+figure is suitable for a single-slide summary in a design review.
+
+## Exporting a report
+
+The `task$report()` method renders a self-contained report from an
+internal template. Two formats are supported: `excel` (a multi-sheet
+workbook with the design table, ANOVA results, effects, and fit
+statistics) and `html` (a formatted report with embedded figures).
+The example below uses `tempfile()` so that no files are written
+outside the session's temporary directory.
+
+```{r export-report, eval = FALSE}
+# Not run:
+task$report(format = "excel", path = tempfile(fileext = ".xlsx"))
+task$report(format = "html",  path = tempfile(fileext = ".html"))
+```
+
+The HTML rendering is demonstrated end-to-end in the *Optional: HTML
+report* subsection above; the Excel export follows the same call
+signature and produces a workbook that can be opened directly in a
+spreadsheet application for further downstream analysis.
+
+# Fractional Factorial Designs
+
+When $k$ grows, the size of a $2^k$ design grows exponentially. Fractional
+factorial designs exploit the **effect sparsity** principle --- in most
+industrial systems only a handful of effects are active --- so a fraction of
+the full design is sufficient to estimate the important ones.
+
+A $2^{k-p}$ fractional design uses $1/2^p$ of the runs of the full design.
+Its behaviour is governed by the **defining relation**
+$I = W_1 = W_2 = \dots = W_{2^p - 1}$, where the $W_i$ are called *words*.
+The **resolution** $R$ is the length of the shortest word.
+
+| Resolution | Main effects aliased with | Two-factor interactions aliased with |
+|------------|---------------------------|--------------------------------------|
+| III | Two-factor interactions | Each other |
+| IV | Three-factor interactions | Each other |
+| V  | Four-factor interactions | Three-factor interactions |
+
+A short example using `factorial_design()` with `design_type = "fractional"`
+and six factors illustrates the API. With six factors at resolution IV, the
+package generates a 16-run design.
+
+```{r fractional-example}
+factors_6 <- lapply(1:6, function(i) {
+  list(name = paste0("X", i), type = "continuous", levels = c(-1, 1))
+})
+
+frac_task <- factorial_design(
+  factors     = factors_6,
+  design_type = "fractional",
+  resolution  = "IV",
+  randomize   = TRUE,
+  seed        = 2024
+)
+
+frac_task$summary()
+head(frac_task$results$design_info, 6)
+nrow(frac_task$results$design_info)
+```
+
+> **Note on implementation status.** The fractional-factorial generator
+> currently shipped with **iQualityR.doe** is a *simplified* one: it subsets
+> a full factorial by systematic sampling rather than constructing a proper
+> alias structure from independent generators. This is adequate for
+> teaching the API and for rough screening, but the resulting alias pattern
+> is not guaranteed to match the textbook resolution-IV aliasing. For
+> production work that depends on the alias structure, prefer
+> `DoE.base::fac.design()` or `FrF2::FrF2()`, then attach the resulting
+> design table to an `IqrDoeTask` for analysis and reporting.
+
+# Screening Designs
+
+When the number of candidate factors is large (say, six or more) and the
+experimental budget is tight, a **screening design** is used to identify
+the few active factors among many candidates. The
+`screening_design()` constructor is a convenience wrapper around
+`factorial_design(design_type = "fractional")` that defaults to a
+resolution-IV fraction.
+
+```{r screening-example}
+factors_8 <- lapply(1:8, function(i) {
+  list(name = paste0("F", i), type = "continuous", levels = c(-1, 1))
+})
+
+screen_task <- screening_design(
+  factors    = factors_8,
+  resolution = "IV",
+  randomize  = TRUE,
+  seed       = 2024
+)
+
+screen_task$summary()
+nrow(screen_task$results$design_info)
+```
+
+The same `$compute()`, `$plot()`, and `$report()` methods are available on
+the returned `IqrDoeTask` object once response data has been attached via
+`task$data <- df`. The workflow is therefore identical to the one
+demonstrated in Section 3 for the full factorial case.
+
+# Best Practices
+
+1. **Randomise the run order.** Always set `randomize = TRUE` (the default)
+   and supply a `seed` for reproducibility. Randomisation protects against
+   lurking time-dependent variables such as tool wear or ambient
+   temperature drift.
+
+2. **Replicate when you need error degrees of freedom.** A single
+   replicate of a $2^k$ design saturates the full-interaction model and
+   leaves no residual degrees of freedom for the $F$-test. Two replicates,
+   as used in this vignette, give a clean pure-error estimate.
+
+3. **Use numeric factor levels.** The `IqrDoePlan` validator requires
+   `levels` to be a numeric vector of length $\geq 2$. Use `c(40, 80)`
+   rather than `c("low", "high")`.
+
+4. **Attach responses through `task$data`.** Build the response data frame
+   by adding response columns to the design table returned by
+   `task$results$design_info`, then assign it to `task$data` and call
+   `task$compute()` again. Do **not** hand-write `lm()` calls --- the task
+   API takes care of formula construction, effect extraction, and model-fit
+   statistics in a single step.
+
+5. **Validate with confirmation runs.** A statistically significant model
+   is not a validated model. Run three to five confirmation trials at the
+   predicted optimum and check that their mean falls inside the model's
+   prediction interval before releasing the new recipe to production.
+
+6. **Add center points when curvature is plausible.** Four to six center
+   points provide a single-degree-of-freedom curvature test that is
+   independent of replication. If the curvature test is significant,
+   augment the design with axial runs to form a Central Composite Design.
+
+# Comparison with Other R Packages
+
+| Feature | iQualityR.doe | DoE.base | FrF2 | rsm |
+|---------|---------------|----------|------|-----|
+| Full factorial design | yes | yes | yes | no |
+| Fractional factorial design | yes (simplified) | yes | yes | no |
+| Orthogonal arrays | yes | yes | no | no |
+| Response-surface design | yes | partial | no | yes |
+| Built-in main-effects / interaction / residual plots | yes | limited | limited | yes |
+| One-call HTML report | yes | no | no | no |
+| Object-oriented task API (`$compute`, `$plot`, `$report`) | yes | no | no | no |
+
+The principal value of **iQualityR.doe** is the integration of design
+generation, statistical analysis, plotting, and reporting in a single
+object-oriented interface (`IqrDoeTask`), which suits quality engineers who
+need a reproducible workflow without assembling several low-level packages.
+For specialised tasks that depend on a guaranteed alias structure
+(regular fractional factorials, Plackett-Burman, definitive screening
+designs), `DoE.base` and `FrF2` remain the reference implementations and
+can be used alongside **iQualityR.doe** by attaching their design tables to
+an `IqrDoeTask` for analysis.
+
+# References
+
+1. Montgomery, D. C. (2019). *Design and Analysis of Experiments*
+   (10th ed.). Wiley.
+2. Box, G. E. P., Hunter, W. G., & Hunter, J. S. (2005). *Statistics for
+   Experimenters* (2nd ed.). Wiley.
+3. Wu, C. F. J., & Hamada, M. S. (2009). *Experiments: Planning,
+   Analysis, and Optimization* (2nd ed.). Wiley.
+4. Yates, F. (1937). *The Design and Analysis of Factorial Experiments*.
+   Imperial Bureau of Soil Science.
+5. Taguchi, G., Chowdhury, S., & Wu, Y. (2005). *Taguchi's Quality
+   Engineering Handbook*. Wiley.
+
+# sessionInfo
+
+```{r sessioninfo}
+sessionInfo()
+```

@@ -1,0 +1,43 @@
+Package: iQualityR.msa
+Title: Measurement System Analysis for iQualityR
+Version: 0.1.0
+Description: Provides comprehensive measurement system analysis (MSA) tools
+    following the AIAG MSA 4th edition and VDA 5 standards. Implements
+    Type 1 gage studies with Cg/Cgk capability indices, gage linearity
+    and bias studies, crossed and nested Gage R&R studies via the ANOVA
+    and Xbar-R methods, attribute agreement analysis with Cohen/Fleiss
+    kappa, the Wagner two-way method, and detection probability analysis.
+    Designed to align with the analysis workflow and output layout of
+    Minitab while integrating with the iQualityR ecosystem.
+Authors@R: c(
+    person("iQualityR", "Team", role = c("aut", "cre"),
+           email = "iQualityR@example.com")
+  )
+Depends:
+    R (>= 4.1.0)
+Imports:
+    R6,
+    iQualityR.core (>= 0.1.0),
+    iQualityR.stat (>= 0.1.0),
+    ggplot2,
+    dplyr,
+    magrittr,
+    stats,
+    data.table,
+    openxlsx,
+    patchwork,
+    broom,
+    tidyr,
+    reshape2,
+    rlang,
+    utils
+Suggests:
+    testthat,
+    knitr,
+    rmarkdown
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+VignetteBuilder: knitr
+NeedsCompilation: no

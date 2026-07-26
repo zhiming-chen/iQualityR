@@ -1,0 +1,272 @@
+---
+title: "Survival Analysis: Kaplan-Meier Estimation and Cox Proportional Hazards"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Survival Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.reliability)
+library(ggplot2)
+```
+
+## 1. Introduction
+
+Survival analysis deals with **time-to-event** data in which some
+observations may be **censored** --- that is, the event of interest (death,
+failure, relapse) has not been observed for that subject by the end of the
+study. Unlike parametric reliability (see the
+`reliability_parametric` vignette), survival analysis makes weaker
+distributional assumptions:
+
+- **Kaplan-Meier** estimation is fully nonparametric: it estimates the
+  survival curve $S(t)$ directly from observed event and censoring times.
+- The **Cox proportional hazards** model is semiparametric: it estimates
+  the effect of covariates on the hazard without specifying the baseline
+  hazard.
+
+This vignette demonstrates both methods using `iQualityR.reliability`. The
+underlying computations rely on the `survival` package, which is loaded
+on demand via `requireNamespace()`.
+
+## 2. Censoring: Why It Matters
+
+In a reliability or clinical study, an observation is **right-censored**
+if the study ends before the subject fails. Treating censored
+observations as if they had failed would underestimate survival; treating
+them as if they had not been observed would waste information. Survival
+methods use the censoring indicator to incorporate partial information:
+
+| Status | Meaning |
+|:-------|:--------|
+| 1 | Event observed (failure, death, etc.) |
+| 0 | Right-censored (study ended before event) |
+
+Let $T_i$ be the true failure time and $C_i$ the censoring time. We
+observe $X_i = \min(T_i, C_i)$ and the indicator $\delta_i = I(T_i \le
+C_i)$. The Kaplan-Meier estimator uses only the observed event times and
+the at-risk set at each event time.
+
+## 3. Kaplan-Meier Estimation
+
+### 3.1 Simulated Survival Data
+
+We simulate 100 subjects from an exponential failure distribution with
+rate 0.01 (MTTF = 100) and 80% event probability.
+
+```{r simulate-km}
+set.seed(42)
+n <- 100
+data <- data.frame(
+  time   = rexp(n, rate = 0.01),
+  status = rbinom(n, 1, 0.8)
+)
+head(data, 5)
+table(data$status)
+```
+
+### 3.2 Estimating the Survival Curve
+
+```{r km-fit}
+result <- kaplan_meier_estimate(data, "time", "status")
+
+# Number of events and censored
+result$n
+result$n_events
+result$n_censored
+
+# Survival curve (first 6 rows)
+head(result$survival_curve)
+```
+
+### 3.3 Visualizing the Kaplan-Meier Curve
+
+```{r km-plot, fig.cap = "Kaplan-Meier survival curve with confidence band"}
+plan <- ReliabilityPlan$new(
+  time_var       = "time",
+  status_var     = "status",
+  method         = "kaplan_meier",
+  censoring_type = "right"
+)
+analyzer <- ReliabilityAnalyzer$new()
+km_result <- analyzer$analyze(data, plan)
+
+plotter <- ReliabilityPlotter$new()
+theme <- iQualityR.core::IqrTheme$new("academic")
+plotter$render(km_result, theme, type = "kaplan_meier")
+```
+
+The step function drops at each observed event time and is flat during
+censoring periods.
+
+### 3.4 Median Survival
+
+The median survival time is the time at which the survival curve crosses
+0.5. It is the most commonly reported summary statistic in survival
+analysis.
+
+```{r median-survival}
+result$reliability_metrics$median_survival
+```
+
+## 4. The Cox Proportional Hazards Model
+
+### 4.1 The Proportional Hazards Assumption
+
+The Cox model assumes that the hazard for subject $i$ is:
+
+$$h_i(t) = h_0(t) \exp(\beta_1 x_{i1} + \beta_2 x_{i2} + \dots + \beta_p x_{ip})$$
+
+where $h_0(t)$ is an unspecified baseline hazard and $\beta_j$ are the
+covariate effects. The key assumption is that the **hazard ratio**
+$\exp(\beta_j)$ is constant over time --- hence "proportional hazards".
+
+| Quantity | Interpretation |
+|:---------|:----------------|
+| $\beta_j > 0$ | Covariate $j$ increases the hazard (risk factor) |
+| $\beta_j < 0$ | Covariate $j$ decreases the hazard (protective factor) |
+| $\exp(\beta_j) = 2$ | Doubles the hazard at all times |
+| $\exp(\beta_j) = 0.5$ | Halves the hazard at all times |
+
+### 4.2 Simulated Covariate Data
+
+```{r cox-data}
+set.seed(7)
+n <- 120
+data <- data.frame(
+  time   = rexp(n, rate = 0.01),
+  status = rbinom(n, 1, 0.7),
+  age    = rnorm(n, mean = 50, sd = 10),
+  treat  = rbinom(n, 1, 0.5)
+)
+head(data, 5)
+```
+
+### 4.3 Fitting the Cox Model
+
+```{r cox-fit}
+result <- cox_model(data, "time", "status",
+                     factors = c("age", "treat"))
+
+# Coefficient table
+result$cox_model$coefficients
+
+# Model-level summary
+result$cox_model$concordance
+result$cox_model$likelihood_ratio_test
+```
+
+The **concordance** (C-index) measures the model's discriminative power:
+0.5 is random, 1.0 is perfect. The likelihood-ratio test compares the
+fitted model to the null model (no covariates).
+
+### 4.4 Proportional Hazards Test
+
+The `cox.zph()` test from the `survival` package checks whether the
+proportional hazards assumption is violated. A p-value below 0.05 suggests
+a time-varying effect.
+
+```{r ph-test}
+result$cox_model$proportional_hazards_test
+```
+
+### 4.5 Forest Plot
+
+The forest plot visualizes hazard ratios with their 95% confidence
+intervals.
+
+```{r forest-plot, fig.cap = "Cox model forest plot of hazard ratios"}
+plotter <- ReliabilityPlotter$new()
+plotter$render(result, theme, type = "forest")
+```
+
+Points to the right of 1.0 indicate risk-increasing factors; points to
+the left indicate protective factors.
+
+## 5. Interpreting the Coefficients
+
+For our simulated data:
+
+- **age**: Each additional year of age multiplies the hazard by
+  $\exp(\beta_{\text{age}})$. If the 95% CI includes 1.0, the effect is
+  not statistically significant at the 5% level.
+- **treat**: A binary treatment indicator. $\exp(\beta_{\text{treat}}) < 1$
+  suggests the treatment is protective.
+
+The recommendations returned by the analyzer summarize the significant
+factors:
+
+```{r recs}
+result$diagnostics$recommendations
+```
+
+## 6. Full Workflow with IqrReliabilityTask
+
+For a complete analysis pipeline (compute + plot + report), use the
+[IqrReliabilityTask] coordinator:
+
+```{r task-workflow}
+plan <- ReliabilityPlan$new(
+  time_var       = "time",
+  status_var     = "status",
+  method         = "cox",
+  censoring_type = "right",
+  factors        = c("age", "treat")
+)
+
+task <- IqrReliabilityTask$new(data, plan)
+task$compute()
+task$summary()
+```
+
+```{r task-forest, fig.cap = "Task-level forest plot"}
+task$plot(type = "forest")
+```
+
+## 7. Choosing Between Methods
+
+| Method | When to use | Strengths | Limitations |
+|:-------|:------------|:----------|:------------|
+| Kaplan-Meier | No covariates; purely nonparametric | No distribution assumption; visual | Cannot adjust for covariates |
+| Cox PH | Covariates; semiparametric | Adjustable; widely validated | Requires proportional hazards |
+| Parametric (Weibull) | Distribution known; small samples | Efficient; extrapolates | Sensitive to distribution misspecification |
+
+## 8. Common Pitfalls
+
+1. **Treating censored observations as failures**: This underestimates
+   survival. Always include the status variable (1 = event, 0 = censored).
+2. **Violated proportional hazards**: If the PH test fails, consider
+   stratified Cox or time-dependent covariates.
+3. **Small sample size**: With fewer than 10-15 events per covariate,
+   Cox coefficient estimates become unstable.
+4. **Tied event times**: The default Efron approximation handles ties
+   well; Breslow is faster but less accurate.
+
+## 9. References
+
+- Cox, D. R. (1972). Regression Models and Life-Tables. *Journal of the
+  Royal Statistical Society. Series B*, 34(2), 187-220.
+- Kaplan, E. L., & Meier, P. (1958). Nonparametric Estimation from
+  Incomplete Observations. *Journal of the American Statistical
+  Association*, 53(282), 457-481.
+- Therneau, T. M., & Grambsch, P. M. (2000). *Modeling Survival Data:
+  Extending the Cox Model*. Springer.

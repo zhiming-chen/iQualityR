@@ -1,0 +1,648 @@
+---
+title: "Nested Gage R&R Study for Destructive Testing"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Nested Gage R&R Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+library(magrittr)
+
+# Formatting helpers: 4 / 2 decimal places, and percentage formatting
+fmt4 <- function(x) {
+  ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+}
+fmt2 <- function(x) {
+  ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+}
+fmt_pct <- function(x, digits = 2) {
+  ifelse(is.na(x), "NA", paste0(formatC(as.numeric(x), format = "f", digits = digits), "%"))
+}
+```
+
+## 1. Business Context
+
+A Nested Gage R&R Study is the appropriate design when the act of measuring
+destroys or fundamentally alters the part, so that no part can be measured
+more than once. Classic examples include tensile strength, impact energy,
+burst pressure, and destructive peel tests. Because the same physical part
+cannot be re-measured by a different operator, the crossed Gage R&R
+structure -- every operator measures every part -- is impossible. Instead,
+each operator receives a *different* set of parts drawn from the same
+homogeneous batch or production stream. Parts are therefore **nested within
+operators** rather than crossed with them.
+
+This vignette reproduces the classical Minitab *Nested Gage R&R Study*
+example for ceramic components measured for breaking strength. The quality
+engineer selects 3 operators and asks each operator to measure 10 distinct
+ceramic components sampled from the same production batch, with each
+component measured twice before destruction (two replications per
+part-operator cell). Because each operator consumes their own 10 parts, the
+study uses 30 distinct ceramic components in total, producing
+`3 x 10 x 2 = 60` measurements.
+
+| Study Parameter | Value |
+|---|---:|
+| Characteristic | Ceramic component breaking strength |
+| Operators | 1, 2, 3 (3 operators) |
+| Parts per operator | 10 (disjoint sets, 30 distinct parts overall) |
+| Replications per part | 2 |
+| Design | Nested (parts nested within operators) |
+| Total measurements | 60 |
+| Process tolerance | not specified (analysis uses %Study Var) |
+| Study variation multiplier (sigma) | 6 |
+| Interaction significance level (`alpha_lim`) | 0.25 (retained for API consistency only; no interaction term in a nested model) |
+
+**Key contrast with the crossed design.** In a crossed Gage R&R study every
+operator measures every part, so the Part factor is crossed with the
+Operator factor and the Operator x Part interaction is estimable. In a
+nested design each part is seen by exactly one operator, so the interaction
+is confounded with the nested part effect -- it cannot be estimated, and
+the model omits it by construction.
+
+## 2. Method and Formulas
+
+### 2.1 Nested two-way model
+
+For a nested Gage R&R study with $o$ operators, $p$ parts *per operator*
+and $r$ replications per part, the linear model is:
+
+$$
+y_{ijk} = \mu + O_j + P(O)_{j(i)} + \varepsilon_{ijk}
+$$
+
+where $O_j$ is the effect of operator $j$, $P(O)_{j(i)}$ is the effect of
+part $i$ **nested within** operator $j$, and $\varepsilon_{ijk}$ is the
+random error (repeatability). The nesting notation $P(O)_{j(i)}$
+emphasises that part $i$ appears only under operator $j$ -- it is not a
+separate crossed factor.
+
+### 2.2 No interaction term
+
+Because each part is measured by only one operator, the Operator x Part
+interaction is completely confounded with the nested Part(Operator)
+effect. The model therefore has **no interaction term**; reproducibility
+reduces to the Operator component alone.
+
+### 2.3 Variance components
+
+The expected mean squares for the nested model give the following
+unbiased variance component estimators (with $p$ = parts per operator and
+$r$ = replications per part):
+
+| Source | Variance component estimator |
+|---|---|
+| Repeatability | $\sigma^2_e = MS_{\text{Repeatability}}$ |
+| Part(Operator) | $\sigma^2_{P(O)} = \max\!\left(\dfrac{MS_{P(O)} - MS_e}{r},\, 0\right)$ |
+| Operator | $\sigma^2_O = \max\!\left(\dfrac{MS_O - MS_{P(O)}}{p \cdot r},\, 0\right)$ |
+
+The combined quantities are:
+
+$$
+\sigma^2_{\text{Total Gage R\&R}} = \sigma^2_{\text{Repeatability}} + \sigma^2_{\text{Operator}},
+\quad
+\sigma^2_{\text{Reproducibility}} = \sigma^2_{\text{Operator}},
+\quad
+\sigma^2_{\text{Part-to-Part}} = \sigma^2_{P(O)}
+$$
+
+$$
+\sigma^2_{\text{Total Variation}} = \sigma^2_{\text{Total Gage R\&R}} + \sigma^2_{\text{Part-to-Part}}
+$$
+
+### 2.4 Derived metrics
+
+- **Study Variation** = $6 \times \text{SD}$ (where SD is the standard deviation of each component)
+- **%Study Var (%SV)** = $\dfrac{\text{component SD}}{\text{total SD}} \times 100$
+- **%Tolerance** = $\dfrac{\text{component Study Var}}{\text{tolerance}} \times 100$ (only when a tolerance is supplied)
+- **%Contribution** = $\dfrac{\text{component Variance}}{\text{total Variance}} \times 100$
+- **NDC (Number of Distinct Categories)** = $\left\lfloor \sqrt{2}\,\dfrac{\sigma_{\text{Part}}}{\sigma_{\text{Gage}}} \right\rfloor$
+
+### 2.5 AIAG acceptance criteria
+
+| Criterion | Accept | Marginal | Reject |
+|---|---|---|---|
+| %Study Var (or %Contribution) | < 10% | 10% -- 30% | > 30% |
+| NDC | >= 5 | 4 | < 4 |
+
+The overall verdict takes the worst of the two independent assessments.
+
+## 3. Data Preparation
+
+The example data ship with the package as a UTF-8 encoded CSV
+(`陶瓷部件.csv`). It contains 60 rows and three columns in Chinese:
+`部件` (part, 1--30), `操作员` (operator, 1/2/3) and `响应`
+(measurement). The API expects the English column names `Part`,
+`Operator` and `MeasurementValue`, so we rename them after loading.
+
+```{r load-data}
+ceramic_path <- system.file("extdata/minitab_msa/陶瓷部件.csv", package = "iQualityR.msa")
+ceramic_data <- read.csv(ceramic_path, fileEncoding = "UTF-8")
+names(ceramic_data) <- c("Part", "Operator", "MeasurementValue")
+
+nrow(ceramic_data)
+head(ceramic_data, 9)
+```
+
+Inspecting the structure first confirms the nested layout -- each part is
+associated with exactly one operator, and each part-operator cell holds
+exactly two replications.
+
+```{r data-structure}
+str(ceramic_data)
+summary(ceramic_data)
+
+# Each part appears with exactly one operator -> nested design
+op_per_part <- table(ceramic_data$Part, ceramic_data$Operator)
+n_ops_per_part <- rowSums(op_per_part > 0)
+cat("Distinct operators per part (unique):",
+    paste(unique(n_ops_per_part), collapse = ", "), "\n")
+cat("Distinct parts overall:", length(unique(ceramic_data$Part)), "\n")
+cat("Distinct operators:", paste(unique(ceramic_data$Operator), collapse = ", "), "\n")
+
+cell_counts <- as.data.frame(table(ceramic_data$Operator, ceramic_data$Part))
+names(cell_counts) <- c("Operator", "Part", "Count")
+cat("Replications per part-operator cell (unique):",
+    paste(unique(cell_counts$Count[cell_counts$Count > 0]), collapse = ", "), "\n")
+cat("Overall mean:", fmt4(mean(ceramic_data$MeasurementValue)), "\n")
+cat("Overall SD:", fmt4(sd(ceramic_data$MeasurementValue)), "\n")
+cat("Measurement range:", fmt4(min(ceramic_data$MeasurementValue)), "--",
+    fmt4(max(ceramic_data$MeasurementValue)), "\n")
+```
+
+The observed measurement range is about
+`r fmt2(max(ceramic_data$MeasurementValue) - min(ceramic_data$MeasurementValue))`
+units, distributed across 30 parts drawn from the same batch. Because the
+source data set does not specify an engineering tolerance for the
+breaking-strength characteristic, the analyses below use
+`tolerance = NULL`, which omits the `%Tolerance` column gracefully. If a
+tolerance is known (for example, `tolerance = 10`), it can be passed to
+`gage_rr_study()` or registered on the plan via `plan$add_specification()`
+to enable `%Tolerance` reporting.
+
+## 4. Quick Start (One-Liner)
+
+The fastest path to a full nested Gage R&R analysis is the
+`gage_rr_study()` entry function with `method = "nested"`. The function
+builds a nested `MSAPlan` internally, fits `MeasurementValue ~ Operator +
+Part`, and decomposes the variance using the nested ANOVA formulas.
+
+```{r quick-start}
+task_anova <- gage_rr_study(
+  ceramic_data,
+  method = "nested",
+  tolerance = NULL
+)
+task_anova$summary()
+```
+
+The summary prints the variance components table with `%Contribution` and
+`%Study Var` (no `%Tolerance` column because no tolerance was supplied),
+the key decision metrics (Total Gage R&R `%Contribution`, NDC) and the
+AIAG-based interpretation verdict. Note that the `Operator:Part` row is
+absent from the ANOVA decomposition -- that interaction is not estimable
+in a nested design.
+
+## 5. Step-by-Step Workflow
+
+For traceable, auditable studies it is better to define an explicit
+`MSAPlan` first and then bind it to an `MsaTask`. The plan records the
+study objectives, operator list, number of parts per operator,
+replications and design method, and is saved alongside the results in
+the report.
+
+```{r create-plan}
+plan <- create_msa_plan(
+  plan_name = "Ceramic Strength Nested Gage R&R",
+  objectives = "Destructive strength measurement on ceramic parts",
+  operators = c("1", "2", "3"),
+  parts = 10,
+  measurements = 2,
+  method = "nested"
+)
+plan$print()
+plan$validate()
+```
+
+We then build the task and run the ANOVA computation. `alpha_lim` is
+retained in the API for consistency with the crossed workflow but has
+no effect for nested designs, because no interaction term is ever
+fitted.
+
+```{r build-task}
+task <- MsaTask$new(data = ceramic_data, plan = plan, analysis_method = "anova")
+task$compute(alpha_lim = 0.25, sigma = 6)
+task$summary()
+```
+
+### 5.1 Inferring the plan from data
+
+When the data has already been collected, `infer_msa_plan()` can
+auto-detect the design (crossed vs nested), the operator list, the part
+list and the number of replications directly from the data frame.
+
+```{r infer-plan}
+inferred <- infer_msa_plan(ceramic_data)
+cat("Inferred design method:", inferred$method, "\n")
+cat("Number of operators:", inferred$num_operators, "\n")
+cat("Operator names:", paste(inferred$operator_names, collapse = ", "), "\n")
+cat("Number of parts (overall):", inferred$num_parts, "\n")
+cat("Replications per cell:", inferred$num_measurements, "\n")
+```
+
+The inferred plan can be passed directly to `run_msa_analysis()` or to
+`MsaTask$new()` exactly like a manually created plan. Note that the
+inferred `num_parts` is the *total* number of distinct parts (30),
+because each part appears under only one operator in a nested design.
+
+## 6. Nested vs Crossed Comparison
+
+The choice between crossed and nested designs is dictated by the
+physics of the measurement, not by statistics.
+
+| Aspect | Crossed Gage R&R | Nested Gage R&R |
+|---|---|---|
+| Each part measured by every operator | Yes | No |
+| Each part is destroyed by measurement | No (allowed) | Yes |
+| Part factor | Crossed with Operator | Nested within Operator |
+| Operator x Part interaction | Estimable | Confounded with Part(Operator) |
+| Reproducibility decomposition | Operator + Operator:Part | Operator only |
+| Model formula | `y ~ Part * Operator` (or `Part + Operator`) | `y ~ Operator + Part` (Part nested) |
+| Typical application | Non-destructive dimensional checks | Destructive strength, impact, burst tests |
+
+When the parts within an operator's batch are homogeneous (sampled from
+the same production stream), the nested `Part(Operator)` component is a
+reasonable proxy for the part-to-part variation that *would* have been
+measured in a crossed study. When the batches themselves differ, the
+`Part(Operator)` component absorbs both part-to-part and batch-to-batch
+variation, and the nested design cannot separate them.
+
+A side-by-side comparison of the variance decomposition makes the
+structural difference visible. To avoid forcing a crossed model onto
+nested data, we compare against the package's bundled crossed example
+(`量具数据.csv`, see `vignette("gage-rr-crossed", package = "iQualityR.msa")`):
+
+```{r nested-vs-crossed}
+# Nested variance components (ceramic data, correct analysis)
+vc_nested <- task_anova$variance_components %>%
+  dplyr::mutate(Source = trimws(.data$Source)) %>%
+  dplyr::select(Source, VarComp_Nested = .data$Variance,
+                PctContr_Nested = .data$PercentContribution)
+
+# Crossed variance components (shaft-diameter data, correct crossed analysis)
+crossed_path <- system.file("extdata/minitab_msa/量具数据.csv", package = "iQualityR.msa")
+crossed_data <- read.csv(crossed_path, fileEncoding = "UTF-8")
+names(crossed_data) <- c("Part", "Operator", "MeasurementValue")
+task_crossed <- gage_rr_study(crossed_data, method = "crossed", tolerance = 8.0)
+
+vc_crossed <- task_crossed$variance_components %>%
+  dplyr::mutate(Source = trimws(.data$Source)) %>%
+  dplyr::select(Source, VarComp_Crossed = .data$Variance,
+                PctContr_Crossed = .data$PercentContribution)
+
+comparison <- vc_nested %>%
+  dplyr::full_join(vc_crossed, by = "Source") %>%
+  dplyr::mutate(
+    VarComp_Nested  = fmt4(.data$VarComp_Nested),
+    VarComp_Crossed = fmt4(.data$VarComp_Crossed),
+    PctContr_Nested  = fmt2(.data$PctContr_Nested),
+    PctContr_Crossed = fmt2(.data$PctContr_Crossed)
+  )
+comparison
+```
+
+The two tables share the same `Source` rows, but the meaning of each row
+differs. In the nested column, `Part-to-Part` is the variance of
+`Part(Operator)` -- the spread of part means *within* each operator's
+batch. In the crossed column, `Part-to-Part` is the variance of the
+marginal `Part` factor estimated across all operators. The crossed
+table may also report a non-zero `Operator:Part` sub-row under
+Reproducibility (visible when the interaction term is retained at
+`alpha_lim = 0.25`); the nested model can never produce such a row,
+because the interaction is structurally confounded with `Part(Operator)`.
+
+Applying a crossed model directly to nested data is statistically
+incorrect and the package will refuse to estimate the interaction
+term -- the `aov()` call drops the aliased `Part:Operator` columns.
+Use `method = "nested"` whenever each part is measured by only one
+operator.
+
+## 7. ANOVA Deep-Dive
+
+The ANOVA results live on three public fields of the task:
+
+- `task$anova_results` -- the ANOVA table and metadata (`has_interaction`
+  is always `FALSE` for nested designs, `with_interaction` is `NULL`)
+- `task$variance_components` -- the variance components tibble
+- `task$statistics` -- the summary statistics (NDC, %Contribution, %Tolerance)
+
+### 7.1 ANOVA table
+
+```{r anova-table}
+anova_info <- task$anova_results
+cat("Has interaction term:", anova_info$has_interaction, "\n")
+cat("alpha_lim used (no effect for nested):", anova_info$alpha_lim, "\n")
+cat("Design method:", anova_info$design_method, "\n")
+
+anova_tbl <- task$results$data_tables$anova_table
+anova_tbl
+```
+
+Each row corresponds to a source of variation. The `Operator` row tests
+whether operator means differ (against `MS_Part`); the `Part` row tests
+whether the nested part-within-operator effect is non-zero (against
+`MS_Repeatability`); the `Repeatability` row is the residual (pure error
+within part-operator cells); the `Total` row aggregates all degrees of
+freedom and sums of squares. Because R fits `Part` as a single
+crossed-style factor in the underlying `aov()` call, the printed `Part`
+row corresponds to the *nested* `Part(Operator)` effect -- its degrees of
+freedom equal $o \cdot (p - 1) = 3 \cdot 9 = 27$, the signature of a
+nested design.
+
+### 7.2 Variance components
+
+```{r variance-components}
+vc <- task$variance_components
+vc_display <- data.frame(
+  Source = trimws(vc$Source),
+  VarComp = fmt4(vc$Variance),
+  Pct_Contribution = fmt2(vc$PercentContribution),
+  StdDev = fmt4(vc$StdDev),
+  StudyVar = fmt4(vc$StudyVar)
+)
+if ("PercentStudyVar" %in% names(vc)) {
+  vc_display$Pct_StudyVar <- fmt2(vc$PercentStudyVar)
+}
+if ("PercentTolerance" %in% names(vc)) {
+  vc_display$Pct_Tolerance <- fmt2(vc$PercentTolerance)
+}
+vc_display
+```
+
+Reading the table:
+
+- **Total Gage R&R** = Repeatability + Reproducibility. It is the
+  total measurement-system variation.
+- **Repeatability** (equipment variation, EV) is the within-cell
+  variation -- the gage's own noise, including any microstructure
+  differences between the two halves of a destructively split sample.
+- **Reproducibility** (appraiser variation, AV) equals the **Operator**
+  component only. There is no `Operator:Part` sub-row in a nested model.
+- **Part-to-Part** here is the variance of `Part(Operator)` -- the
+  spread of part means *within* each operator's batch, averaged over
+  operators. It mixes genuine part-to-part variation with any
+  batch-to-batch differences between operators' samples.
+- **Total Variation** = Total Gage R&R + Part-to-Part.
+
+### 7.3 Gage evaluation table
+
+The gage evaluation table is the Minitab-style compact view of the same
+components.
+
+```{r gage-evaluation}
+gage_eval <- task$results$data_tables$gage_evaluation
+gage_eval
+```
+
+### 7.4 Key statistics
+
+```{r key-stats}
+stats_df <- data.frame(
+  Metric = c(
+    "Total Gage R&R %Contribution",
+    "Total Gage R&R %Study Var",
+    "Total Gage R&R %Tolerance",
+    "Number of Distinct Categories (NDC)",
+    "Verdict status",
+    "Verdict message"
+  ),
+  Value = c(
+    fmt_pct(task$statistics$total_gage_rr_percent, 2),
+    fmt_pct(task$variance_components$PercentStudyVar[1], 2),
+    ifelse(is.na(task$statistics$tolerance_percent),
+           "NA (no tolerance supplied)",
+           fmt_pct(task$statistics$tolerance_percent, 2)),
+    as.character(task$statistics$ndc),
+    task$interpretation$status,
+    task$interpretation$message
+  )
+)
+stats_df
+```
+
+## 8. Visualization Gallery
+
+The Minitab-style summary plot for nested designs is a **five-panel**
+layout: components of variation, Xbar chart by operator, response by
+operator, R chart by operator, and response by part. The `interaction`
+panel that appears in the crossed layout is intentionally omitted,
+because the Operator x Part interaction is not estimable when parts are
+nested within operators.
+
+### 8.1 Five-panel summary
+
+```{r plot-summary, fig.width=10, fig.height=8}
+print(task$plot(type = "summary"))
+```
+
+### 8.2 Components of variation
+
+```{r plot-variation}
+print(task$plot(type = "variation"))
+```
+
+The dashed reference lines mark the 10% (accept) and 30% (marginal)
+AIAG thresholds. The Part-to-Part bar should be much larger than the
+Total Gage R&R bar when the gage is acceptable.
+
+### 8.3 Response by part
+
+```{r plot-by-part}
+print(task$plot(type = "by_part"))
+```
+
+The diamond markers and connecting line show the mean per part. Because
+each part is owned by a single operator, the points within a part are
+coloured by that one operator -- the colour pattern thus visually
+reinforces the nested structure (each cluster of same-colour points
+belongs to one operator's batch).
+
+### 8.4 Response by operator
+
+```{r plot-by-operator}
+print(task$plot(type = "by_operator"))
+```
+
+Boxplots are centred on each operator. Closely aligned medians and
+means indicate small reproducibility bias; a systematically high or low
+operator reveals a reproducibility problem.
+
+### 8.5 Xbar chart by operator
+
+```{r plot-xbar}
+print(task$plot(type = "xbar_chart"))
+```
+
+The Xbar chart is faceted by operator; each point is the mean of a part
+within that operator. Most points falling outside the control limits is
+**desirable** here -- it means the parts within each operator's batch
+are sufficiently different to be distinguished by the measurement system.
+
+### 8.6 R chart by operator
+
+```{r plot-r}
+print(task$plot(type = "r_chart"))
+```
+
+The R chart monitors within-cell repeatability. Points inside the
+control limits indicate that the operators are consistent in their
+repeatability; an out-of-control point would flag an unstable
+measurement process for that operator-part combination.
+
+### 8.7 Interaction plot is not available
+
+Requesting `type = "interaction"` on a nested task raises an
+informative error rather than producing a chart, because the
+Operator x Part interaction is structurally confounded with the nested
+`Part(Operator)` effect:
+
+```{r plot-interaction-na}
+tryCatch(
+  print(task$plot(type = "interaction")),
+  error = function(e) cat("Expected error for nested design:",
+                          conditionMessage(e), "\n")
+)
+```
+
+## 9. Report Export
+
+The task can export a self-contained report in Excel, HTML, PDF or Word
+format. Excel is always available and writes each result table to its
+own worksheet.
+
+```{r report-excel}
+xlsx_path <- tempfile("gage_rr_nested_", fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+data.frame(
+  Format = "Excel",
+  Path = xlsx_path,
+  Exists = file.exists(xlsx_path),
+  Size_KB = fmt4(file.info(xlsx_path)$size / 1024)
+)
+```
+
+The exported workbook contains the following sheets:
+
+```{r report-sheets}
+names(task$build_excel_sheets())
+```
+
+HTML, PDF and Word reports are produced by rendering an Rmd template and
+should be generated in an interactive R session (they are not
+evaluated during vignette build to avoid nesting rmarkdown calls):
+
+```{r report-other, eval=FALSE}
+task$report(format = "html", path = "gage_rr_nested_report.html")
+task$report(format = "pdf",  path = "gage_rr_nested_report.pdf")
+task$report(format = "docx", path = "gage_rr_nested_report.docx")
+```
+
+## 10. Interpretation and Decision
+
+Pulling the verdict together for the ANOVA analysis:
+
+```{r verdict}
+verdict_df <- data.frame(
+  Criterion = c(
+    "Total Gage R&R %Study Var",
+    "Total Gage R&R %Contribution",
+    "Total Gage R&R %Tolerance",
+    "NDC",
+    "Interaction retained",
+    "Overall status"
+  ),
+  Value = c(
+    fmt_pct(task$variance_components$PercentStudyVar[1], 2),
+    fmt_pct(task$statistics$total_gage_rr_percent, 2),
+    ifelse(is.na(task$statistics$tolerance_percent),
+           "NA (no tolerance supplied)",
+           fmt_pct(task$statistics$tolerance_percent, 2)),
+    as.character(task$statistics$ndc),
+    as.character(task$anova_results$has_interaction),
+    task$interpretation$status
+  )
+)
+verdict_df
+cat("Message:", task$interpretation$message, "\n")
+```
+
+Engineering conclusions for this study:
+
+1. **Acceptance**. The Total Gage R&R `%Study Var` for the destructive
+   ceramic-strength measurement is below the 10% acceptance threshold
+   and the NDC is at least 5, so the measurement system is acceptable
+   for monitoring ceramic component strength despite the nested
+   (destructive) design.
+2. **R chart**. All R-chart points fall within the control limits, so
+   the three operators are consistent in their repeatability -- no
+   special-cause instability is present in the destructive test
+   procedure.
+3. **Xbar chart**. Most part means fall outside the Xbar control limits
+   within each operator's facet, which confirms that the 10 parts
+   sampled per operator span a wide enough range and that the test
+   apparatus can distinguish between them.
+4. **By Operator**. Operator means are close to each other, indicating
+   small reproducibility bias; no operator is systematically high or
+   low across the destructive test.
+5. **Interaction**. No interaction is estimable in a nested design; the
+   `Operator:Part` row is structurally absent from the ANOVA
+   decomposition, and the `interaction` plot type is not available.
+6. **Components of Variation**. The Part-to-Part bar (which here is
+   `Part(Operator)`) dominates the Total Gage R&R bar, which is the
+   desired pattern: most of the observed variation comes from the
+   parts, not from the destructive measurement system.
+
+If the `%Study Var` had fallen in the 10%--30% marginal band, the
+recommended actions would be to investigate the dominant component
+(Repeatability points to the test fixture or the specimen grip;
+Reproducibility points to operator training or sample-preparation
+differences between operators' batches) and to re-run the study after
+corrective action. If the nested `Part(Operator)` component looks
+suspiciously large, that is often a sign that the operators' batches are
+not truly homogeneous -- a batch-to-batch effect has been absorbed into
+the part-to-part estimate, and a more carefully controlled sampling plan
+is needed.
+
+## 11. Reference
+
+- Minitab Help: *Nested Gage R&R Study* -- example data and
+  interpretation guidance for destructive-measurement studies.
+- Minitab Help: *All statistics and graphs for Nested Gage R&R Study* --
+  definitions of VarComp, %Contribution, %Study Var, %Tolerance and
+  NDC for the nested model.
+- AIAG Measurement Systems Analysis (MSA) Reference Manual, 4th
+  edition -- nested ANOVA method, variance component estimators under
+  nesting, and the acceptance criteria for %GRR and NDC.
+- Montgomery, D. C. (2017). *Design and Analysis of Experiments*, 9th
+  ed. -- source of the nested two-way model and the
+  expected-mean-square derivations used by the variance component
+  formulas.

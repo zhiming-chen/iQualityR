@@ -1,0 +1,90 @@
+---
+title: "描述性统计分析报告"
+author: "iQualityR"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# 分析概览
+
+```{r overview}
+cat(sprintf("置信水平: %.0f%%\n", params$conf_level * 100))
+cat(sprintf("分析变量数: %d\n", length(params$target_vars)))
+if (!is.null(params$group_var)) {
+  cat(sprintf("分组变量: %s\n", params$group_var))
+}
+```
+
+# 统计摘要
+
+## 描述统计表
+
+| 变量 | N | 均值 | 标准差 | 中位数 | 变异系数(%) | 偏度 | 峰度 | P值 |
+|------|---|------|--------|--------|-------------|------|------|-----|
+`r for (var in names(results)) { s <- results[[var]]; cat(sprintf("| %s | %d | %.4f | %.4f | %.4f | %.2f | %.3f | %.3f | %s |", var, s$n, s$mean, s$stdev, s$median, s$cv, s$skew, s$kurt, if (s$p_value < 0.001) "< 0.001" else sprintf("%.3f", s$p_value))) }`
+
+## 分位数详情
+
+| 变量 | 最小值 | Q1 | 均值 | Q3 | 最大值 | 范围 | IQR |
+|------|--------|-----|------|-----|--------|------|-----|
+`r for (var in names(results)) { s <- results[[var]]; cat(sprintf("| %s | %.4f | %.4f | %.4f | %.4f | %.4f | %.4f | %.4f |", var, s$min, s$q1, s$mean, s$q3, s$max, s$range, s$iqr)) }`
+
+# 正态性检验
+
+Anderson-Darling正态性检验结果：
+
+| 变量 | AD统计量 | P值 | 结论 |
+|------|----------|-----|------|
+`r for (var in names(results)) { s <- results[[var]]; conclusion <- if (s$p_value < 0.05) "拒绝正态性" else "不能拒绝正态性"; cat(sprintf("| %s | %.3f | %s | %s |", var, s$ad_stat, if (s$p_value < 0.001) "< 0.001" else sprintf("%.3f", s$p_value), conclusion)) }`
+
+# 图表
+
+## 直方图
+
+```{r hist, fig.width=10, fig.height=6}
+for (var in names(results)) {
+  s <- results[[var]]
+  df <- data.frame(v = s$raw)
+  lims <- c(min(df$v) - diff(range(df$v)) * 0.15, max(df$v) + diff(range(df$v)) * 0.15)
+
+  p <- ggplot(df, aes(x = v)) +
+    geom_histogram(aes(y = after_stat(density)), fill = "#A9C4E3", color = "white", bins = 20) +
+    stat_function(fun = dnorm, args = list(mean = s$mean, sd = s$stdev), color = "red", linewidth = 1) +
+    scale_x_continuous(limits = lims) +
+    labs(title = sprintf("直方图: %s", var), x = NULL, y = "密度") +
+    theme_minimal()
+
+  print(p)
+}
+```
+
+## 箱线图
+
+```{r boxplot, fig.width=10, fig.height=6}
+for (var in names(results)) {
+  s <- results[[var]]
+  df <- data.frame(v = s$raw)
+  lims <- c(min(df$v) - diff(range(df$v)) * 0.15, max(df$v) + diff(range(df$v)) * 0.15)
+
+  p <- ggplot(df, aes(x = v, y = "")) +
+    geom_boxplot(fill = "#F2F2F2", outlier.color = "red", width = 0.6) +
+    scale_x_continuous(limits = lims) +
+    labs(title = sprintf("箱线图: %s", var), x = "值", y = NULL) +
+    theme_minimal()
+
+  print(p)
+}
+```
+
+---
+
+*报告由 iQualityR.stat 生成*

@@ -1,0 +1,118 @@
+---
+title: "Sample Size and Power Analysis"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Sample Size and Power Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+```{r include=FALSE}
+library(iQualityR.stat)
+library(R6)
+
+library(patchwork)
+library(iQualityR.core)
+library(iQualityR.plot)
+
+```
+
+## Overview
+
+Sample size calculation ensures statistical analysis has sufficient power to avoid false negative results due to insufficient sample size. This module supports sample size calculation for means, proportions, and ANOVA.
+
+## Sample Size Calculation
+
+### Mean Comparison
+
+```{r setup}
+sample_size_mean(mu0 = 10, mu1 = 10.5, sigma = 1, power = 0.80)
+```
+
+### Proportion Comparison
+
+```{r prop}
+sample_size_proportion(p0 = 0.5, p1 = 0.6, power = 0.80)
+```
+
+### ANOVA
+
+```{r anova}
+sample_size_anova(k = 3, means = c(10, 10.5, 11), sigma = 1.5, power = 0.80)
+```
+
+## Power Calculation
+
+### Mean Power
+
+```{r power_mean}
+# Calculate power given sample size and effect size
+calc_power(n = 50, effect_size = 0.5, alpha = 0.05)
+```
+
+### Proportion Power
+
+```{r power_prop}
+# Calculate power for proportion test
+calc_power(n = 100, effect_size = 0.1, alpha = 0.05)
+```
+
+### ANOVA Power
+
+```{r power_anova}
+# Calculate sample size for ANOVA
+sample_size_anova(k = 3, means = c(10, 10.5, 11), sigma = 1.5, power = 0.80)
+```
+
+## Effect Size
+
+### Cohen's d
+
+```{r cohen_d}
+effect_size(type = "cohens_d", mu1 = 10, mu2 = 11, sd_pooled = 1)
+```
+
+### Cohen's f
+
+```{r cohen_f}
+# Cohen's f for ANOVA effect size
+# f = sigma_m / sigma where sigma_m is SD of group means and sigma is error SD
+effect_size(type = "eta_squared", F = 4.5, df_between = 3, df_within = 96)
+```
+
+## Application Scenarios
+
+### Scenario 1: New Product Validation
+
+Assuming a new product has an average lifespan of 1000 hours with a standard deviation of 50 hours, and we want to detect a 10-hour difference with 80% power:
+
+```{r scenario1}
+sample_size_mean(mu0 = 1000, mu1 = 1010, sigma = 50, power = 0.80)
+```
+
+### Scenario 2: Yield Comparison
+
+Current yield is 95%, and we want to detect a 3% improvement with 90% power:
+
+```{r scenario2}
+sample_size_proportion(p0 = 0.95, p1 = 0.98, power = 0.90)
+```
+
+### Scenario 3: Multi-group Comparison
+
+Comparing the mean differences of 4 processes, with effect size f = 0.3 and 85% power:
+
+```{r scenario3}
+# For f = 0.3, sigma = 1, the means should have SD = 0.3
+# With k=4 groups and equal spacing: means = c(0, 0.3, 0.6, 0.9) has mean = 0.45, SD ~ 0.37
+# Let's use a simpler setup with known means
+sample_size_anova(k = 4, means = c(10, 10.3, 10.6, 10.9), sigma = 1, power = 0.85)
+```

@@ -1,0 +1,1002 @@
+---
+title: "Multi-Response Optimization: A Food Extrusion Case Study"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Multi-Response Optimization: A Food Extrusion Case Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+# Introduction
+
+Industrial processes are almost never characterised by a single quality
+attribute. A snack product must be *expansive* (light texture), *firm
+enough* (not mushy, not jaw-breaking), and *liked* by the sensory panel.
+These responses conflict with one another: the high-temperature,
+low-moisture conditions that maximise expansion also drive hardness away
+from its target and can burn the product. Improving one response tends to
+worsen another, so there is no single setting that is simultaneously
+optimal for every response.
+
+`iQualityR.doe` provides three complementary tools for this class of
+problem:
+
+| Tool | Method | Output | Best for |
+|------|--------|--------|----------|
+| `MultiResponseOptimizer$optimize_desirability()` | Derringer--Suich desirability functions aggregated by a weighted geometric mean | A single recommended setting | Engineering practice; one recipe to release |
+| `MultiResponseOptimizer$find_pareto_frontier()` | Non-dominated sorting of candidate predictions | A set of trade-off candidates | R&D exploration of the trade-off surface |
+| `MultiResponseOptimizer$rank_with_topsis()` | TOPSIS multi-criteria decision making | A ranked short-list | Selecting a defensible winner from the frontier |
+
+This vignette follows a complete engineering workflow on a realistic
+food-extrusion case: we design the experiment, simulate the trial data,
+fit response-surface models, optimise the desirability index, explore the
+Pareto frontier, rank the candidates with TOPSIS, and finally run
+confirmation trials at the recommended setting. Every figure is generated
+by code the reader can re-run, and no chunk hides its source.
+
+# API Overview
+
+The `IqrDoeTask` class is the central object in **iQualityR.doe**. Its
+life-cycle is:
+
+```r
+task <- rsm_design(...)         # or factorial_design / screening_design / taguchi_design
+task$data <- df                  # attach the observed responses
+task$compute()                  # fit ANOVA + second-order lm models
+task$summary()                  # print the analysis
+task$plot(type = "...")         # generate figures
+task$report(format = "excel", path = "...")  # export a report
+```
+
+## The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "contour", response_name = "ExpansionRatio")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+## The `MultiResponseOptimizer` class
+
+Beyond the standard `IqrDoeTask` plots, the `MultiResponseOptimizer`
+R6 class exposes six public methods for multi-response work:
+
+| Method                                  | Purpose                                                            |
+|-----------------------------------------|--------------------------------------------------------------------|
+| `compute_individual_desirability(...)`  | Per-response desirability $d_i$ from spec and goal.                |
+| `compute_overall_desirability(...)`     | Aggregate $D = (\prod d_i^{w_i})^{1/\sum w_i}$ over responses.    |
+| `optimize_desirability(...)`            | Grid or Nelder-Mead search for the maximum of $D$.                 |
+| `find_pareto_frontier(...)`             | Non-dominated sorting of candidate predictions.                    |
+| `rank_with_topsis(...)`                 | TOPSIS multi-criteria ranking of candidate solutions.              |
+| `plot_pareto_frontier(...)`             | Built-in ggplot visualisation of the Pareto frontier.               |
+
+The rest of this vignette exercises every `type` value and every
+`MultiResponseOptimizer` method on a single case study.
+
+# Case Study: Corn Snack Extrusion
+
+A snack-food plant produces a corn-based extruded snack. The quality team
+must tune the extruder so that the product is simultaneously light, has the
+right bite, and scores well with the sensory panel. Three process factors
+are controllable:
+
+| Factor | Symbol | Low | High | Unit |
+|--------|--------|-----|------|------|
+| Barrel temperature | `Temperature` | 140 | 180 | $^\circ$C |
+| Screw speed | `ScrewSpeed` | 150 | 250 | rpm |
+| Feed moisture | `Moisture` | 14 | 22 | % |
+
+Three responses are measured on every run:
+
+| Response | Symbol | Goal | Spec range | Target |
+|----------|--------|------|------------|--------|
+| Expansion ratio | `ExpansionRatio` | **maximise** | 2.0 -- 3.8 | ideal $\geq 3.8$ |
+| Hardness | `Hardness` | **target** | 15 -- 45 N | 30 N |
+| Overall liking | `OverallLiking` | **maximise** | 4.0 -- 7.5 | ideal $\geq 7.5$ |
+
+Expansion ratio and overall liking both want hot, fast, dry conditions;
+hardness, by contrast, is driven *away* from its 30 N target under those
+same conditions (the product becomes too soft). The optimisation must
+trade the three goals off against one another in a principled way.
+
+# Experimental Design
+
+A **Central Composite Design (CCD)** with three factors is the standard
+response-surface layout for this problem. With `alpha = "rotatable"` the
+axial points sit on a sphere of radius $(2^k)^{1/4} = 1.682$, which makes
+the prediction variance invariant to direction at the centre --- the
+property that makes the design "rotatable". The design combines
+$2^3 = 8$ factorial points, $2k = 6$ axial points, and 6 centre points,
+for 20 runs total.
+
+```{r factors}
+factors <- list(
+  list(name = "Temperature", type = "continuous", levels = c(140, 180)),
+  list(name = "ScrewSpeed", type = "continuous", levels = c(150, 250)),
+  list(name = "Moisture",    type = "continuous", levels = c(14,  22))
+)
+```
+
+```{r build-design}
+task <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  response_vars = c("ExpansionRatio", "Hardness", "OverallLiking"),
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = TRUE,
+  seed          = 42
+)
+
+design_df <- task$results$design_info
+nrow(design_df)
+head(design_df, 8)
+```
+
+The `alpha = "rotatable"` choice is resolved inside the package to
+$(2^3)^{1/4} \approx 1.682$, so the axial runs of `Temperature` reach
+approximately $160 \pm 1.682 \times 20 = (126.4,\ 193.6)^\circ$C, well
+beyond the cube faces. This is intentional: the axial points stabilise the
+quadratic fit at the edge of the design region.
+
+A scatter-plot matrix of the design makes the geometry explicit: the
+$2^3$ cube, the six star points along each axis, and the six replicated
+centre points.
+
+```{r design-plot, fig.width = 7.5, fig.height = 7.5, fig.cap = "Central composite design in the three factor axes. Cube points (grey), axial points (orange), and centre points (blue) span the design region."}
+design_df$PointType <- with(design_df, {
+  on_axis <- (Temperature == 160 & ScrewSpeed == 200) |
+             (Moisture    == 18  & ScrewSpeed == 200) |
+             (Temperature == 160 & Moisture    == 18)
+  is_center <- Temperature == 160 & ScrewSpeed == 200 & Moisture == 18
+  ifelse(is_center, "Center",
+    ifelse(on_axis & !is_center, "Axial", "Cube"))
+})
+
+panel_plot <- function(df, fx, fy, ...) {
+  ggplot(df, aes(.data[[fx]], .data[[fy]], color = PointType)) +
+    geom_point(size = 2.6, alpha = 0.85) +
+    scale_color_manual(values = c(Cube = "#999999",
+                                  Axial = "#E69F00",
+                                  Center = "#0072B2")) +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "bottom")
+}
+
+panel_plot(design_df, "Temperature", "ScrewSpeed") +
+  panel_plot(design_df, "Temperature", "Moisture") +
+  panel_plot(design_df, "ScrewSpeed",  "Moisture") +
+  plot_layout(ncol = 2)
+```
+
+# Response Data
+
+In a real study the responses would be measured after the physical trials.
+Here we simulate them from a known physics-inspired second-order model so
+that the analysis is fully reproducible. The data-generating functions are
+defined once and reused later for the confirmation trials.
+
+```{r simulate}
+# True process: second-order surfaces in coded variables.
+# x1 = (T  - 160) / 20, x2 = (SS - 200) / 50, x3 = (M  - 18) / 4
+true_ExpansionRatio <- function(T, SS, M) {
+  x1 <- (T  - 160) / 20; x2 <- (SS - 200) / 50; x3 <- (M  - 18) / 4
+  3.00 + 0.45*x1 + 0.20*x2 - 0.35*x3
+       - 0.12*x1^2 - 0.08*x2^2 - 0.10*x3^2
+       + 0.05*x1*x2 - 0.08*x1*x3
+}
+true_Hardness <- function(T, SS, M) {
+  x1 <- (T  - 160) / 20; x2 <- (SS - 200) / 50; x3 <- (M  - 18) / 4
+  30.0 - 4.0*x1 - 2.0*x2 + 5.0*x3
+        + 1.5*x1^2 + 1.0*x3^2 - 0.5*x1*x3
+}
+true_OverallLiking <- function(T, SS, M) {
+  x1 <- (T  - 160) / 20; x2 <- (SS - 200) / 50; x3 <- (M  - 18) / 4
+  6.00 + 0.80*x1 + 0.30*x2 - 0.50*x3
+        - 0.35*x1^2 - 0.20*x2^2 - 0.25*x3^2
+        + 0.10*x1*x2 - 0.12*x1*x3
+}
+
+set.seed(42)
+n <- nrow(design_df)
+design_df$ExpansionRatio <- true_ExpansionRatio(design_df$Temperature,
+                                                design_df$ScrewSpeed,
+                                                design_df$Moisture) +
+                            rnorm(n, sd = 0.08)
+design_df$Hardness       <- true_Hardness(design_df$Temperature,
+                                          design_df$ScrewSpeed,
+                                          design_df$Moisture) +
+                            rnorm(n, sd = 0.8)
+design_df$OverallLiking  <- true_OverallLiking(design_df$Temperature,
+                                               design_df$ScrewSpeed,
+                                               design_df$Moisture) +
+                            rnorm(n, sd = 0.25)
+
+# Attach the measured responses to the task and recompute.
+task$data <- design_df
+```
+
+```{r preview-data}
+head(task$data, 6)
+```
+
+The simulated responses carry the intended correlation structure:
+high-expansion runs (hot, fast, dry) tend to be too soft (hardness below
+the 30 N target), which is exactly the conflict the optimiser must
+resolve.
+
+# Response Surface Modelling
+
+Calling `task$compute()` re-runs the design (reproducibly, because the
+seed was fixed) and, because `task$data` now holds the measured responses,
+fits a full second-order response-surface model for each response:
+
+$$
+y \sim \text{Temperature} \cdot \text{ScrewSpeed} \cdot \text{Moisture}
+      + I(\text{Temperature}^2) + I(\text{ScrewSpeed}^2) + I(\text{Moisture}^2).
+$$
+
+```{r compute}
+task$compute()
+task$summary()
+```
+
+```{r fit-stats}
+fit_stats <- data.frame(
+  Response = c("ExpansionRatio", "Hardness", "OverallLiking"),
+  R2       = sapply(task$results$anova_results, function(r) r$model_fit$r_squared),
+  R2_adj   = sapply(task$results$anova_results, function(r) r$model_fit$adj_r_squared),
+  LoF_p    = sapply(task$results$anova_results, function(r) r$model_fit$lack_of_fit_p)
+)
+fit_stats
+```
+
+All three models fit well (adjusted $R^2$ above $0.95$) and none shows a
+significant lack of fit, so the fitted surfaces are reliable enough to
+search for an optimum.
+
+The residual diagnostics below confirm the standard regression
+assumptions: residuals scattered symmetrically around zero with no
+systematic curvature or funnel shape.
+
+```{r residual-plot, fig.width = 9, fig.height = 3.5, fig.cap = "Residuals versus fitted values for the three response-surface models. No structure is visible; the assumptions hold."}
+# Extract the per-response models for later use (desirability, Pareto, etc.)
+model_ER <- task$results$anova_results$ExpansionRatio$model
+model_H  <- task$results$anova_results$Hardness$model
+model_OL <- task$results$anova_results$OverallLiking$model
+
+# Residual diagnostics via the package API.
+p_resid_ER <- task$plot(type = "residual", response_name = "ExpansionRatio")
+p_resid_H  <- task$plot(type = "residual", response_name = "Hardness")
+p_resid_OL <- task$plot(type = "residual", response_name = "OverallLiking")
+
+p_resid_ER + p_resid_H + p_resid_OL + plot_layout(ncol = 3)
+```
+
+# Desirability Optimisation
+
+## Specifying the desirability functions
+
+Each response is mapped onto $[0, 1]$ with a Derringer--Suich desirability
+function. Expansion ratio and overall liking use the *larger-the-better*
+form; hardness uses the *nominal-the-best* form with target 30 N. The
+weights encode the relative business priority: expansion is the primary
+driver of perceived quality, so it receives weight 0.4; hardness and
+liking each receive 0.3.
+
+```{r specs}
+specs <- list(
+  list(type = "max",    lower = 2.0, upper = 3.8, target = NA,  weight = 0.4, s = 1),
+  list(type = "target", lower = 15,  upper = 45,  target = 30,  weight = 0.3, s = 1),
+  list(type = "max",    lower = 4.0, upper = 7.5, target = NA,  weight = 0.3, s = 1)
+)
+
+bounds <- list(
+  Temperature = c(140, 180),
+  ScrewSpeed  = c(150, 250),
+  Moisture    = c(14,  22)
+)
+```
+
+## Grid search for the overall desirability
+
+`$optimize_desirability()` evaluates the overall desirability index $D$
+(the weighted geometric mean of the individual $d_i$) on a 25-by-25-by-25
+lattice over the factor cube and returns the best setting. The geometric
+mean is the key design choice: a single unacceptable response ($d_i = 0$)
+collapses $D$ to zero, so the optimum can never sacrifice one response to
+buy gains on the others.
+
+```{r optimize}
+mro <- MultiResponseOptimizer$new()
+
+opt <- mro$optimize_desirability(
+  models          = list(model_ER, model_H, model_OL),
+  specs           = specs,
+  bounds          = bounds,
+  method          = "grid",
+  grid_resolution = 25
+)
+
+opt$best_params
+opt$best_D
+opt$n_evaluations
+```
+
+```{r optimal-predictions}
+opt_point <- as.data.frame(opt$best_params)
+pred_at_opt <- data.frame(
+  Response = c("ExpansionRatio", "Hardness", "OverallLiking"),
+  Predicted = c(predict(model_ER, opt_point),
+                predict(model_H,  opt_point),
+                predict(model_OL, opt_point))
+)
+pred_at_opt
+```
+
+The recommended setting pushes temperature and screw speed high (for
+expansion and liking) while lifting moisture just enough to keep hardness
+within its acceptable band. This is exactly the compromise the geometric
+mean was designed to enforce.
+
+## Desirability landscape
+
+To see *why* the optimiser landed here, we slice the overall desirability
+surface at the optimal moisture and plot $D$ as a function of temperature
+and screw speed. The red star marks the optimum.
+
+```{r desirability-landscape, fig.cap = "Overall desirability D as a function of temperature and screw speed, sliced at the optimal moisture. The red star is the grid-search optimum."}
+slice <- expand.grid(
+  Temperature = seq(140, 180, length.out = 60),
+  ScrewSpeed  = seq(150, 250, length.out = 60)
+)
+slice$Moisture <- opt$best_params$Moisture
+
+pER <- predict(model_ER, newdata = slice)
+pH  <- predict(model_H,  newdata = slice)
+pOL <- predict(model_OL, newdata = slice)
+
+dER <- mro$compute_individual_desirability(pER, type = "max",    lower = 2.0, upper = 3.8)
+dH  <- mro$compute_individual_desirability(pH,  type = "target", lower = 15,  upper = 45,  target = 30)
+dOL <- mro$compute_individual_desirability(pOL, type = "max",    lower = 4.0, upper = 7.5)
+slice$D <- mro$compute_overall_desirability(list(dER, dH, dOL), weights = c(0.4, 0.3, 0.3))
+
+opt_pt <- data.frame(
+  Temperature = opt$best_params$Temperature,
+  ScrewSpeed  = opt$best_params$ScrewSpeed
+)
+
+ggplot(slice, aes(Temperature, ScrewSpeed)) +
+  geom_tile(aes(fill = D)) +
+  geom_contour(aes(z = D), color = "white", alpha = 0.5, bins = 10) +
+  geom_point(data = opt_pt, aes(Temperature, ScrewSpeed),
+             color = "#D7263D", size = 4, shape = 17) +
+  scale_fill_viridis_c(limits = c(0, 1)) +
+  labs(title = sprintf("Overall desirability D at Moisture = %.2f%%", opt$best_params$Moisture),
+       x = "Temperature (deg C)", y = "Screw speed (rpm)", fill = "D") +
+  theme_minimal(base_size = 11)
+```
+
+## Response-surface contours
+
+The three panels below show each fitted response surface, again sliced at
+the optimal moisture. They make the trade-off visible: expansion and
+liking both rise toward the upper-right (hot, fast), while hardness falls
+*below* its 30 N target in that same corner --- the product would be too
+soft. The optimum (red star) sits at the edge of the high-expansion region
+where hardness is still acceptable.
+
+```{r rsm-contours, fig.width = 9, fig.height = 3.7, fig.cap = "Fitted response surfaces at the optimal moisture. Red star: desirability optimum. Dashed line on the Hardness panel: 30 N target."}
+# Use the package contour plotter for each response, then overlay the
+# desirability optimum (red star) and the hardness target reference line.
+# `inherit.aes = FALSE` keeps the overlay layers independent of the
+# contour's internal `z = predicted` aesthetic.
+p1 <- task$plot(type = "contour",
+                response_name = "ExpansionRatio",
+                x_var = "Temperature", y_var = "ScrewSpeed") +
+  geom_point(data = opt_pt, aes(Temperature, ScrewSpeed),
+             color = "#D7263D", size = 3, shape = 17, inherit.aes = FALSE)
+
+p2 <- task$plot(type = "contour",
+                response_name = "Hardness",
+                x_var = "Temperature", y_var = "ScrewSpeed") +
+  geom_point(data = opt_pt, aes(Temperature, ScrewSpeed),
+             color = "#D7263D", size = 3, shape = 17, inherit.aes = FALSE) +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40")
+
+p3 <- task$plot(type = "contour",
+                response_name = "OverallLiking",
+                x_var = "Temperature", y_var = "ScrewSpeed") +
+  geom_point(data = opt_pt, aes(Temperature, ScrewSpeed),
+             color = "#D7263D", size = 3, shape = 17, inherit.aes = FALSE)
+
+p1 + p2 + p3 + plot_layout(ncol = 3)
+```
+
+# Plotting with IqrDoeTask
+
+The case-study `task` is now computed and carries three fitted
+second-order models, so every `type` value listed in the API Overview
+can be exercised on it. The chunks below use the recommended
+`print(task$plot(...))` form so they render correctly inside
+`rmarkdown`; in an interactive session the bare `task$plot(...)` call
+would auto-print the same figure.
+
+## Design layout
+
+```{r plot-design, fig.cap = "Run layout of the central composite design produced by task$plot(type = 'design')."}
+print(task$plot(type = "design"))
+```
+
+**Decision.** The design tile view confirms that all 20 runs of the CCD
+(factorial + axial + centre points) are present and that the run order
+was randomised. Use this plot first to spot missing runs or
+over-replicated centre points before fitting any model.
+
+## Main effects
+
+```{r plot-main-er, fig.cap = "Main-effect panel for ExpansionRatio."}
+print(task$plot(type = "main_effects", response_name = "ExpansionRatio"))
+```
+
+**Decision.** Expansion ratio rises steeply with temperature and screw
+speed and falls with moisture. The marginal effect of temperature is the
+largest, which justifies giving temperature the central role in the
+process recipe.
+
+```{r plot-main-h, fig.cap = "Main-effect panel for Hardness."}
+print(task$plot(type = "main_effects", response_name = "Hardness"))
+```
+
+**Decision.** Hardness is driven in the opposite direction to
+expansion: high temperature and low moisture push it below the 30 N
+target. This is the first visual confirmation that the expansion goal
+and the hardness goal conflict.
+
+```{r plot-main-ol, fig.cap = "Main-effect panel for OverallLiking."}
+print(task$plot(type = "main_effects", response_name = "OverallLiking"))
+```
+
+**Decision.** Overall liking tracks expansion closely --- hot, fast, dry
+conditions are preferred by the sensory panel. Because liking and
+expansion agree, the multi-response optimiser can safely weight them
+together against hardness.
+
+## Interaction panels
+
+```{r plot-interaction-er, fig.cap = "Two-factor interaction panel for ExpansionRatio from the second-order model."}
+print(task$plot(type = "interaction", response_name = "ExpansionRatio"))
+```
+
+**Decision.** The Temperature x Moisture interaction is the strongest
+for expansion: the gain in expansion from raising temperature is
+amplified when moisture is low. Operationally this means the extruder
+must control moisture tightly when running hot, otherwise the expansion
+benefit is lost.
+
+## Full diagnostics panel
+
+```{r plot-full-er, fig.width = 9, fig.height = 7, fig.cap = "Combined main-effects + interaction + residual panel for ExpansionRatio from task$plot(type = 'full')."}
+print(task$plot(type = "full", response_name = "ExpansionRatio"))
+```
+
+**Decision.** The `full` plot bundles the three diagnostic families
+into a single patchwork. Use it as a one-shot model-validation figure
+in reports: it shows the effect structure *and* the residual behaviour
+without requiring the reader to cross-reference several plots.
+
+## Response-surface (tile + contour) plot
+
+```{r plot-surface-er, fig.cap = "2D tile + contour surface for ExpansionRatio as a function of Temperature and ScrewSpeed."}
+print(task$plot(type = "surface", response_name = "ExpansionRatio",
+                x_var = "Temperature", y_var = "ScrewSpeed"))
+```
+
+**Decision.** The `surface` plot adds the tile heat-map underneath the
+contour lines, making the gradient magnitude easier to read than the
+contour-only view. The ridge of high expansion runs along the
+upper-right corner (hot, fast), confirming the main-effects reading.
+
+## Filled contour plot
+
+```{r plot-contour-h-moisture, fig.cap = "Filled contour of Hardness as a function of Temperature and Moisture (ScrewSpeed held at its default slice). The 30 N target band is visible in the middle of the plane."}
+print(task$plot(type = "contour", response_name = "Hardness",
+                x_var = "Temperature", y_var = "Moisture"))
+```
+
+**Decision.** Slicing Hardness across Temperature and Moisture (instead
+of ScrewSpeed) shows that the 30 N target is reachable only along a
+narrow diagonal band. Any drift toward hot-and-dry pushes hardness
+below target, which is exactly the regime that maximises expansion.
+
+## Response-surface panel list
+
+`type = "response_surface"` returns a *list* of plots rather than a
+single ggplot, so the chunk captures the list and then `print()`s the
+combined panel:
+
+```{r plot-rsm-list, fig.width = 9, fig.height = 7, fig.cap = "Combined response-surface panel for OverallLiking produced by task$plot(type = 'response_surface')$combined_plot."}
+rsm_panels <- task$plot(type = "response_surface",
+                        response_name = "OverallLiking",
+                        x_var = "ScrewSpeed", y_var = "Moisture")
+print(rsm_panels$combined_plot)
+```
+
+**Decision.** The combined panel exposes the surface, the contour, and
+the 3-D view of OverallLiking in one figure. When `plotly` is
+installed, `rsm_panels$interactive_plot` is also available for an HTML
+rotation; otherwise it is `NULL`, in which case `combined_plot` is the
+figure to render. The liking surface peaks in the same corner as
+expansion, which is why the desirability optimum favours hot, fast, dry
+settings.
+
+## Customising plots
+
+Because `task$plot()` returns a standard `ggplot` object (for the
+single-figure types), the user can keep adding ggplot2 layers. The
+chunk below takes a contour plot of ExpansionRatio and overlays the
+desirability optimum found by `optimize_desirability()` in the previous
+section.
+
+```{r plot-customise, fig.cap = "Default contour of ExpansionRatio customised with a red star marking the desirability optimum. Adding layers to the returned ggplot is the standard way to annotate package plots."}
+p_custom <- task$plot(type = "contour", response_name = "ExpansionRatio",
+                      x_var = "Temperature", y_var = "ScrewSpeed")
+p_custom <- p_custom +
+  geom_point(data = opt_point, aes(Temperature, ScrewSpeed),
+             color = "#D7263D", size = 4, shape = 17, inherit.aes = FALSE) +
+  labs(subtitle = "Red star: desirability optimum")
+print(p_custom)
+```
+
+**Decision.** The optimum sits on the high-expansion ridge, just before
+the contour curvature flattens. Overlaying the optimum on the response
+surface is the cleanest way to communicate *why* the optimiser picked
+this setting to a non-statistical audience.
+
+## Combining plots with patchwork
+
+The single-figure types return `ggplot` objects, so they compose
+naturally with `patchwork`. The chunk below places the ExpansionRatio
+contour next to the Hardness contour using `patchwork::wrap_elements()`,
+which is the safe way to embed pre-built ggplot objects into a larger
+composition.
+
+```{r plot-patchwork, fig.width = 10, fig.height = 4.5, fig.cap = "Side-by-side comparison of the ExpansionRatio and Hardness contours, composed with patchwork::wrap_elements()."}
+p_er <- task$plot(type = "contour", response_name = "ExpansionRatio",
+                  x_var = "Temperature", y_var = "ScrewSpeed")
+p_h  <- task$plot(type = "contour", response_name = "Hardness",
+                  x_var = "Temperature", y_var = "ScrewSpeed")
+
+combined <- patchwork::wrap_elements(p_er) +
+  patchwork::wrap_elements(p_h) +
+  plot_layout(ncol = 2) +
+  plot_annotation(title = "ExpansionRatio vs. Hardness at the optimal moisture",
+                  tag_levels = "A")
+print(combined)
+```
+
+**Decision.** Putting the two contours side-by-side makes the trade-off
+visible at a glance: the upper-right corner that maximises expansion is
+the same corner where hardness drops below the 30 N target. This
+single figure is usually enough to justify the multi-response
+optimisation that follows.
+
+# Pareto Frontier Analysis
+
+The desirability optimum is a single point. Before committing to it, the
+quality team wants to see the *trade-off surface*: which other settings
+are non-dominated, meaning no other setting is simultaneously better on
+every response. This is the **Pareto frontier**.
+
+We build a candidate grid over the factor cube, predict the three
+responses with the fitted models, and call `$find_pareto_frontier()`.
+Because the method accepts only `"max"` and `"min"` directions, the
+hardness target is recast as a *minimise-distance-from-target* response
+$|H - 30|$, which is mathematically equivalent for dominance purposes.
+
+```{r pareto-candidates}
+cand_grid <- expand.grid(
+  Temperature = seq(140, 180, length.out = 12),
+  ScrewSpeed  = seq(150, 250, length.out = 12),
+  Moisture    = seq(14,  22,  length.out = 12)
+)
+cand_grid$ExpansionRatio <- predict(model_ER, newdata = cand_grid)
+cand_grid$Hardness       <- predict(model_H,  newdata = cand_grid)
+cand_grid$OverallLiking  <- predict(model_OL, newdata = cand_grid)
+cand_grid$HardnessDist   <- abs(cand_grid$Hardness - 30)
+
+cand_responses <- cand_grid[, c("ExpansionRatio", "HardnessDist", "OverallLiking")]
+rownames(cand_responses) <- seq_len(nrow(cand_responses))
+
+pareto <- mro$find_pareto_frontier(
+  cand_responses,
+  directions = c("max", "min", "max")
+)
+
+pareto$n_solutions
+pareto$n_total
+pareto$coverage_pct
+```
+
+```{r pareto-recover}
+# Recover the factor settings for each Pareto solution by matching the
+# preserved rownames back to the candidate grid.
+pareto_idx <- as.integer(rownames(pareto$pareto_frontier))
+pareto_full <- cbind(
+  pareto$pareto_frontier,
+  cand_grid[pareto_idx, c("Temperature", "ScrewSpeed", "Moisture", "Hardness")]
+)
+head(pareto_full[, c("Temperature", "ScrewSpeed", "Moisture",
+                     "ExpansionRatio", "Hardness", "OverallLiking")], 6)
+```
+
+The frontier is a small fraction of the candidate cloud, which is the
+signature of a genuine multi-objective trade-off: most settings are
+dominated.
+
+```{r pareto-plot, fig.cap = "Pareto frontier in the Expansion-Ratio vs. Hardness plane, coloured by Overall Liking. Grey points are dominated candidates; red points are non-dominated. The dashed line marks the 30 N hardness target."}
+dominated_idx <- setdiff(seq_len(nrow(cand_grid)), pareto_idx)
+
+ggplot() +
+  geom_point(data = cand_grid[dominated_idx, ],
+             aes(ExpansionRatio, Hardness), color = "#CCCCCC", size = 1.6, alpha = 0.7) +
+  geom_point(data = pareto_full,
+             aes(ExpansionRatio, Hardness, color = OverallLiking),
+             size = 3.2) +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  scale_color_viridis_c(option = "C") +
+  labs(title = "Pareto frontier of candidate settings",
+       subtitle = sprintf("%d non-dominated solutions out of %d candidates",
+                          pareto$n_solutions, pareto$n_total),
+       x = "Expansion ratio (maximise)", y = "Hardness (N, target 30)",
+       color = "Overall\nLiking") +
+  theme_minimal(base_size = 11)
+```
+
+The frontier slopes from the upper-left (high expansion, but hardness far
+from target) to the lower-right (hardness on target, but lower expansion).
+Moving along it always trades one response for another; the desirability
+optimum and TOPSIS analysis below are two principled ways to pick a point
+on it.
+
+## Built-in Pareto plot
+
+`MultiResponseOptimizer$plot_pareto_frontier()` is the package-provided
+convenience plotter for the `find_pareto_frontier()` return value. It
+takes the `pareto_result` list, the names of two response columns for
+the `x_axis` and `y_axis`, and an optional `z_axis` for the colour
+mapping. Like `task$plot()`, it returns its value invisibly, so we
+`print()` it.
+
+```{r pareto-plot-builtin, fig.cap = "Pareto frontier rendered by mro$plot_pareto_frontier(). Only the non-dominated candidates are shown; the y-axis is the HardnessDist criterion used by find_pareto_frontier() (lower is better)."}
+p_pareto_builtin <- mro$plot_pareto_frontier(
+  pareto,
+  x_axis = "ExpansionRatio",
+  y_axis = "HardnessDist",
+  z_axis = "OverallLiking"
+)
+print(p_pareto_builtin)
+```
+
+**Decision.** The built-in plot is the fastest way to inspect the
+frontier shape during exploration, but it is intentionally minimal: it
+shows only the non-dominated points and uses the response *as supplied
+to `find_pareto_frontier()`* --- here `HardnessDist` (the distance from
+the 30 N target), not `Hardness` itself. The hand-coded `pareto-plot`
+chunk above is therefore preferred for the final report, because it
+overlays the dominated cloud for context, plots `Hardness` in
+engineering units, and adds the 30 N target reference line. None of
+those refinements are exposed as arguments of
+`plot_pareto_frontier()`. Use the built-in method for quick iteration
+and the hand-coded `ggplot` for stakeholder-facing figures.
+
+# TOPSIS Ranking
+
+TOPSIS (Technique for Order Preference by Similarity to Ideal Solution)
+ranks each Pareto candidate by its distance to the *positive ideal* (best
+value on every response) and the *negative ideal* (worst value on every
+response). The relative closeness
+
+$$C_i = \frac{d_i^-}{d_i^+ + d_i^-} \in [0, 1]$$
+
+is higher for candidates that are simultaneously close to the ideal and
+far from the worst. We rank the Pareto set with the same business weights
+used for the desirability index.
+
+```{r topsis}
+ranking <- mro$rank_with_topsis(
+  pareto_full[, c("ExpansionRatio", "HardnessDist", "OverallLiking")],
+  weights    = c(0.4, 0.3, 0.3),
+  directions = c("max", "min", "max")
+)
+
+pareto_ranked <- cbind(pareto_full, ranking$ranking[, c("Closeness", "Rank")])
+pareto_ranked <- pareto_ranked[order(pareto_ranked$Rank), ]
+
+head(pareto_ranked[, c("Rank", "Temperature", "ScrewSpeed", "Moisture",
+                       "ExpansionRatio", "Hardness", "OverallLiking", "Closeness")], 8)
+```
+
+```{r topsis-bar, fig.width = 8, fig.height = 4, fig.cap = "TOPSIS relative closeness C_i for the Pareto-optimal candidates. The rank-1 solution is highlighted."}
+winner_idx <- ranking$ranking$Candidate[ranking$ranking$Rank == 1]
+bar_df <- pareto_ranked[, c("Temperature", "ScrewSpeed", "Moisture", "Closeness", "Rank")]
+bar_df$Label <- sprintf("T=%.0f / SS=%.0f / M=%.1f",
+                        bar_df$Temperature, bar_df$ScrewSpeed, bar_df$Moisture)
+bar_df$Label <- factor(bar_df$Label, levels = bar_df$Label[order(bar_df$Rank)])
+
+ggplot(bar_df, aes(Label, Closeness, fill = Rank == 1)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = c(`TRUE` = "#D7263D", `FALSE` = "#7FB2D9"),
+                    labels = c(`TRUE` = "Rank 1", `FALSE` = "Other")) +
+  labs(title = "TOPSIS ranking of the Pareto frontier",
+       x = "Candidate setting", y = "Relative closeness C_i") +
+  theme_minimal(base_size = 10) +
+  theme(legend.title = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+```
+
+# Recommendation and Trade-offs
+
+The table below compares the desirability optimum (the single best $D$
+over the grid) with the TOPSIS rank-1 solution (the Pareto candidate
+closest to the ideal under the business weights).
+
+```{r compare}
+winner <- pareto_full[winner_idx, c("Temperature", "ScrewSpeed", "Moisture")]
+winner_point <- as.data.frame(winner)
+
+D_at <- function(df) {
+  p1 <- predict(model_ER, df); p2 <- predict(model_H, df); p3 <- predict(model_OL, df)
+  d1 <- mro$compute_individual_desirability(p1, "max",    2.0, 3.8)
+  d2 <- mro$compute_individual_desirability(p2, "target", 15,  45, target = 30)
+  d3 <- mro$compute_individual_desirability(p3, "max",    4.0, 7.5)
+  mro$compute_overall_desirability(list(d1, d2, d3), weights = c(0.4, 0.3, 0.3))
+}
+
+comparison <- data.frame(
+  Method       = c("Desirability optimum", "TOPSIS rank-1"),
+  Temperature  = c(opt$best_params$Temperature, winner$Temperature),
+  ScrewSpeed   = c(opt$best_params$ScrewSpeed,  winner$ScrewSpeed),
+  Moisture     = c(opt$best_params$Moisture,    winner$Moisture),
+  ExpansionRatio = c(predict(model_ER, opt_point),    predict(model_ER, winner_point)),
+  Hardness       = c(predict(model_H,  opt_point),    predict(model_H,  winner_point)),
+  OverallLiking  = c(predict(model_OL, opt_point),    predict(model_OL, winner_point)),
+  D              = c(opt$best_D,                     D_at(winner_point))
+)
+comparison
+```
+
+The two methods agree closely: both recommend a hot, fast, moderately dry
+recipe. The TOPSIS winner is guaranteed to lie on the Pareto frontier
+(no other setting beats it on every response at once), which makes it the
+more defensible release candidate. We adopt it as the final recommendation
+and verify it with confirmation trials.
+
+```{r final-recommendation}
+final_setting <- winner_point
+final_setting
+```
+
+# Confirmation Trials
+
+A confirmation experiment runs a small number of physical trials at the
+recommended setting. If the model is correct, the mean of the confirmation
+runs should fall inside the $95\%$ prediction interval computed from the
+fitted model. We simulate five confirmation runs from the same
+data-generating process used in Section 5.
+
+```{r confirmation}
+pred_ER_ci <- predict(model_ER, final_setting, interval = "prediction")
+pred_H_ci  <- predict(model_H,  final_setting, interval = "prediction")
+pred_OL_ci <- predict(model_OL, final_setting, interval = "prediction")
+
+set.seed(99)
+confirm_ER <- true_ExpansionRatio(final_setting$Temperature,
+                                  final_setting$ScrewSpeed,
+                                  final_setting$Moisture) + rnorm(5, sd = 0.08)
+confirm_H  <- true_Hardness(final_setting$Temperature,
+                            final_setting$ScrewSpeed,
+                            final_setting$Moisture) + rnorm(5, sd = 0.8)
+confirm_OL <- true_OverallLiking(final_setting$Temperature,
+                                 final_setting$ScrewSpeed,
+                                 final_setting$Moisture) + rnorm(5, sd = 0.25)
+
+confirmation <- data.frame(
+  Response     = c("ExpansionRatio", "Hardness", "OverallLiking"),
+  Model_pred   = c(pred_ER_ci[1], pred_H_ci[1],  pred_OL_ci[1]),
+  PI_lower     = c(pred_ER_ci[2], pred_H_ci[2],  pred_OL_ci[2]),
+  PI_upper     = c(pred_ER_ci[3], pred_H_ci[3],  pred_OL_ci[3]),
+  Confirm_mean = c(mean(confirm_ER), mean(confirm_H), mean(confirm_OL)),
+  In_PI        = c(mean(confirm_ER) >= pred_ER_ci[2] & mean(confirm_ER) <= pred_ER_ci[3],
+                   mean(confirm_H)  >= pred_H_ci[2]  & mean(confirm_H)  <= pred_H_ci[3],
+                   mean(confirm_OL) >= pred_OL_ci[2] & mean(confirm_OL) <= pred_OL_ci[3])
+)
+confirmation
+```
+
+```{r confirmation-plot, fig.width = 8, fig.height = 4, fig.cap = "Model prediction with 95% prediction interval (blue) versus the mean of five confirmation trials (red). All three confirmation means fall inside their prediction intervals."}
+conf_plot_df <- data.frame(
+  Response = rep(c("ExpansionRatio", "Hardness", "OverallLiking"), each = 2),
+  Stat     = rep(c("Model prediction", "Confirmation mean"), 3),
+  Value    = c(pred_ER_ci[1], mean(confirm_ER),
+               pred_H_ci[1],  mean(confirm_H),
+               pred_OL_ci[1], mean(confirm_OL)),
+  Lower    = c(pred_ER_ci[2], NA, pred_H_ci[2], NA, pred_OL_ci[2], NA),
+  Upper    = c(pred_ER_ci[3], NA, pred_H_ci[3], NA, pred_OL_ci[3], NA)
+)
+conf_plot_df$Response <- factor(conf_plot_df$Response,
+                                levels = c("ExpansionRatio", "Hardness", "OverallLiking"))
+
+ggplot(conf_plot_df, aes(Response, Value, color = Stat)) +
+  geom_errorbar(data = subset(conf_plot_df, Stat == "Model prediction"),
+                aes(ymin = Lower, ymax = Upper), width = 0.15, size = 0.8) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Model prediction" = "#2C7BB6",
+                                "Confirmation mean" = "#D7263D")) +
+  labs(title = "Confirmation: model prediction vs. physical trials",
+       subtitle = "Error bars are 95% prediction intervals",
+       x = NULL, y = "Response value", color = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top")
+```
+
+All three confirmation means fall inside their $95\%$ prediction intervals
+and within the engineering specification (expansion $\geq 2.0$, hardness
+in $[15, 45]$ N, liking $\geq 4.0$). The model is validated and the
+recommended recipe can be released to production.
+
+# Exporting a Report
+
+The `task$report()` method writes a self-contained report of the entire
+analysis to disk. Two formats are supported: `format = "excel"` produces
+a multi-sheet `.xlsx` workbook (design table, ANOVA tables, coefficient
+tables, model-fit summary), and `format = "html"` produces a single
+self-contained HTML file with embedded figures. The `path` argument
+controls the destination; `tempfile()` is convenient for throw-away
+exports during exploration. The chunk is marked `eval = FALSE` because
+writing reports to disk is intentionally side-effectful and should not
+run on every build.
+
+```{r report, eval = FALSE}
+# Not run: writing reports to disk is intentionally side-effectful.
+xlsx_path <- tempfile(fileext = ".xlsx")
+html_path  <- tempfile(fileext = ".html")
+
+task$report(format = "excel", path = xlsx_path)
+task$report(format = "html",  path = html_path)
+
+list.files(dirname(xlsx_path), pattern = basename(c(xlsx_path, html_path)))
+```
+
+For programmatic access without writing to disk, the same information
+lives in the `task$results` list, which is populated by `task$compute()`
+and is what `task$report()` itself reads from. The most useful entries
+are:
+
+| Path                                              | Contents                                                            |
+|---------------------------------------------------|---------------------------------------------------------------------|
+| `task$results$design_info`                        | Data frame of the design runs (factor settings + run order).        |
+| `task$results$anova_results`                      | Named list of per-response ANOVA outputs, keyed by response name.   |
+| `task$results$anova_results[[r]]$anova`           | ANOVA table for response `r`.                                       |
+| `task$results$anova_results[[r]]$model`           | Fitted `lm` (or `rsm`) model object for response `r`.               |
+| `task$results$anova_results[[r]]$model_fit`       | List with `r_squared`, `adj_r_squared`, `lack_of_fit_p`, etc.       |
+| `task$results$anova_results[[r]]$effects`         | Named list of main and interaction effects for response `r`.        |
+| `task$results$effects`                            | Effects of the first response (convenience alias).                  |
+| `task$results$model`                              | Fitted model of the first response (convenience alias).             |
+| `task$results$model_fit`                          | Model-fit summary of the first response (convenience alias).        |
+
+```{r results-structure}
+# Quick programmatic access to the per-response fit statistics,
+# reading directly from task$results without writing a report to disk.
+data.frame(
+  Response = names(task$results$anova_results),
+  R2       = sapply(task$results$anova_results, function(r) r$model_fit$r_squared),
+  R2_adj   = sapply(task$results$anova_results, function(r) r$model_fit$adj_r_squared),
+  row.names = NULL
+)
+```
+
+**Decision.** Prefer `task$report()` for stakeholder-facing deliverables
+(the workbook is self-contained and includes formatting); prefer
+`task$results` for any downstream computation that needs the raw fitted
+objects (e.g., feeding the `lm` models into `MultiResponseOptimizer`, as
+this vignette does in the Desirability Optimisation section).
+
+# Conclusion
+
+This vignette walked through a complete multi-response optimisation on a
+realistic food-extrusion case. The workflow was:
+
+1. **Design** a rotatable CCD with `rsm_design()`.
+2. **Fit** a second-order response-surface model per response with
+   `IqrDoeTask$compute()`.
+3. **Optimise** the weighted-geometric-mean desirability index with
+   `MultiResponseOptimizer$optimize_desirability()`.
+4. **Explore** the trade-off surface with
+   `find_pareto_frontier()`.
+5. **Rank** the non-dominated candidates with `rank_with_topsis()`.
+6. **Confirm** the recommended setting with physical trials, checking that
+   the confirmation means fall inside the model's prediction intervals.
+
+The desirability function gave a single recommended setting; the Pareto
+frontier exposed the trade-off structure; TOPSIS picked a defensible
+winner from the frontier; and the confirmation trials validated the model.
+This is the cycle a quality engineer would repeat every time a process
+change or a new product is introduced.
+
+# References
+
+1. Derringer, G., & Suich, R. (1980). Simultaneous Optimization of
+   Several Response Variables. *Journal of Quality Technology*, 12(4),
+   214--219.
+2. Myers, R. H., Montgomery, D. C., & Anderson-Cook, C. M. (2016).
+   *Response Surface Methodology: Process and Product Optimization Using
+   Designed Experiments* (4th ed.). Wiley.
+3. Deb, K. (2001). *Multi-Objective Optimization Using Evolutionary
+   Algorithms*. Wiley.
+4. Hwang, C.-L., & Yoon, K. (1981). *Multiple Attribute Decision Making:
+   Methods and Applications*. Springer.
+5. Montgomery, D. C. (2019). *Design and Analysis of Experiments*
+   (10th ed.), Chapter 12. Wiley.
+
+---
+
+*This vignette was generated by the iQualityR.doe package.*

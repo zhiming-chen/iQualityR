@@ -1,0 +1,1126 @@
+---
+title: "Response Surface Methodology"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Response Surface Methodology}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+# Introduction
+
+Response Surface Methodology (RSM) is a collection of mathematical and
+statistical techniques for modelling and analysing problems in which a
+response of interest is influenced by several quantitative factors, and
+the goal is to locate the factor settings that optimise that response.
+RSM was introduced by Box and Wilson (1951) and has since become a
+standard tool in industrial experimentation, chemical process
+optimisation, and product development.
+
+This vignette shows how to use **iQualityR.doe** to carry out a complete
+RSM study: from problem definition, through central composite design
+(CCD) generation and the choice of axial distance $\alpha$, to
+second-order model fitting, response surface visualisation, and
+optimal-condition identification. The workflow is demonstrated on a
+realistic chemical reactor yield-optimisation case study with three
+factors.
+
+The package API has been designed so that the entire workflow is driven
+by a single `IqrDoeTask` object returned by `rsm_design()`. The user
+generates the design, attaches the observed response data, runs the
+analysis with `task$compute()`, inspects the results with
+`task$summary()` and `task$plot()`, and may export a self-contained
+report with `task$report()`.
+
+# API Overview
+
+The `IqrDoeTask` class is the central object in **iQualityR.doe**. Its
+life-cycle is:
+
+```r
+task <- rsm_design(...)         # or factorial_design / screening_design / taguchi_design
+task$data <- df                  # attach the observed responses
+task$compute()                  # fit ANOVA + second-order lm models
+task$summary()                  # print the analysis
+task$plot(type = "...")         # generate figures
+task$report(format = "excel", path = "...")  # export a report
+```
+
+## The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "contour")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+# Response Surface Methodology Theory
+
+## Second-Order Model
+
+When the experimenter has moved into the region of the optimum, the
+first-order model is no longer adequate because curvature becomes
+important. The **full second-order model** in $k$ factors is:
+
+$$
+y = \beta_0 + \sum_{i=1}^{k}\beta_i x_i + \sum_{i=1}^{k}\beta_{ii} x_i^2 + \sum_{i<j}\beta_{ij} x_i x_j + \varepsilon
+$$
+
+The terms have the following interpretation:
+
+- $\beta_0$: intercept, the predicted response at the design centre.
+- $\beta_i$: linear (first-order) coefficients, the **main effects**.
+- $\beta_{ii}$: pure quadratic coefficients, measuring **curvature**
+  along each axis.
+- $\beta_{ij}$: cross-product coefficients, measuring **two-factor
+  interactions**.
+- $\varepsilon$: random error, assumed $\mathcal{N}(0, \sigma^2)$.
+
+The total number of parameters in the model is:
+
+$$
+p = 1 + 2k + \frac{k(k-1)}{2}
+$$
+
+This count dictates the minimum number of distinct experimental runs
+required to fit the model.
+
+| Factors $k$ | Parameters $p$ | Minimum runs |
+|:-----------:|:--------------:|:------------:|
+| 2 | 6 | 6 |
+| 3 | 10 | 10 |
+| 4 | 15 | 15 |
+| 5 | 21 | 21 |
+| 6 | 28 | 28 |
+
+A good RSM design provides more than the minimum: it includes **center
+points** to estimate pure error and detect lack of fit, and **axial
+points** to support the pure quadratic terms.
+
+## Central Composite Design (CCD)
+
+The Central Composite Design, introduced by Box and Wilson (1951), is
+the most widely used RSM design. It consists of three distinct classes
+of points:
+
+1. **Cube (factorial) points** -- $2^k$ points at the corners of the
+   coded cube, with coordinates $(\pm 1, \pm 1, \dots, \pm 1)$. These
+   support estimation of the linear and interaction terms.
+
+2. **Axial (star) points** -- $2k$ points on each factor axis at
+   distance $\alpha$ from the centre:
+   $(\pm\alpha, 0, \dots, 0), \dots, (0, \dots, 0, \pm\alpha)$. These
+   support estimation of the pure quadratic terms.
+
+3. **Center points** -- $n_c$ points at the origin $(0, \dots, 0)$.
+   These provide a model-independent estimate of pure error and a test
+   for curvature.
+
+The total number of runs of a CCD is:
+
+$$
+N = 2^k + 2k + n_c
+$$
+
+For $k = 3$ factors with $n_c = 6$ center points, this gives
+$N = 8 + 6 + 6 = 20$ runs.
+
+## Choice of Axial Distance alpha
+
+The value of $\alpha$ controls the geometry of the design and its
+statistical properties. Four standard choices are supported by
+`rsm_design()`:
+
+| Design type | $\alpha$ formula | Property |
+|:------------|:-----------------|:---------|
+| **Rotatable** (default) | $\alpha = (2^k)^{1/4}$ | Prediction variance depends only on distance from centre |
+| **Spherical** | $\alpha = \sqrt{k}$ | All design points lie on a sphere of equal radius |
+| **Face-centered** | $\alpha = 1$ | Axial points on the cube faces; three-level design |
+| **Orthogonal** | $\alpha = \left(\frac{4 \cdot 2^k (n_c + 2^k) - 2^k \cdot n_c}{2 \cdot 2^k}\right)^{1/4}$ | Quadratic terms orthogonal to linear and intercept |
+
+The **rotatable** choice is the most common in practice because it
+makes the prediction variance at a point a function only of that
+point's distance from the design centre, not its direction. Worked
+examples of the rotatable $\alpha$:
+
+- $k = 2$: $\alpha = (4)^{1/4} = 1.414$
+- $k = 3$: $\alpha = (8)^{1/4} = 1.682$
+- $k = 4$: $\alpha = (16)^{1/4} = 2.000$
+
+The **face-centered** choice ($\alpha = 1$) places the axial points on
+the cube faces, so all design points lie at three levels ($-1, 0, +1$).
+This is preferred when the factor ranges cannot be safely extended
+beyond the cube (e.g., a temperature cannot exceed a safety limit).
+
+## Box-Behnken Design
+
+The Box-Behnken design (Box and Behnken, 1960) is an alternative
+second-order design constructed on a sphere inscribed within the cube.
+It avoids the corner points of the cube and is preferred when extreme
+factor combinations are physically infeasible or unsafe.
+
+The `rsm_design()` function accepts `design_type = "box_behnken"` and
+generates a proper Box-Behnken layout. For each pair of factors (i, j),
+four edge-midpoint runs at (±1, ±1) are created while all remaining
+factors are held at the center point (0). Center points are then
+appended to provide pure-error estimation. The total run count is
+$2k(k-1) + n_c$ where $k$ is the number of factors and $n_c$ is the
+number of center points.
+
+```{r bbd-generate}
+bbd_factors <- list(
+  list(name = "Temperature", type = "continuous", levels = c(120, 180)),
+  list(name = "Pressure",    type = "continuous", levels = c(1, 3)),
+  list(name = "Catalyst",    type = "continuous", levels = c(0.5, 1.5))
+)
+
+# Box-Behnken design with 3 center points.
+bbd_task <- rsm_design(
+  factors       = bbd_factors,
+  design_type   = "box_behnken",
+  center_points = 3
+)
+
+cat("Box-Behnken design (first 6 runs):\n")
+print(head(bbd_task$results$design_info))
+cat(sprintf("\nTotal runs: %d\n", nrow(bbd_task$results$design_info)))
+```
+
+The `PointType` column tags each run as `"edge"` (edge-midpoint) or
+`"center"`, which the design plot uses to visually distinguish the
+geometric structure of the BBD layout.
+
+When response data is supplied and `task$compute()` is called, the
+stationary point is automatically computed via canonical analysis for
+all RSM designs (CCD, BBD, and RSM). The `task$summary()` method
+reports the stationary point coordinates, the nature of the response
+(minimum / maximum / saddle point), the predicted response at the
+stationary point with a 95% prediction interval, and the eigenvalues
+of the B matrix that determine the curvature direction.
+
+# Case Study: Chemical Reactor Yield Optimization
+
+## Problem Definition
+
+A chemical engineering team wants to maximise the yield (%) of an
+active ingredient produced in a continuously stirred reactor. The
+target is a yield of at least 90%. Three process factors are believed
+to drive the conversion:
+
+| Factor | Symbol | Low level | High level | Unit |
+|:-------|:-------|:---------:|:----------:|:-----|
+| Reaction temperature | `Temperature` | 120 | 180 | $^\circ$C |
+| Pressure | `Pressure` | 1 | 3 | atm |
+| Catalyst concentration | `Catalyst` | 0.5 | 1.5 | % |
+
+The response is `Yield` (%), to be **maximised** (target $\geq 90\%$).
+
+Because all three factors can be safely operated at their extreme
+combinations, the team selects a **rotatable CCD** with $\alpha = 1.682$
+(the rotatable value for $k = 3$), six center points, and the standard
+$2^3 = 8$ cube points plus $2 \times 3 = 6$ axial points, for a total
+of $8 + 6 + 6 = 20$ runs.
+
+## Generating a CCD with `rsm_design()`
+
+The function `rsm_design()` is the entry point for constructing RSM
+designs. Its key arguments are:
+
+```r
+rsm_design(
+  factors,            # list of factor specifications (name/type/levels)
+  design_type   = "ccd",
+  response_vars = NULL,
+  center_points = 6,
+  alpha         = "rotatable",   # rotatable | spherical | face_centered | orthogonal | numeric
+  randomize     = TRUE,
+  seed          = NULL,
+  auto_compute  = TRUE
+)
+```
+
+Each factor is a list with `name`, `type = "continuous"`, and `levels`
+giving the low and high values in real engineering units. The function
+returns an `IqrDoeTask` object whose `$results$design_info` is a
+`data.frame` containing one row per run with the factor settings and the
+run order.
+
+```{r build-ccd}
+# Three continuous factors for the reactor study.
+factors <- list(
+  list(name = "Temperature", type = "continuous", levels = c(120, 180)),
+  list(name = "Pressure",    type = "continuous", levels = c(1, 3)),
+  list(name = "Catalyst",    type = "continuous", levels = c(0.5, 1.5))
+)
+
+# Rotatable CCD with 6 center points, randomised run order.
+task <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  response_vars = "Yield",
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = TRUE,
+  seed          = 42
+)
+
+# Inspect the design table: one row per run.
+head(task$results$design_info, 10)
+nrow(task$results$design_info)
+```
+
+With $k = 3$ and the rotatable $\alpha = 1.682$, the design has
+$2^3 + 2 \times 3 + 6 = 20$ runs. The cube points cover the
+rectangular operating window, the axial points extend outward along
+each axis, and the six center points provide a stable estimate of
+pure error.
+
+The design layout can be visualised with `task$plot(type = "design")`.
+The function returns a `ggplot` object invisibly, so we print it
+explicitly to embed it in the vignette.
+
+```{r plot-design, fig.width = 9, fig.height = 6}
+print(task$plot(type = "design"))
+```
+
+**Decision.** The run-order tile view confirms that the randomised
+CCD has executed correctly: every run is present exactly once, the
+factorial, axial, and center-point runs are interleaved across the
+run order rather than blocked, and no factor level is systematically
+confounded with run order. The design is therefore safe to analyse
+without a block term.
+
+## Comparing alpha Choices (rotatable vs face_centered)
+
+A key practical decision when building a CCD is the choice of
+$\alpha$. The `alpha` argument now accepts both numeric values and
+the keywords `"rotatable"`, `"spherical"`, `"face_centered"`, and
+`"orthogonal"`. Below we generate two CCDs for the same three factors
+and compare the axial-point positions.
+
+```{r compare-alpha}
+# Rotatable CCD: alpha = (2^3)^(1/4) = 1.682 (axial points outside the cube)
+task_rot <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = FALSE,
+  auto_compute  = TRUE
+)
+
+# Face-centered CCD: alpha = 1 (axial points on the cube faces)
+task_fc <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  center_points = 6,
+  alpha         = "face_centered",
+  randomize     = FALSE,
+  auto_compute  = TRUE
+)
+
+# Resolve the actual alpha values used.
+k <- 3
+alpha_rot <- (2^k)^(1 / 4)      # 1.681793
+alpha_fc  <- 1
+c(rotatable = alpha_rot, face_centered = alpha_fc)
+```
+
+Both designs have the same total number of runs ($2^3 + 2 \times 3 + 6
+= 20$), but the axial points land at very different positions in real
+units. The rotatable axial points extend **beyond** the declared
+factor ranges, while the face-centered axial points sit **on** the
+cube faces.
+
+```{r compare-alpha-table}
+# Axial points only (rows where exactly one factor is off-centre).
+# For a non-randomised CCD the first 8 rows are factorial, the next 6 are axial,
+# the last 6 are centre points.
+rot_axial <- head(task_rot$results$design_info, 14)
+rot_axial <- tail(rot_axial, 6)
+fc_axial  <- head(task_fc$results$design_info, 14)
+fc_axial  <- tail(fc_axial, 6)
+
+rot_axial$alpha <- "rotatable (alpha = 1.682)"
+fc_axial$alpha  <- "face_centered (alpha = 1)"
+rbind(rot_axial, fc_axial)
+```
+
+For the `Temperature` factor (range 120--180 $^\circ$C, centre 150):
+
+- Rotatable axial points are at $150 \pm 1.682 \times 30 = 99.5$ and
+  $200.5^\circ$C, which lie **outside** the declared range.
+- Face-centered axial points are at $150 \pm 1 \times 30 = 120$ and
+  $180^\circ$C, sitting **on** the cube faces.
+
+If the reactor cannot be safely operated above $180^\circ$C, the
+face-centered CCD is the correct choice. If extended ranges are
+permissible, the rotatable CCD gives more uniform prediction variance.
+The geometric difference is clearly visible in the side-by-side layout
+below.
+
+```{r compare-alpha-plot, fig.width = 9, fig.height = 4.5}
+# Classify each design point as Factorial / Axial / Center.
+classify_point <- function(df, plan_factors) {
+  centers <- vapply(plan_factors, function(f) mean(f$levels), numeric(1))
+  half_ranges <- vapply(plan_factors, function(f) (max(f$levels) - min(f$levels)) / 2, numeric(1))
+  types <- character(nrow(df))
+  for (i in seq_len(nrow(df))) {
+    row <- as.numeric(df[i, names(centers)])
+    is_center <- all(abs(row - centers) < 1e-6)
+    if (is_center) { types[i] <- "Center"; next }
+    # Axial: exactly one factor off-centre.
+    off_center <- sum(abs(row - centers) > 1e-6)
+    types[i] <- if (off_center == 1) "Axial" else "Factorial"
+  }
+  types
+}
+
+design_rot <- task_rot$results$design_info
+design_fc  <- task_fc$results$design_info
+design_rot$Type <- classify_point(design_rot, factors)
+design_fc$Type  <- classify_point(design_fc, factors)
+design_rot$Alpha <- "rotatable (alpha = 1.682)"
+design_fc$Alpha  <- "face_centered (alpha = 1)"
+
+both <- rbind(design_rot, design_fc)
+
+ggplot(both, aes(x = Temperature, y = Pressure, colour = Type, shape = Type)) +
+  geom_point(size = 3) +
+  facet_wrap(~ Alpha) +
+  geom_hline(yintercept = 2, linetype = "dotted", alpha = 0.4) +
+  geom_vline(xintercept = 150, linetype = "dotted", alpha = 0.4) +
+  scale_color_manual(values = c("Factorial" = "#2C7BB6",
+                                "Axial" = "#D7191C",
+                                "Center" = "#1A9641")) +
+  labs(
+    title = "CCD layout: rotatable vs face_centered alpha",
+    subtitle = "Temperature vs Pressure (Catalyst varies similarly)",
+    x = "Temperature (deg C)",
+    y = "Pressure (atm)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Simulated Response Data
+
+In a real study the responses would be measured after the physical
+trials. Here we simulate them from a known second-order surface so
+that the analysis is reproducible. The surface has an interior maximum
+near the centre of the design region, with positive linear effects,
+negative quadratic effects (interior optimum), and two interaction
+terms (Temperature-by-Pressure and Temperature-by-Catalyst). Random
+noise is added with `set.seed(42)` for reproducibility.
+
+```{r simulate-responses}
+set.seed(42)
+
+# Recover the generated design table (reproducible: seed = 42 was set).
+design_df <- task$results$design_info
+
+# Code each factor on the standard {-1, +1} scale for the simulation model.
+x1 <- (design_df$Temperature - 150) / 30   # Temperature: 120-180, centre 150
+x2 <- (design_df$Pressure    - 2)   / 1    # Pressure:    1-3,   centre 2
+x3 <- (design_df$Catalyst    - 1.0) / 0.5  # Catalyst:    0.5-1.5, centre 1.0
+
+# Second-order response surface with an interior maximum.
+# True optimum (coded): (0.29, 0.41, 0.49) -> actual: (158.8 C, 2.41 atm, 1.24 %)
+# True maximum yield  : ~ 90.9 %
+design_df$Yield <-
+    90.0 +
+    0.6 * x1 + 1.8 * x2 + 1.8 * x3 +                # linear terms
+  (-2.0) * x1^2 + (-2.5) * x2^2 + (-2.0) * x3^2 +   # quadratic terms (curvature)
+    0.8 * x1 * x2 + 0.5 * x1 * x3 +                  # interactions (T x P, T x C)
+    rnorm(nrow(design_df), mean = 0, sd = 0.5)       # measurement noise
+
+# Attach the response data to the task. The public `data` field is a
+# direct assignment on the IqrTaskBase class.
+task$data <- design_df
+
+head(task$data, 6)
+```
+
+## Fitting the Second-Order Model
+
+Calling `task$compute()` regenerates the design table (reproducibly,
+because `seed = 42` was set) and, because `task$data` is now populated
+and `response_vars = "Yield"` was declared on the plan, fits the
+second-order model automatically. For CCD and other RSM designs the
+package builds the formula:
+
+$$
+\text{Yield} \sim A * B * C + I(A^2) + I(B^2) + I(C^2)
+$$
+
+which expands to all main effects, all two-way interactions, the
+three-way interaction, and the pure quadratic terms -- without any
+manual `lm()` call. The fitted model is stored in
+`task$results$model`, and top-level `task$results$model` and
+`task$results$model_fit` are also populated so that downstream
+methods (`task$plot(type = "residual")`) work without an explicit
+response argument.
+
+```{r compute-anova}
+task$compute()
+```
+
+## ANOVA and Model Fit
+
+The textual summary prints the design metadata, the ANOVA table for
+each response, and the model-fit statistics ($R^2$, adjusted $R^2$,
+and the lack-of-fit $p$-value).
+
+```{r summary}
+task$summary()
+```
+
+The ANOVA table can also be inspected directly. The linear terms, the
+pure quadratic terms, and the engineered two-way interactions should
+stand out as significant, confirming that the second-order model is
+necessary.
+
+```{r inspect-anova}
+# ANOVA table for the Yield response.
+task$results$anova_results$Yield$anova
+
+# Model fit statistics.
+task$results$anova_results$Yield$model_fit
+
+# Coefficient estimates of the fitted second-order model.
+coef(task$results$model)
+```
+
+## Main Effects, Interactions, and Residual Diagnostics
+
+The main-effects plot ranks the factors by the magnitude of their
+regression coefficient. Because the package populates the top-level
+`results$effects` entry, `task$plot(type = "main_effects")` renders
+without an additional response argument.
+
+```{r plot-main-effects, fig.width = 7, fig.height = 4.5}
+print(task$plot(type = "main_effects"))
+```
+
+**Decision.** `Pressure` and `Catalyst` are the dominant first-order
+drivers of `Yield`, with `Temperature` a weaker third. The next step
+is therefore to spend the model-fitting effort primarily on `Pressure`
+and `Catalyst` (and their interactions), while keeping `Temperature`
+in the model because curvature and two-factor interactions may still
+be important even when the marginal effect is small.
+
+RSM second-order models contain two-factor interaction terms
+(`Temperature:Pressure`, `Temperature:Catalyst`, `Pressure:Catalyst`
+in this case study). The `type = "interaction"` panel exposes these
+directly. Because the case study has a single response (`Yield`) the
+`response_name` argument is optional but we pass it explicitly to make
+the chunk self-documenting.
+
+```{r plot-interaction, fig.width = 7, fig.height = 9}
+print(task$plot(type = "interaction", response_name = "Yield"))
+```
+
+**Decision.** The `Temperature`-by-`Pressure` panel shows the
+strongest non-parallelism, consistent with the positive `0.8` coded
+interaction coefficient used to simulate the data. Operationally,
+this means that the optimum `Pressure` shifts upward as `Temperature`
+rises -- a one-factor-at-a-time optimisation would therefore have
+missed the true optimum, justifying the use of RSM.
+
+The residual-vs-fitted plot is the standard diagnostic for checking
+the constant-variance assumption and detecting model misspecification.
+Because `task$results$model` is populated, `task$plot(type =
+"residual")` is available.
+
+```{r plot-residual, fig.width = 7, fig.height = 4.5}
+print(task$plot(type = "residual"))
+```
+
+**Decision.** The residuals show no systematic curvature or fan
+shape versus the fitted values, the QQ-plot is approximately linear,
+and the scale-location plot is flat. The constant-variance and
+Normality assumptions required by the ANOVA $F$-tests are therefore
+met, and the model can be trusted for prediction within the design
+region.
+
+A combined diagnostic panel that joins the main-effects, interaction,
+and residual views into a single `patchwork` object is produced by
+`type = "full"`. This is convenient for including in a single report
+page.
+
+```{r plot-full, fig.width = 9, fig.height = 12}
+print(task$plot(type = "full"))
+```
+
+**Decision.** The combined panel reproduces every diagnostic above
+in one figure, confirming in a single glance that (i) the dominant
+factors are `Pressure` and `Catalyst`, (ii) the
+`Temperature`-by-`Pressure` interaction is the only meaningful
+two-factor interaction, and (iii) the residual diagnostics do not
+flag any model misspecification. The model is ready to be used for
+response-surface visualisation.
+
+## Response Surface Visualization (contour plot)
+
+The package exposes a built-in response-surface plotter through
+`task$plot(type = "contour")`. Internally, `DoePlotter` selects the
+first two numeric factors, builds a 50 x 50 prediction grid, holds any
+remaining factors at their median, and renders a filled contour plot
+with `geom_contour_filled()`. The method returns a `ggplot` object
+invisibly, so we print it explicitly.
+
+```{r contour-default, fig.width = 7, fig.height = 5.5}
+# Default: first two numeric factors (Temperature vs Pressure).
+print(task$plot(type = "contour"))
+```
+
+**Decision.** The closed concentric contours in the interior of the
+`Temperature`--`Pressure` plane identify the optimum region: the
+highest-yield band (roughly 90 %) lies in the upper-right quadrant
+of the panel, near `Temperature` $\approx 158\,^\circ$C and
+`Pressure` $\approx 2.4$ atm (with `Catalyst` held at its median of
+1.0 %). Starting from the design centre (`Temperature` = 150,
+`Pressure` = 2), the **direction of steepest ascent** runs toward
+higher `Temperature` and higher `Pressure` simultaneously -- exactly
+the move a follow-up CCD would have made if the first experiment had
+been a screening design.
+
+To slice a different factor pair -- for example `Temperature` vs
+`Catalyst` -- pass the `x_var` and `y_var` arguments through
+`task$plot()`. The remaining factor (`Pressure`) is automatically held
+at its median.
+
+```{r contour-temp-catalyst, fig.width = 7, fig.height = 5.5}
+# Custom factor pair: Temperature vs Catalyst, Pressure held at median.
+print(task$plot(type = "contour", x_var = "Temperature", y_var = "Catalyst"))
+```
+
+**Decision.** The `Temperature`-by-`Catalyst` slice confirms that the
+optimum is in the interior of the design region, with `Catalyst` near
+$1.25\,\%$ and `Temperature` near $158\,^\circ$C. Because the optimum
+is interior, no factor range needs to be widened in a follow-up
+experiment -- the second-order model is reliable here.
+
+A standalone **2D tile + contour surface** (without the side-by-side
+filled contour) is produced by `type = "surface"`. This is convenient
+when only one figure is needed for a report page and you want the
+contour lines overlaid on a continuous colour tile.
+
+```{r plot-surface, fig.width = 7, fig.height = 5.5}
+# Standalone 2D tile + contour surface for the Yield response.
+print(task$plot(type = "surface",
+                response_name = "Yield",
+                x_var = "Temperature",
+                y_var = "Pressure"))
+```
+
+**Decision.** The 2D surface tile makes the curvature of the response
+explicit: the gradient is steep toward the cube faces but flattens out
+near the optimum, confirming that a second-order model -- not a
+first-order gradient -- is needed to characterise the optimum
+accurately.
+
+For a combined view -- 2D tile + contour surface on the left, filled
+contour on the right -- use `task$plot(type = "response_surface")`,
+which returns a list with `surface_plot`, `contour_plot`,
+`combined_plot`, and (when **plotly** is available) an interactive 3D
+surface. The `response_name` argument selects which response to plot
+and `x_var` / `y_var` select the two factors shown on the axes.
+
+```{r response-surface-full, fig.width = 9, fig.height = 4.5}
+# Combined response-surface view (surface + contour side by side).
+rsm_panels <- task$plot(type = "response_surface",
+                        response_name = "Yield",
+                        x_var = "Temperature",
+                        y_var = "Catalyst")
+print(rsm_panels$combined_plot)
+```
+
+**Decision.** The combined panel places the gradient view (left)
+alongside the contour view (right), giving both a qualitative feel
+for the curvature and a quantitative readout of the optimum region.
+The two panels agree on the location of the maximum, which is the
+expected internal consistency check before locking in the optimum.
+
+When the optional **plotly** package is installed, the same call also
+returns an interactive 3D surface in `rsm_panels$interactive_plot` that
+can be rotated, zoomed, and hover-inspected in the rendered HTML
+vignette. When plotly is *not* installed, the slot is `NULL` and we
+gracefully skip rendering. We deliberately do **not** add `plotly` to
+the setup chunk so that the vignette remains buildable in
+environments without plotly.
+
+```{r plot-interactive-surface, eval = TRUE, fig.width = 7, fig.height = 5}
+# Interactive 3D surface (only rendered when plotly is available).
+if (!is.null(rsm_panels$interactive_plot)) {
+  print(rsm_panels$interactive_plot)
+} else {
+  message("plotly is not installed; rsm_panels$interactive_plot is NULL. ",
+          "Install with install.packages('plotly') to enable the 3D view.")
+}
+```
+
+**Decision.** If the interactive 3D surface rendered above, rotate
+the scene so that the gradient ridge leading to the optimum is
+visible. The 3D view is a communication tool for non-statistical
+stakeholders: the existence of a clear hilltop (rather than a ridge or
+a saddle) is what makes this optimum trustworthy.
+
+## Customising plots
+
+Because every `task$plot()` call (except `"response_surface"`) returns
+a plain `ggplot` object, you can post-process it with the usual
+**ggplot2** additions before printing. A common pattern is to mark the
+predicted optimum on top of a contour plot, so that the figure tells
+the whole story in one glance: where the optimum lies and how far it
+sits from the design centre.
+
+```{r customise-contour, fig.width = 7, fig.height = 5.5}
+# Predicted optimum (computed later in the Optimal Condition section).
+# Recomputed here so the chunk is self-contained.
+rsm_model  <- task$results$model
+beta_hat   <- coef(rsm_model)
+fnames     <- c("Temperature", "Pressure", "Catalyst")
+b_vec      <- beta_hat[fnames]
+B_mat      <- matrix(0, 3, 3, dimnames = list(fnames, fnames))
+diag(B_mat) <- beta_hat[paste0("I(", fnames, "^2)")]
+B_mat["Temperature", "Pressure"] <- B_mat["Pressure", "Temperature"] <-
+  beta_hat["Temperature:Pressure"] / 2
+B_mat["Temperature", "Catalyst"] <- B_mat["Catalyst", "Temperature"] <-
+  beta_hat["Temperature:Catalyst"] / 2
+B_mat["Pressure", "Catalyst"] <- B_mat["Catalyst", "Pressure"] <-
+  beta_hat["Pressure:Catalyst"] / 2
+x_opt <- -0.5 * solve(B_mat, b_vec)
+
+p_contour <- task$plot(type = "contour",
+                       x_var = "Temperature", y_var = "Pressure")
+p_custom <- p_contour +
+  geom_point(data = data.frame(Temperature = x_opt["Temperature"],
+                               Pressure = x_opt["Pressure"]),
+             aes(x = Temperature, y = Pressure),
+             inherit.aes = FALSE,
+             colour = "black", fill = "white", shape = 21,
+             size = 4, stroke = 1.2) +
+  annotate("text",
+           x = x_opt["Temperature"], y = x_opt["Pressure"] + 0.15,
+           label = "Predicted optimum",
+           colour = "black", fontface = "bold", hjust = 0) +
+  labs(title = "Yield contour with marked optimum")
+print(p_custom)
+```
+
+**Decision.** Overlaying the predicted optimum on the contour makes
+the recommendation explicit: the new reactor set-point should be
+moved to the marked location, away from the design centre. This is
+the figure to circulate to the operating team.
+
+## Combining plots with patchwork
+
+The `patchwork` package composes multiple `ggplot` objects into a
+single figure. Because `task$plot(type = "contour")` (and any other
+non-list type) returns a `ggplot`, two contour slices for different
+factor pairs can be placed side-by-side with `+` (or `wrap_elements()`
+when the inputs are themselves `patchwork` objects).
+
+```{r patchwork-combine, fig.width = 10, fig.height = 5}
+p_tp <- task$plot(type = "contour",
+                  x_var = "Temperature", y_var = "Pressure") +
+        labs(title = "T vs P (Catalyst at median)")
+p_tc <- task$plot(type = "contour",
+                  x_var = "Temperature", y_var = "Catalyst") +
+        labs(title = "T vs C (Pressure at median)")
+
+combined <- wrap_elements(p_tp) + wrap_elements(p_tc) +
+  plot_annotation(title = "Two slices of the Yield response surface",
+                  tag_levels = "A")
+print(combined)
+```
+
+**Decision.** Showing two slices side-by-side lets the reader compare
+how the optimum shifts when a different factor is held at its
+median. The `patchwork` composition is also the recommended pattern
+for the export step: a single composed figure can be saved with
+`ggplot2::ggsave()` and embedded in a single page of an Excel or HTML
+report.
+
+## Optimal Condition Identification
+
+The canonical analysis of a second-order surface locates the
+**stationary point** by setting the gradient of the fitted model to
+zero. Write the fitted surface in matrix form:
+
+$$
+\hat{y} = \hat{\beta}_0 + \mathbf{b}^\top \mathbf{x} + \mathbf{x}^\top \mathbf{B}\,\mathbf{x}
+$$
+
+where $\mathbf{b}$ is the vector of linear coefficients and
+$\mathbf{B}$ is the symmetric matrix of quadratic coefficients (with
+diagonal entries $\hat{\beta}_{ii}$ and off-diagonal entries
+$\hat{\beta}_{ij}/2$). Solving $\nabla \hat{y} = 0$ gives the
+**stationary point**:
+
+$$
+\mathbf{x}_s = -\tfrac{1}{2}\,\mathbf{B}^{-1}\,\mathbf{b}
+$$
+
+The eigenvalues $\lambda_1, \dots, \lambda_k$ of $\mathbf{B}$ classify
+the stationary point:
+
+- All $\lambda_i < 0$: $\mathbf{x}_s$ is a **maximum** (the surface is
+  a hill).
+- All $\lambda_i > 0$: $\mathbf{x}_s$ is a **minimum** (the surface is
+  a bowl).
+- $\lambda_i$ of mixed sign: $\mathbf{x}_s$ is a **saddle point**.
+
+The **canonical form** of the fitted surface, expressed in the
+eigenvector coordinate system $\mathbf{w}$ centred at $\mathbf{x}_s$,
+is:
+
+$$
+\hat{y} = \hat{y}_s + \sum_{i=1}^{k}\lambda_i\,w_i^2
+$$
+
+where $\hat{y}_s$ is the predicted response at the stationary point.
+
+The package does not (yet) expose a one-call canonical-analysis
+function, but the formula is straightforward to evaluate from the
+fitted `lm` object stored in `task$results$model`.
+
+```{r stationary-point}
+# Extract the fitted model and its coefficients.
+rsm_model <- task$results$model
+beta_hat  <- coef(rsm_model)
+
+factor_names <- c("Temperature", "Pressure", "Catalyst")
+
+# Linear coefficient vector b.
+b_vec <- beta_hat[factor_names]
+
+# Quadratic coefficient matrix B: diagonal = beta_ii, off-diagonal = beta_ij / 2.
+B_mat <- matrix(0, nrow = 3, ncol = 3,
+                dimnames = list(factor_names, factor_names))
+diag(B_mat) <- beta_hat[paste0("I(", factor_names, "^2)")]
+B_mat["Temperature", "Pressure"] <- B_mat["Pressure", "Temperature"] <-
+  beta_hat["Temperature:Pressure"] / 2
+B_mat["Temperature", "Catalyst"] <- B_mat["Catalyst", "Temperature"] <-
+  beta_hat["Temperature:Catalyst"] / 2
+B_mat["Pressure", "Catalyst"] <- B_mat["Catalyst", "Pressure"] <-
+  beta_hat["Pressure:Catalyst"] / 2
+
+B_mat
+
+# Stationary point (in actual engineering units).
+x_s <- -0.5 * solve(B_mat, b_vec)
+data.frame(Factor = factor_names, Optimal = as.numeric(x_s))
+
+# Eigenvalues of B classify the stationary point.
+eigen(B_mat)$values
+```
+
+All three eigenvalues of $\mathbf{B}$ are negative, so the stationary
+point is a **maximum**. The predicted yield at the stationary point
+is obtained by feeding the optimum back into the fitted model.
+
+```{r predicted-optimum}
+optimal_df <- as.data.frame(t(x_s))
+colnames(optimal_df) <- factor_names
+predicted_yield <- predict(rsm_model, newdata = optimal_df,
+                           interval = "prediction", level = 0.95)
+
+data.frame(
+  Temperature = round(optimal_df$Temperature, 2),
+  Pressure    = round(optimal_df$Pressure, 2),
+  Catalyst    = round(optimal_df$Catalyst, 3),
+  Yield_hat   = round(predicted_yield[, "fit"], 2),
+  Yield_lower = round(predicted_yield[, "lwr"], 2),
+  Yield_upper = round(predicted_yield[, "upr"], 2)
+)
+```
+
+The identified optimum lies well inside the design region (no factor
+is at its boundary), which is the hallmark of a successful RSM study.
+
+## Confirmation Run
+
+Before locking in the new operating conditions, the team runs three
+confirmation trials at the predicted optimum. The confirmation yields
+should fall inside the 95 % prediction interval computed above.
+
+```{r confirmation-run}
+set.seed(2024)
+
+# Three confirmation runs at the identified optimum (with noise).
+confirmation <- data.frame(
+  Temperature = rep(optimal_df$Temperature, 3),
+  Pressure    = rep(optimal_df$Pressure, 3),
+  Catalyst    = rep(optimal_df$Catalyst, 3)
+)
+
+# Simulate the confirmation trials using the same true surface plus noise.
+x1c <- (confirmation$Temperature - 150) / 30
+x2c <- (confirmation$Pressure    - 2)   / 1
+x3c <- (confirmation$Catalyst    - 1.0) / 0.5
+
+confirmation$Yield <-
+    90.0 +
+    0.6 * x1c + 1.8 * x2c + 1.8 * x3c +
+  (-2.0) * x1c^2 + (-2.5) * x2c^2 + (-2.0) * x3c^2 +
+    0.8 * x1c * x2c + 0.5 * x1c * x3c +
+    rnorm(3, mean = 0, sd = 0.5)
+
+confirmation
+mean(confirmation$Yield)
+```
+
+The confirmation runs agree with the model prediction, validating the
+second-order fit. In a real campaign, three to five confirmation runs
+should be performed and their mean compared with the prediction
+interval; if the mean falls inside the interval, the new operating
+conditions can be adopted.
+
+### Visual confirmation with `task$plot()`
+
+A numerical check is good practice but a visual check is more
+persuasive for downstream stakeholders. Two `task$plot()` calls give
+the visual confirmation: a contour plot with the confirmation
+set-point overlaid as a marker, and the residual diagnostics of the
+fitted model re-rendered so that the reader can confirm at a glance
+that the model used to predict the optimum is itself well-behaved.
+
+```{r confirmation-contour, fig.width = 7, fig.height = 5.5}
+# Re-draw the contour with the confirmation set-point overlaid.
+p_confirm <- task$plot(type = "contour",
+                        x_var = "Temperature", y_var = "Pressure")
+p_confirm <- p_confirm +
+  geom_point(data = data.frame(
+              Temperature = confirmation$Temperature[1],
+              Pressure    = confirmation$Pressure[1]),
+            aes(x = Temperature, y = Pressure),
+            inherit.aes = FALSE,
+            colour = "red", fill = "white", shape = 23,
+            size = 5, stroke = 1.5) +
+  annotate("text",
+           x = confirmation$Temperature[1],
+           y = confirmation$Pressure[1] - 0.18,
+           label = "Confirmation set-point",
+           colour = "red", fontface = "bold", hjust = 0) +
+  labs(title = "Confirmation: predicted optimum vs. observed trials")
+print(p_confirm)
+```
+
+```{r confirmation-residual, fig.width = 7, fig.height = 4.5}
+# Re-print the residual panel so the model underlying the prediction
+# is visible next to the confirmation figure.
+print(task$plot(type = "residual"))
+```
+
+**Decision.** The confirmation set-point lies inside the closed
+contour corresponding to the predicted maximum `Yield`, and the three
+observed confirmation values fall inside the 95 % prediction interval
+computed earlier. The residual diagnostics remain well-behaved. The
+new operating conditions (`Temperature` $\approx 158.8\,^\circ$C,
+`Pressure` $\approx 2.41$ atm, `Catalyst` $\approx 1.24$ %) can
+therefore be adopted as the new reactor set-point.
+
+# Best Practices
+
+## Design Selection Guidance
+
+```
+Number of factors k?
+  +-- k = 2         : CCD (11+ runs)
+  +-- 3 <= k <= 4   : CCD (preferred economy)
+  +-- 5 <= k <= 6   : CCD with face_centered alpha if ranges are tight
+  +-- k > 6         : Screen first, then RSM on the survivors
+        |
+Are extreme combinations risky?
+  +-- Yes           : Use alpha = "face_centered" (axial on cube faces)
+  +-- No            : Use alpha = "rotatable" (uniform prediction variance)
+        |
+How many center points?
+  +-- Curvature test      : at least 3 - 5
+  +-- Pure error estimate : 5 - 6 (package default)
+```
+
+## Model Validation Checklist
+
+- $R^2 > 0.80$: the model explains a useful fraction of the variation.
+- Adjusted $R^2$ close to $R^2$: no overfitting from unnecessary terms.
+- Lack-of-fit $p > 0.05$: the model form is adequate.
+- Residuals vs. fitted show no trend (constant variance).
+- All eigenvalues of $\mathbf{B}$ have the same sign (a true interior
+  optimum exists).
+- The stationary point lies inside the explored region.
+- Confirmation runs at the predicted optimum agree with the prediction
+  interval.
+
+## Common Pitfalls
+
+1. **Factor range too narrow.** If the low and high levels bracket
+   only a small portion of the operability region, curvature may be
+   undetectable and the optimum may lie outside the explored window.
+   Choose ranges wide enough to see the response change meaningfully.
+
+2. **Too few center points.** With fewer than five center points the
+   pure-error estimate is unstable and the lack-of-fit test loses
+   power. Six center points is a robust default.
+
+3. **Skipping confirmation runs.** Always perform 3--5 confirmation
+   experiments at the predicted optimum before locking in the new
+   operating conditions. A surface that fits well inside the design
+   region may not extrapolate reliably.
+
+4. **Confusing coded and real units.** The stationary point computed
+   from $\mathbf{x}_s = -\tfrac{1}{2}\mathbf{B}^{-1}\mathbf{b}$ is in
+   the same units as the model. Since `rsm_design()` fits in real
+   engineering units, the stationary point comes out directly in
+   real units; report it as-is to the operators.
+
+5. **Using a rotatable CCD when ranges cannot be extended.** The
+   rotatable $\alpha$ places axial points outside the cube. If the
+   process cannot be safely operated beyond the declared factor
+   ranges, switch to `alpha = "face_centered"`.
+
+# Comparison with Other R Packages
+
+| Feature | iQualityR.doe | rsm | DoE.base | rsm (rsm::rsm) |
+|:--------|:-------------:|:---:|:--------:|:--------------:|
+| CCD generation              | Yes | Yes | Yes | Yes |
+| Box-Behnken generation      | Yes | Yes | Yes | Yes |
+| Alpha keywords (rotatable / face_centered / ...) | Yes | Yes | No | No |
+| Automatic second-order model fit | Yes | Yes (via rsm object) | No | Yes |
+| Stationary point (auto)     | Yes | Yes | No | Yes |
+| Contour / surface plots     | Yes (`task$plot`) | Yes | No | Yes |
+| Residual diagnostics        | Yes (`task$plot`) | Yes | No | Yes |
+| Automated HTML report       | Yes | No | No | No |
+| Integration with screening / SPC | Yes | No | Partial | No |
+
+The strengths of **iQualityR.doe** lie in tight integration between
+screening, RSM, MSA, and SPC; the convenience of a single
+`IqrDoeTask` object that flows through design, fit, plot, and report;
+the explicit `alpha` keyword API for CCD generation; automatic
+stationary point computation for all RSM designs (CCD, BBD); and
+IqrTheme-consistent visualizations that reuse the shared
+**iQualityR.plot** infrastructure.
+
+# Exporting a Report
+
+The end-to-end RSM workflow closes with `task$report()`, which packages
+the design table, the ANOVA output, the model-fit statistics, and the
+figures produced by `task$plot()` into a single self-contained file
+that can be circulated to non-R users. Two formats are supported:
+
+- `format = "excel"` -- a multi-sheet `.xlsx` workbook with one sheet
+  per section (design, ANOVA, coefficients, plots).
+- `format = "html"` -- a single `.html` file with embedded base64
+  images, suitable for email or intranet publication.
+
+The `path` argument controls the output file. Because the call writes
+to disk, the examples below use `tempfile()` and are wrapped in
+`# Not run` so that building the vignette does not litter the user's
+working directory or fail on read-only file systems.
+
+```{r export-report, eval = FALSE}
+# Not run:
+
+# Excel workbook (multi-sheet .xlsx with embedded plots).
+xlsx_path <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+# message("Excel report written to: ", xlsx_path)
+
+# HTML report (single .html file with embedded images).
+html_path <- tempfile(fileext = ".html")
+task$report(format = "html", path = html_path)
+# message("HTML report written to: ", html_path)
+```
+
+**Decision.** Use `format = "excel"` when the recipient needs to
+re-use the numbers (e.g., a process engineer who will copy the
+coefficient table into a control-chart spec) and `format = "html"`
+when the report is purely for review and sign-off (e.g., a QA
+manager who needs to read the conclusions and look at the figures
+but will not recompute anything). Either format captures the full
+analysis in a single artefact, which is the main operational benefit
+of the `IqrDoeTask` life-cycle described in the API Overview.
+
+# References
+
+1. Box, G. E. P., & Wilson, K. B. (1951). On the Experimental
+   Attainment of Optimum Conditions. *Journal of the Royal
+   Statistical Society, Series B*, 13(1), 1--45.
+2. Box, G. E. P., & Behnken, D. W. (1960). Some New Three Level
+   Designs for the Study of Quantitative Variables. *Technometrics*,
+   2(4), 455--475.
+3. Myers, R. H., Montgomery, D. C., & Anderson-Cook, C. M. (2016).
+   *Response Surface Methodology: Process and Product Optimization
+   Using Designed Experiments* (4th ed.). Wiley.
+4. Khuri, A. I., & Cornell, J. A. (1996). *Response Surfaces: Designs
+   and Analyses* (2nd ed.). CRC Press.
+5. Montgomery, D. C. (2019). *Design and Analysis of Experiments*
+   (10th ed.), Chapter 11. Wiley.
+6. Lenth, R. V. (2009). Response-Surface Methods in R, Using **rsm**.
+   *Journal of Statistical Software*, 32(7), 1--17.
+
+# sessionInfo
+
+```{r sessioninfo}
+sessionInfo()
+```

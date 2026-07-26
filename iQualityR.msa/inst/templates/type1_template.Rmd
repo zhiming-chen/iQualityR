@@ -1,0 +1,243 @@
+---
+title: "Type 1 Gage Study Report"
+subtitle: "`r ifelse(params$study_type == 'bias', 'Single reference bias and capability', 'Gage linearity and bias')`"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M:%S')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_width: 9
+    fig_height: 5.5
+params:
+  results: NULL
+  plan: NULL
+  theme_obj: NULL
+  timestamp: NULL
+  study_type: "bias"
+  statistics: NULL
+  diagnostics: NULL
+  data_tables: NULL
+  raw_output: NULL
+  plots: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+`%||%` <- function(x, y) if (is.null(x)) y else x
+fmt_num <- function(x, digits = 4) ifelse(is.na(x), "NA", sprintf(paste0("%.", digits, "f"), x))
+fmt_pct100 <- function(x, digits = 2) ifelse(is.na(x), "NA", sprintf(paste0("%.", digits, "f%%"), x))
+fmt_p <- function(x) ifelse(is.na(x), "NA", ifelse(x < 0.0001, "<0.0001", sprintf("%.4f", x)))
+round_df <- function(x, digits = 4) {
+  if (is.null(x) || !is.data.frame(x) || nrow(x) == 0) return(x)
+  for (nm in names(x)) if (is.numeric(x[[nm]])) x[[nm]] <- round(x[[nm]], digits)
+  x
+}
+s <- params$statistics
+d <- params$diagnostics
+plots <- params$plots %||% list()
+```
+
+# Executive Summary
+
+This report follows a Type 1 gage study structure: repeated measurements are compared with a known reference value to estimate bias, repeatability, and gage capability. Capability is judged with Cg and Cgk, while the VDA 5 uncertainty view separates repeatability, resolution, bias, calibration, and other uncertainty components.
+
+```{r summary-table}
+if (params$study_type == "bias") {
+  summary_df <- data.frame(
+    Metric = c("Number of measurements", "Reference value", "Mean measurement", "StDev", "6 * StDev", "Tolerance", "k factor", "Bias", "T", "P-value", "Cg", "Cgk", "%Var (Repeatability)", "%Var (Repeatability and Bias)", "VDA5 u_EVR (=s)", "VDA5 u_BI (=|Bias|)", "VDA5 u_MS", "VDA5 Expanded U (k=2)", "VDA5 %QMS"),
+    Value = c(
+      s$n,
+      fmt_num(s$reference_value, 4),
+      fmt_num(s$mean_meas, 4),
+      fmt_num(s$sd_meas, 4),
+      fmt_num(6 * s$sd_meas, 4),
+      fmt_num(s$tolerance, 4),
+      fmt_num(s$k_factor, 2),
+      fmt_num(s$bias, 4),
+      fmt_num(s$t_stat, 4),
+      fmt_p(s$p_value),
+      fmt_num(s$Cg, 3),
+      fmt_num(s$Cgk, 3),
+      fmt_pct100(s$percent_repeatability, 2),
+      fmt_pct100(s$percent_repeatability_bias, 2),
+      fmt_num(s$vda5_u_evr, 6),
+      fmt_num(s$vda5_u_bi, 6),
+      fmt_num(s$vda5_u_ms, 6),
+      fmt_num(s$vda5_expanded_u, 6),
+      fmt_pct100(s$vda5_qms_percent, 2)
+    ),
+    Decision = c("", "", "", "", "", "", "", "", "", "",
+                 ifelse(d$Cg_ok, "PASS", "FAIL"),
+                 ifelse(d$Cgk_ok, "PASS", "FAIL"),
+                 "", "",
+                 "", "", "", "",
+                 ifelse(d$vda5_qms_ok, "PASS", "FAIL"))
+  )
+  knitr::kable(summary_df, caption = "Type 1 gage study summary")
+} else {
+  summary_df <- data.frame(
+    Metric = c("Total measurements", "Reference points", "Tolerance", "Process variation (PV)", "Average bias", "%Avg bias of PV", "Max absolute bias", "%Max bias of PV", "Linearity (|slope|*PV)", "%Linearity of PV", "Linearity 95% CI", "Slope", "Slope 95% CI", "R-squared"),
+    Value = c(
+      s$n_total,
+      s$n_ref_points,
+      fmt_num(s$tolerance, 4),
+      fmt_num(s$process_variation, 4),
+      fmt_num(s$avg_bias, 4),
+      fmt_pct100(s$percent_avg_bias, 2),
+      fmt_num(s$max_bias, 4),
+      fmt_pct100(s$percent_max_bias, 2),
+      fmt_num(s$linearity, 4),
+      fmt_pct100(s$percent_linearity, 2),
+      paste0("[", fmt_num(s$ci_linearity[1], 4), ", ", fmt_num(s$ci_linearity[2], 4), "]"),
+      fmt_num(s$slope, 4),
+      paste0("[", fmt_num(s$ci_slope[1], 4), ", ", fmt_num(s$ci_slope[2], 4), "]"),
+      fmt_num(s$r_squared, 4)
+    ),
+    Decision = c("", "", "", "", "", "", ifelse(d$percent_max_bias_ok, "PASS", "FAIL"), "", "", "", "", ifelse(d$slope_ok, "PASS", "FAIL"), "", "info")
+  )
+  knitr::kable(summary_df, caption = "Linearity and bias study summary")
+}
+```
+
+# Statistical Results
+
+```{r detailed-stats}
+if (params$study_type == "bias") {
+  detail <- data.frame(
+    Item = c("Bias", "95% CI lower", "95% CI upper", "Bias contains zero", "Percent bias of tolerance", "Cg criterion (k*T/(6s))", "Cgk criterion ((k*T/2-|Bias|)/(3s))", "VDA5 u_EVR (single-meas repeatability)", "VDA5 u_BI (uncorrected |Bias|)", "VDA5 capability (<15% capable)"),
+    Value = c(
+      fmt_num(s$bias, 4),
+      fmt_num(s$ci_bias[1], 4),
+      fmt_num(s$ci_bias[2], 4),
+      ifelse(0 >= s$ci_bias[1] && 0 <= s$ci_bias[2], "YES", "NO"),
+      fmt_pct100(s$percent_bias, 2),
+      ">= 1.33",
+      ">= 1.33",
+      fmt_num(s$vda5_u_evr, 6),
+      fmt_num(s$vda5_u_bi, 6),
+      s$vda5_qms_capability
+    )
+  )
+  knitr::kable(detail, caption = "Bias test, capability criteria, and VDA5 uncertainty")
+} else {
+  detail <- data.frame(
+    Item = c("Process variation (PV)", "Intercept", "Slope", "Slope SE", "Slope t-stat", "Slope p-value", "Slope CI lower", "Slope CI upper", "Linearity (|slope|*PV)", "Linearity CI lower", "Linearity CI upper", "R-squared", "S (regression)", "Average StDev"),
+    Value = c(
+      fmt_num(s$process_variation, 4),
+      fmt_num(s$intercept, 4),
+      fmt_num(s$slope, 6),
+      fmt_num(s$se_slope, 6),
+      fmt_num(s$t_slope, 4),
+      fmt_p(s$p_slope),
+      fmt_num(s$ci_slope[1], 6),
+      fmt_num(s$ci_slope[2], 6),
+      fmt_num(s$linearity, 4),
+      fmt_num(s$ci_linearity[1], 4),
+      fmt_num(s$ci_linearity[2], 4),
+      fmt_num(s$r_squared, 4),
+      fmt_num(s$s_regression, 6),
+      fmt_num(s$avg_sd, 4)
+    )
+  )
+  knitr::kable(detail, caption = "Regression of individual biases on reference value (Minitab Gage Linearity and Bias Study)")
+}
+```
+
+```{r vda5, eval=params$study_type == "bias"}
+if (!is.null(params$data_tables$vda5_uncertainty)) {
+  knitr::kable(round_df(params$data_tables$vda5_uncertainty, 4),
+               caption = "VDA 5 uncertainty budget (Type A = statistical, Type B = other means; per GUM/VDA 5 5.3)")
+}
+```
+
+```{r stability, eval=params$study_type == "bias"}
+stab <- s$stability_ok
+if (!is.null(stab)) {
+  stab_df <- data.frame(
+    Rule = c("Beyond +-3 sigma (Nelson R1)",
+             "9-pt same side (Nelson R2, shift)",
+             "6-pt trend (Nelson R3)",
+             "2 of 3 beyond +-2 sigma (Nelson R5)",
+             "Overall stability"),
+    Triggered = c(
+      ifelse(isTRUE(s$stability_beyond_3s), "YES", "no"),
+      ifelse(isTRUE(s$stability_shift_9), "YES", "no"),
+      ifelse(isTRUE(s$stability_trend_6), "YES", "no"),
+      ifelse(isTRUE(s$stability_2of3_beyond_2s), "YES", "no"),
+      ifelse(is.na(stab), "N/A", ifelse(stab, "no", "YES"))
+    )
+  )
+  knitr::kable(stab_df, caption = "Run-chart stability diagnostics (MSA 4th ed. requires in-control process)")
+}
+```
+
+```{r ref-summary, eval=params$study_type == "linearity"}
+if (!is.null(params$data_tables$ref_summary)) {
+  knitr::kable(round_df(params$data_tables$ref_summary, 4),
+               caption = "Per-reference bias summary (with stability flags)")
+}
+```
+
+```{r vda5-linearity, eval=params$study_type == "linearity"}
+if (!is.null(params$data_tables$vda5_uncertainty)) {
+  knitr::kable(round_df(params$data_tables$vda5_uncertainty, 4),
+               caption = "VDA 5 uncertainty budget (Type A = statistical, Type B = other means; u_LIN from linearity per VDA 5 5.3.4)")
+}
+```
+
+# Graphics
+
+```{r plots, fig.height=5.5}
+for (nm in names(plots)) {
+  if (inherits(plots[[nm]], "ggplot") || inherits(plots[[nm]], "patchwork")) print(plots[[nm]])
+}
+```
+
+# Interpretation
+
+```{r conclusion}
+if (params$study_type == "bias") {
+  ok <- isTRUE(d$Cg_ok) && isTRUE(d$Cgk_ok) && isTRUE(d$vda5_qms_ok)
+  cat(sprintf("Overall decision: **%s**.\n\n", ifelse(ok, "PASS", "FAIL")))
+  cat(sprintf("The measured bias is %s, representing %s of tolerance. Cg is %s and Cgk is %s.\n\n", fmt_num(s$bias, 4), fmt_pct100(s$percent_bias, 2), fmt_num(s$Cg, 3), fmt_num(s$Cgk, 3)))
+  cat(sprintf("VDA 5: u_EVR = s = %s (single-measurement repeatability), u_BI = |Bias| = %s (uncorrected systematic), u_MS = %s, %%QMS = %s (%s).\n\n", fmt_num(s$vda5_u_evr, 6), fmt_num(s$vda5_u_bi, 6), fmt_num(s$vda5_u_ms, 6), fmt_pct100(s$vda5_qms_percent, 2), s$vda5_qms_capability))
+  if (!is.null(s$stability_ok) && !is.na(s$stability_ok)) {
+    cat(sprintf("Run-chart stability (MSA 4th ed.): %s. Statistical control of the measurement process is a prerequisite for interpreting Cg/Cgk and the bias test.\n\n",
+               ifelse(s$stability_ok, "PASS (in control)", "FAIL (out of control)")))
+  }
+  if (!ok) cat("The gage should be reviewed for repeatability, calibration bias, resolution, and operator procedure before release for production decisions.")
+} else {
+  ok <- isTRUE(d$slope_ok) && isTRUE(d$r2_ok) && isTRUE(d$percent_linearity_ok) &&
+         isTRUE(d$percent_avg_bias_ok) && isTRUE(d$per_ref_bias_ok) &&
+         isTRUE(d$vda5_qms_ok) && isTRUE(d$per_ref_stability_ok)
+  cat(sprintf("Overall decision: **%s**.\n\n", ifelse(ok, "PASS", "FAIL")))
+  cat(sprintf("Linearity = |slope|*PV = %s (%s of process variation); the maximum absolute bias is %s (%s of process variation). Slope 95%% CI = [%s, %s].",
+             fmt_num(s$linearity, 4), fmt_pct100(s$percent_linearity, 2),
+             fmt_num(s$max_bias, 4), fmt_pct100(s$percent_max_bias, 2),
+             fmt_num(s$ci_slope[1], 4), fmt_num(s$ci_slope[2], 4)))
+  cat(sprintf("\n\nVDA 5 (linearity study): u_EVR = s_pooled = %s (pooled within-reference repeatability), u_LIN = |Linearity|/sqrt(3) = %s (rectangular, uncorrected), u_MS = %s, %%QMS = %s (%s).",
+             fmt_num(s$vda5_u_evr, 6), fmt_num(s$vda5_u_lin, 6),
+             fmt_num(s$vda5_u_ms, 6), fmt_pct100(s$vda5_qms_percent, 2),
+             s$vda5_qms_capability))
+  if (!is.null(d$per_ref_stability_ok)) {
+    cat(sprintf("\n\nPer-reference stability (MSA 4th ed.): %s. Each reference's run chart must be in statistical control for the per-reference bias t-tests to be valid.",
+               ifelse(d$per_ref_stability_ok, "PASS (all references in control)",
+                      "FAIL (some references out of control)")))
+  }
+  if (!ok) cat("\n\nThe gage should be reviewed for linearity, per-reference bias, and repeatability before release for production decisions.")
+}
+```
+
+# Appendix
+
+```{r protocol}
+cat(sprintf("Specification limits: LSL = %s, USL = %s\n", fmt_num(s$spec_limits$lsl, 4), fmt_num(s$spec_limits$usl, 4)))
+cat(sprintf("Tolerance: %s\n", fmt_num(s$tolerance, 4)))
+```
+
+---
+
+Report generated by iQualityR.msa.

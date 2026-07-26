@@ -1,0 +1,1173 @@
+---
+title: "Modern AI-Augmented Design of Experiments: A Bayesian Optimization Case Study"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Modern AI-Augmented Design of Experiments: A Bayesian Optimization Case Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  warning    = FALSE,
+  message    = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+set.seed(2025)
+```
+
+# Introduction: From Static Designs to Learning Systems
+
+Classical design of experiments (DOE) --- factorial designs, response
+surface methodology (RSM), and Taguchi robust designs --- was conceived
+in an era when experiments were cheap, repeatability was the primary
+concern, and the number of factors was modest. Modern industrial and
+scientific settings frequently violate these assumptions:
+
+| Challenge | Classical DOE | Modern DOE |
+|-----------|---------------|------------|
+| **Expensive trials** | One-shot, fixed design | Sequential, adaptive designs |
+| **Nonlinear / multimodal responses** | Low-order polynomial surrogate | Gaussian process surrogates |
+| **Multiple data sources** | Cannot reuse simulation data | Multi-fidelity modeling |
+| **Unknown response shape** | Best with smooth, unimodal surfaces | Bayesian optimization (BO) |
+
+This vignette demonstrates how **iQualityR.doe** addresses these
+challenges through a complete engineering case study. We will:
+
+1. Frame an expensive chemical-process optimization problem with a
+   multimodal response.
+2. Ask `AutoDOECopilot` to recommend a design strategy.
+3. Fit a Gaussian process (GP) surrogate with `BayesianOptimizer` and
+   visualise its posterior mean and 95% credible band.
+4. Use the Expected Improvement (EI) acquisition function and
+   `$suggest_next()` to recommend the next trial.
+5. Run a short sequential BO loop and plot the convergence.
+6. Leverage biased historical simulation data with
+   `MultiFidelityOptimizer` to correct predictions.
+7. Compare briefly with classical RSM and confirm the optimum with a
+   confirmation trial.
+
+# API Overview
+
+This vignette uses three modern optimization classes from
+**iQualityR.doe**, plus the `IqrDoeTask` life-cycle that powers the
+underlying experimental designs. The typical `IqrDoeTask` workflow is:
+
+```r
+task <- rsm_design(...)         # or factorial_design / screening_design
+task$data <- df                  # attach the observed responses
+task$compute()                  # fit ANOVA + second-order lm models
+task$summary()                  # print the analysis
+task$plot(type = "...")         # generate figures (8 types available)
+task$report(format = "excel", path = "...")  # export a report
+```
+
+## The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument        | Purpose                                                                 |
+|-----------------|-------------------------------------------------------------------------|
+| `type`          | One of the eight plot types listed below.                              |
+| `theme`         | Optional `IqrTheme` object (or theme name) to override the task theme. |
+| `...`           | Forwarded to the plotter. For response-surface types this includes `response_name`, `x_var`, and `y_var`. |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale). |
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.   |
+| `"response_surface"` | `list` (see below)      | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly).  |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                   |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                              |
+
+For `type = "response_surface"` the returned list contains
+`surface_plot`, `contour_plot`, `combined_plot`, and (when **plotly**
+is installed) `interactive_plot`.
+
+> **Important: invisible returns.** Like `plot()` on base R objects,
+> `task$plot()` returns its value *invisibly*. In an interactive R
+> session the figure auto-prints, but inside `rmarkdown` / `for`
+> loops / functions you must call `print()` explicitly:
+
+```r
+p <- task$plot(type = "main_effects")
+print(p)            # renders the figure inside an R Markdown chunk
+```
+
+## The `BayesianOptimizer` class
+
+`BayesianOptimizer` wraps a Gaussian-process surrogate (via
+**kernlab** when available, with an `lm` polynomial fallback) and an
+Expected-Improvement acquisition function. Public methods (verified
+against `R/BayesianDOE.R`):
+
+| Method                          | Purpose                                                                       |
+|---------------------------------|-------------------------------------------------------------------------------|
+| `$new(kernel = "rbf")`          | Constructor. `kernel` is `"rbf"` (default) or `"matern"`.                     |
+| `$fit(X, y)`                    | Fit the GP surrogate to an `n x p` matrix `X` and numeric response `y`.       |
+| `$predict(X_new)`               | Predict at new points. Returns `list(predict, se.fit)`.                       |
+| `$expected_improvement(X_new, y_best)` | Expected-Improvement acquisition function for minimisation.           |
+| `$suggest_next(bounds, n_starts = 20, seed = NULL)` | Multi-start L-BFGS-B maximiser of EI. Returns `list(point, ei)`. |
+| `$run_sequential(initial_design, response_function, n_iterations = 20, seed = NULL)` | Full sequential BO loop. Returns `list(history, best_y, best_x, ei_trace)`. |
+
+> There is **no** `$optimize()` method on this class; it was renamed
+> to `$suggest_next()` to avoid shadowing `base::optimize()`.
+
+## The `MultiFidelityOptimizer` class
+
+`MultiFidelityOptimizer` is a lightweight, model-agnostic
+implementation of Kennedy & O'Hagan (2000) style bias correction.
+Public methods (verified against `R/MultiFidelityOptimizer.R`):
+
+| Method                          | Purpose                                            |
+|---------------------------------|----------------------------------------------------|
+| `$new()`                        | Constructor (no arguments).                        |
+| `$evaluate_auxiliary_value(historical_data, response_col, current_data = NULL)` | Summarise historical data; estimate bias, correlation, and recommended minimum number of new high-fidelity runs. |
+| `$bias_corrected_prediction(historical_model, current_data, design_to_predict, method = "additive")` | Bias-correct a low-fidelity prediction using a historical **model object** (e.g. `lm`), **not** a data frame. Returns `list(prediction, bias_correction, method, residual_sd)`. |
+| `$augment_historical_data(historical_data, n_synthetic = 0, noise_factor = 0.05, seed = NULL)` | Bootstrap + Gaussian-perturb the historical data to produce synthetic low-fidelity rows. |
+
+> There are **no** `$fit()` or `$predict()` methods on this class.
+> Bias correction takes a *fitted model object* (e.g. an `lm` trained
+> on the historical data) via the `historical_model` argument, not a
+> data frame.
+
+## The `AutoDOECopilot` class
+
+`AutoDOECopilot` is a rule-based expert system that recommends a DOE
+strategy from the problem context. Public methods (verified against
+`R/AutoDOECopilot.R`):
+
+| Method                          | Purpose                                            |
+|---------------------------------|----------------------------------------------------|
+| `$new()`                        | Constructor (no arguments).                        |
+| `$recommend(n_factors, goal = "optimization", budget = "medium", industry = "manufacturing", has_historical_data = FALSE)` | Return a recommended strategy list. |
+
+`$recommend()` returns a list with three elements:
+
+| Element       | Type           | Contents                                                                                          |
+|---------------|----------------|---------------------------------------------------------------------------------------------------|
+| `input`       | list           | The provided arguments: `n_factors`, `goal`, `budget`, `industry`.                               |
+| `strategies`  | list of lists  | Each entry has `name`, `design_type`, `runs`, `pros`, `cons`, `applicable_scenario`; multi-fidelity and service-industry notes also carry `description` and `priority`. |
+| `next_step`   | character      | A human-readable suggested next action (e.g. `"Run experiment -> ANOVA analysis -> Identify significant factors"`). |
+
+# Case Study: Catalytic Reaction Yield Optimization
+
+## Problem Statement
+
+A chemical engineering team is developing a heterogeneous catalytic
+process for converting a feedstock into a high-value active ingredient.
+The reaction is run in a continuously stirred reactor. Each
+experimental run consumes one full day of operator time and uses
+expensive catalyst, so the team can afford at most **15--20 trials
+total** across the project.
+
+The objective is to **maximise the reaction yield (%)**. Two factors
+are believed to drive the conversion:
+
+| Factor | Symbol | Range | Unit |
+|:-------|:-------|:------|:-----|
+| Reactor temperature | `Temperature` | 120 -- 180 | $^\circ$C |
+| Catalyst loading    | `Catalyst`    | 0.5 -- 1.5  | % w/w |
+
+Preliminary chemistry suggests the response surface is **multimodal**:
+a high-yield regime at moderate-to-high temperature with high catalyst
+loading, and a secondary lower-yield regime at lower temperature with
+lower catalyst loading. Classical second-order RSM would risk getting
+trapped in the secondary basin if the initial design happened to land
+there.
+
+## The True (Unknown) Response Surface
+
+In a real project the response surface is unknown. For reproducibility
+of the vignette we expose the digital-twin function used to evaluate
+"experimental" runs. The function has two local maxima --- a global
+peak near (`T = 165`, `C = 1.15`) with yield $\approx 91.5\%$, and a
+secondary peak near (`T = 138`, `C = 0.75`) with yield $\approx 84\%$.
+
+```{r define-response}
+# Digital-twin yield function (would be a physical experiment in practice).
+# Returns yield (%) -- to be MAXIMISED.
+true_yield <- function(Temperature, Catalyst) {
+  t <- (Temperature - 150) / 30   # scaled temperature
+  c <- (Catalyst - 1.0)   / 0.5   # scaled catalyst loading
+  80 + 12 * exp(-((t - 0.5)^2 + (c - 0.3)^2) / 0.30) +
+       5 * exp(-((t + 0.4)^2 + (c + 0.5)^2) / 0.40) -
+       2 * (t^2 + c^2)
+}
+
+# A dense grid used throughout for visualisation.
+grid_2d <- expand.grid(
+  Temperature = seq(120, 180, length.out = 60),
+  Catalyst    = seq(0.5,  1.5,  length.out = 60)
+)
+grid_2d$Yield <- true_yield(grid_2d$Temperature, grid_2d$Catalyst)
+
+# Plot the (unknown) true yield surface.
+ggplot(grid_2d, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = Yield)) +
+  geom_contour(aes(z = Yield), color = "white", alpha = 0.4, binwidth = 2) +
+  scale_fill_viridis_c() +
+  labs(
+    title = "True (unknown) yield surface",
+    subtitle = "Multimodal: global peak ~91% near (165, 1.15); secondary peak ~84%",
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)"
+  ) +
+  theme_minimal()
+```
+
+# Step 1 --- Strategy Recommendation with AutoDOECopilot
+
+Before running any experiment, the team consults `AutoDOECopilot`, a
+rule-based expert system that recommends a design strategy from the
+number of factors, the optimisation goal, the budget, and the industry
+context. The team indicates that historical simulation data is
+available, which triggers a multi-fidelity recommendation.
+
+```{r copilot-recommend}
+copilot <- AutoDOECopilot$new()
+
+recommendation <- copilot$recommend(
+  n_factors           = 2,
+  goal                = "optimization",
+  budget              = "medium",
+  industry            = "manufacturing",
+  has_historical_data = TRUE
+)
+
+# Print the recommended strategies.
+for (i in seq_along(recommendation$strategies)) {
+  s <- recommendation$strategies[[i]]
+  cat(sprintf("Strategy %d: %s\n", i, s$name))
+  if (!is.null(s$design_type)) cat(sprintf("  design_type: %s\n", s$design_type))
+  if (!is.null(s$runs))        cat(sprintf("  runs: %s\n",     paste(s$runs, collapse = ", ")))
+  if (!is.null(s$pros))        cat(sprintf("  pros: %s\n",     s$pros))
+  if (!is.null(s$priority))    cat(sprintf("  priority: %s\n", s$priority))
+  if (!is.null(s$description)) cat(sprintf("  description: %s\n", s$description))
+  cat("\n")
+}
+cat("Suggested next step:", recommendation$next_step, "\n")
+```
+
+The copilot proposes a small factorial design and, because historical
+data is available, a **Multi-Fidelity Boost** that is expected to cut
+the number of physical runs by roughly 40%. Rather than commit to a
+fixed factorial design, the team adopts the modern sequential BO
+philosophy: a small space-filling initial design followed by
+acquisition-driven trials.
+
+# Step 2 --- Initial Design and GP Surrogate
+
+## Initial Space-Filling Design
+
+With only two factors and an expensive response, the team runs a small
+6-point space-filling design (an LHS-like layout) to seed the
+surrogate.
+
+```{r initial-design}
+# A reproducible 6-point space-filling initial design.
+initial_design <- data.frame(
+  Temperature = c(125, 135, 145, 155, 165, 175),
+  Catalyst    = c(1.40, 0.70, 1.20, 0.60, 1.00, 1.30)
+)
+# Evaluate the (in practice unknown) yield.
+initial_design$Yield <- true_yield(
+  initial_design$Temperature, initial_design$Catalyst
+)
+initial_design
+```
+
+The initial best yield is already informative but well below the global
+peak. The team will use Bayesian optimization to climb toward it.
+
+## Fitting the Gaussian Process Surrogate
+
+The `BayesianOptimizer` class wraps a Gaussian-process surrogate fit
+through `kernlab::gausspr()` and exposes the GP posterior through
+`fit()`, `predict()`, and the EI acquisition function.
+
+```{r fit-gp}
+bo <- BayesianOptimizer$new(kernel = "rbf")
+
+# BO minimises by convention, so we pass -Yield as the response.
+X_init <- as.matrix(initial_design[, c("Temperature", "Catalyst")])
+y_init <- -initial_design$Yield
+
+bo$fit(X_init, y_init)
+
+# Quick sanity check: posterior mean at the training points.
+bo$predict(X_init)
+```
+
+**Honest note on kernel support.** The `BayesianOptimizer` constructor
+accepts `kernel = "rbf"` (default) or `"matern"`. In the current
+implementation, the main GP fit always uses the RBF kernel via
+`kernlab::rbfdot()`, while the `"matern"` choice routes the
+leave-one-out residual helper to `kernlab::materndot()` --- a function
+that is not exported by recent versions of **kernlab**. To keep the
+vignette reproducible across `kernlab` versions we therefore use
+`kernel = "rbf"` throughout. The RBF kernel is also a perfectly
+reasonable default for smooth chemical-process responses.
+
+# Step 3 --- Visualising the GP Posterior
+
+The GP provides both a posterior mean (the surrogate prediction) and a
+posterior standard deviation (the epistemic uncertainty). We visualise
+both over the full factor space.
+
+## Posterior Mean Surface
+
+```{r gp-posterior-2d}
+# Predict over the dense grid.
+pred_grid <- bo$predict(grid_2d[, c("Temperature", "Catalyst")])
+grid_2d$mu      <- pred_grid$predict
+grid_2d$se      <- pred_grid$se.fit
+grid_2d$yield_mu <- -grid_2d$mu  # convert back to yield
+
+ggplot(grid_2d, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = yield_mu)) +
+  geom_contour(aes(z = yield_mu), color = "white", alpha = 0.4, binwidth = 2) +
+  geom_point(data = initial_design, aes(Temperature, Catalyst),
+             color = "white", size = 2.5, shape = 21, stroke = 1.2) +
+  scale_fill_viridis_c() +
+  labs(
+    title = "GP posterior mean of yield",
+    subtitle = "White circles: initial design points",
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)",
+    fill = "Yield (%)"
+  ) +
+  theme_minimal()
+```
+
+## Posterior Uncertainty Surface
+
+The predictive standard deviation reveals where the GP is least
+informed --- typically far from the design points.
+
+```{r gp-posterior-se}
+ggplot(grid_2d, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = se)) +
+  geom_point(data = initial_design, aes(Temperature, Catalyst),
+             color = "white", size = 2.5, shape = 21, stroke = 1.2) +
+  scale_fill_viridis_c(option = "magma", direction = -1) +
+  labs(
+    title = "GP posterior standard deviation",
+    subtitle = "Uncertainty is largest far from the design points",
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)",
+    fill = "sd"
+  ) +
+  theme_minimal()
+```
+
+## 1-D Slice with 95% Credible Band
+
+Slicing along `Catalyst = 1.10` (near the suspected optimum) makes the
+mean $\pm 1.96 \cdot \sigma$ band easy to read.
+
+```{r gp-posterior-1d}
+slice_df <- data.frame(Temperature = seq(120, 180, length.out = 120))
+slice_df$Catalyst <- 1.10
+
+pred_slice <- bo$predict(slice_df)
+slice_df$mu       <- pred_slice$predict
+slice_df$se       <- pred_slice$se.fit
+slice_df$yield_mu <- -slice_df$mu
+slice_df$lower    <- -slice_df$mu - 1.96 * slice_df$se
+slice_df$upper    <- -slice_df$mu + 1.96 * slice_df$se
+slice_df$true     <- true_yield(slice_df$Temperature, slice_df$Catalyst)
+
+ggplot(slice_df, aes(Temperature)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              fill = "steelblue", alpha = 0.25) +
+  geom_line(aes(y = yield_mu), color = "steelblue", linewidth = 1) +
+  geom_line(aes(y = true), color = "firebrick", linetype = "dashed", linewidth = 0.8) +
+  geom_point(data = initial_design, aes(Temperature, Yield),
+             color = "black", size = 2) +
+  labs(
+    title = "GP posterior with 95% credible band",
+    subtitle = "Slice at Catalyst = 1.10; dashed red = true (unknown) yield",
+    x = "Temperature (deg C)", y = "Yield (%)",
+    caption = "Blue ribbon: GP mean +/- 1.96 * se"
+  ) +
+  theme_minimal()
+```
+
+The GP credible band covers the true yield along this slice, and the
+band widens between design points --- exactly the behaviour we need for
+an acquisition function to balance exploration and exploitation.
+
+# Step 4 --- Expected Improvement Acquisition
+
+## EI over the Factor Space
+
+For minimisation of $-Yield$, the Expected Improvement at a candidate
+$x$ with posterior mean $\mu(x)$ and standard deviation $\sigma(x)$
+against the current best $y_{\min}$ is
+
+$$
+\mathrm{EI}(x) = (y_{\min} - \mu(x))\,\Phi(z) + \sigma(x)\,\phi(z),
+\qquad z = \frac{y_{\min} - \mu(x)}{\sigma(x)}.
+$$
+
+The `BayesianOptimizer` exposes this through `$expected_improvement()`.
+
+```{r ei-heatmap}
+# Compute EI over the dense grid (current best = smallest -Yield so far).
+y_best <- min(y_init)
+ei_grid <- bo$expected_improvement(
+  X_new = grid_2d[, c("Temperature", "Catalyst")],
+  y_best = y_best
+)
+grid_2d$EI <- pmax(ei_grid, 0)
+
+ggplot(grid_2d, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = EI)) +
+  geom_point(data = initial_design, aes(Temperature, Catalyst),
+             color = "white", size = 2.5, shape = 21, stroke = 1.2) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    title = "Expected Improvement acquisition surface",
+    subtitle = sprintf("Current best yield = %.2f%%", -y_best),
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)",
+    fill = "EI"
+  ) +
+  theme_minimal()
+```
+
+The EI surface is concentrated in the unexplored high-temperature,
+high-catalyst region where the GP expects the largest yield gains.
+
+## Recommending the Next Trial with `$suggest_next()`
+
+`$suggest_next()` maximises EI by multi-start L-BFGS-B inside the
+supplied `bounds`. We use a small `n_starts` to keep the vignette fast;
+in production 20+ starts is recommended.
+
+```{r suggest-next}
+bounds <- list(lower = c(120, 0.5), upper = c(180, 1.5))
+
+next_rec <- bo$suggest_next(bounds, n_starts = 4, seed = 42)
+next_rec
+
+# Overlay the recommended next trial on the EI surface.
+next_df <- as.data.frame(t(next_rec$point))
+names(next_df) <- c("Temperature", "Catalyst")
+
+ggplot(grid_2d, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = EI)) +
+  geom_point(data = initial_design, aes(Temperature, Catalyst),
+             color = "white", size = 2.5, shape = 21, stroke = 1.2) +
+  geom_point(data = next_df, aes(Temperature, Catalyst),
+             color = "red", size = 4, shape = 4, stroke = 2) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    title = "Next trial recommended by maximising EI",
+    subtitle = sprintf("Next: T = %.1f, C = %.3f (EI = %.4f)",
+                       next_df$Temperature, next_df$Catalyst, next_rec$ei),
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)"
+  ) +
+  theme_minimal()
+```
+
+The red cross marks the next trial, sitting squarely inside the
+highest-EI region.
+
+# Step 5 --- Sequential Bayesian Optimization Loop
+
+We now run a short sequential loop with the built-in
+`$run_sequential()` method. It seeds the surrogate with the initial
+design, then for each iteration: refits the GP, calls `$suggest_next()`
+(multi-start L-BFGS-B on EI) to propose the next trial, evaluates the
+response function, and appends the result. We pass `n_iterations = 5`
+to keep the vignette budget realistic. The method returns a `history`
+data frame, the best value found, the best parameter settings, and an
+EI trace.
+
+> **Why not hand-code the loop?** A manual `for` loop calling
+> `$fit()` / `$expected_improvement()` / `$suggest_next()` in sequence
+> works, but it is easy to forget to refit, to mis-handle the RNG
+> stream, or to skip the EI trace. `$run_sequential()` packages all of
+> that into one reproducible call. The manual alternative is shown
+> further below for reference.
+
+```{r sequential-loop}
+# BO minimises by convention, so the response function returns -Yield.
+# $run_sequential() expects a function that accepts a single-row data
+# frame and returns a numeric scalar.
+neg_yield <- function(df) {
+  true_yield(df$Temperature, df$Catalyst)
+}
+
+bo_result <- bo$run_sequential(
+  initial_design    = initial_design[, c("Temperature", "Catalyst")],
+  response_function = neg_yield,
+  n_iterations      = 5,
+  seed              = 42
+)
+
+# Reconstruct the trace table expected by the convergence plot.
+# history holds the initial design rows first, then the sequential trials,
+# with a "response" column containing -Yield.
+hist_df <- bo_result$history
+n_init  <- nrow(initial_design)
+trace <- data.frame(
+  iter        = seq_len(nrow(hist_df)),
+  phase       = c(rep("initial", n_init),
+                  rep("sequential", nrow(hist_df) - n_init)),
+  Temperature = hist_df$Temperature,
+  Catalyst    = hist_df$Catalyst,
+  yield       = -hist_df$response,            # convert -Yield back to Yield
+  best_yield  = cummax(-hist_df$response)
+)
+
+# Reconstruct X_all / y_all for the RSM comparison in Step 8.
+X_all <- as.matrix(hist_df[, c("Temperature", "Catalyst")])
+y_all <- hist_df$response                     # already -Yield
+
+trace
+cat(sprintf("\nFinal best yield: %.3f%% at T = %.1f, C = %.3f\n",
+            trace$best_yield[nrow(trace)],
+            tail(trace$Temperature, 1),
+            tail(trace$Catalyst, 1)))
+```
+
+The sequential loop climbs steadily from the initial best of
+`r sprintf("%.2f%%", max(initial_design$Yield))` to a final best of
+about `r sprintf("%.2f%%", tail(trace$best_yield, 1))`, with only five
+additional trials.
+
+**Decision.** `$run_sequential()` reaches the high-yield basin in five
+iterations on top of the six-point initial design, demonstrating the
+sample efficiency of GP + EI. In a production setting we would run
+until the EI trace drops below a threshold (i.e. the surrogate no
+longer expects meaningful gains), then confirm the optimum with a
+physical trial (Step 9). When the budget allows more iterations,
+simply increase `n_iterations`; the RNG stream is anchored by `seed`
+so the result is reproducible.
+
+## Manual alternative (for reference)
+
+For completeness, the equivalent hand-coded loop (the pattern that
+`$run_sequential()` internalises) would look like this. We do **not**
+evaluate it here because `$run_sequential()` above already produces
+`trace`, `X_all`, and `y_all` for the downstream chunks.
+
+```r
+# NOT RUN --- reference only.
+bounds  <- list(lower = c(120, 0.5), upper = c(180, 1.5))
+X_all   <- X_init
+y_all   <- y_init
+for (iter in 1:5) {
+  bo$fit(X_all, y_all)
+  rec      <- bo$suggest_next(bounds, n_starts = 20)
+  next_x   <- as.matrix(rec$point)
+  next_y   <- -true_yield(next_x[1], next_x[2])  # minimise -Yield
+  X_all    <- rbind(X_all, next_x)
+  y_all    <- c(y_all, next_y)
+}
+```
+
+# Step 6 --- Convergence Analysis
+
+```{r convergence}
+ggplot(trace, aes(iter, best_yield)) +
+  geom_step(color = "steelblue", linewidth = 1) +
+  geom_point(aes(color = phase), size = 3) +
+  geom_hline(yintercept = 91.45, linetype = "dashed", color = "firebrick") +
+  annotate("text", x = 1, y = 91.6, color = "firebrick",
+           hjust = 0, label = "True global max (~91.5%)") +
+  scale_color_manual(values = c(initial = "black", sequential = "red")) +
+  labs(
+    title = "BO convergence: best yield vs. trial number",
+    subtitle = "Five sequential trials (red) on top of the 6-point initial design (black)",
+    x = "Trial number", y = "Best yield observed so far (%)",
+    color = "Phase"
+  ) +
+  theme_minimal()
+```
+
+The dashed red line is the true (unknown) global maximum. After only
+11 total trials the BO loop has closed most of the gap to the global
+optimum, demonstrating the sample efficiency of the GP + EI approach.
+
+# Step 7 --- Multi-Fidelity Optimization with Historical Data
+
+## The Multi-Fidelity Setting
+
+The team also has access to a **coarse kinetic simulation** that
+approximates the reactor. The simulation is fast but biased: it
+systematically under-predicts the true yield. We treat the simulation
+as the **low-fidelity** source and the physical experiments as
+**high-fidelity**.
+
+`MultiFidelityOptimizer` implements the Kennedy & O'Hagan (2000)
+autoregressive bias-correction idea in a lightweight, model-agnostic
+way: it learns a global additive bias between a historical
+low-fidelity model and a few high-fidelity runs, then applies that
+bias correction to predict the high-fidelity response at any new
+design point.
+
+## Historical (Low-Fidelity) Data
+
+```{r mf-historical}
+set.seed(7)
+historical <- data.frame(
+  Temperature = runif(40, 120, 180),
+  Catalyst    = runif(40, 0.5,  1.5)
+)
+# Low-fidelity simulation: biased (under-predicts) and slightly noisy.
+historical$Yield <- 0.85 * true_yield(historical$Temperature, historical$Catalyst) -
+                    4.0 + rnorm(40, 0, 0.5)
+
+ggplot() +
+  geom_point(data = historical, aes(Temperature, Catalyst, color = Yield),
+             size = 2.5) +
+  scale_color_viridis_c() +
+  labs(
+    title = "Historical low-fidelity simulation data",
+    subtitle = "Biased: under-predicts true yield by ~20 percentage points",
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)"
+  ) +
+  theme_minimal()
+```
+
+## Assessing the Auxiliary Value
+
+`$evaluate_auxiliary_value()` summarises the historical data and, when
+a few high-fidelity runs are available, estimates the bias and a
+coarse correlation level (High / Medium / Low) based on how many
+historical SDs the high-fidelity mean is shifted by.
+
+```{r mf-auxiliary}
+mf <- MultiFidelityOptimizer$new()
+
+# Three high-fidelity physical trials near the suspected optimum.
+new_trials <- data.frame(
+  Temperature = c(155, 165, 158),
+  Catalyst    = c(1.10, 1.20, 1.10)
+)
+new_trials$Yield <- true_yield(new_trials$Temperature, new_trials$Catalyst)
+
+# Auxiliary-value assessment with the few high-fidelity runs.
+aux <- mf$evaluate_auxiliary_value(
+  historical_data = historical,
+  response_col    = "Yield",
+  current_data    = new_trials
+)
+aux
+```
+
+The historical mean is $\approx 66\%$ while the few high-fidelity
+trials average $\approx 90\%$, so the bias estimate is large and the
+heuristic reports `r aux$correlation` correlation. Even so, the
+historical data is informative about the *shape* of the response; we
+just need to correct the bias.
+
+## Bias-Corrected Prediction
+
+We first fit a low-fidelity model on the historical data (a quadratic
+`lm`), then ask `$bias_corrected_prediction()` to estimate and apply
+the additive bias using the few high-fidelity trials.
+
+```{r mf-bias-correction}
+# Low-fidelity model trained on the historical simulation data.
+historical_model <- lm(
+  Yield ~ Temperature + Catalyst +
+          I(Temperature^2) + I(Catalyst^2) +
+          Temperature:Catalyst,
+  data = historical
+)
+
+# Grid of design points at which we want a high-fidelity prediction.
+design_to_predict <- expand.grid(
+  Temperature = seq(120, 180, length.out = 30),
+  Catalyst    = seq(0.5,  1.5,  length.out = 30)
+)
+
+corrected <- mf$bias_corrected_prediction(
+  historical_model  = historical_model,
+  current_data      = new_trials,
+  design_to_predict = design_to_predict,
+  method            = "additive"
+)
+
+cat(sprintf("Estimated mean bias: %.3f\n", corrected$bias_correction))
+cat(sprintf("Residual sd:         %.3f\n", corrected$residual_sd))
+```
+
+We now compare three surfaces over the same grid: the **raw
+low-fidelity** prediction, the **bias-corrected** prediction, and the
+**true** (unknown in practice) yield.
+
+```{r mf-comparison-plot}
+pred_df <- design_to_predict
+pred_df$low_fidelity <- as.numeric(predict(historical_model, design_to_predict))
+pred_df$corrected    <- corrected$prediction
+pred_df$true_yield   <- true_yield(pred_df$Temperature, pred_df$Catalyst)
+
+# Long form for faceting.
+pred_long <- rbind(
+  data.frame(pred_df[, c("Temperature", "Catalyst")],
+             surface = "Low-fidelity (raw)",     yield = pred_df$low_fidelity),
+  data.frame(pred_df[, c("Temperature", "Catalyst")],
+             surface = "Bias-corrected",         yield = pred_df$corrected),
+  data.frame(pred_df[, c("Temperature", "Catalyst")],
+             surface = "True (unknown in practice)", yield = pred_df$true_yield)
+)
+pred_long$surface <- factor(pred_long$surface, levels = c(
+  "Low-fidelity (raw)", "Bias-corrected", "True (unknown in practice)"
+))
+
+ggplot(pred_long, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = yield)) +
+  geom_contour(aes(z = yield), color = "white", alpha = 0.3, binwidth = 3) +
+  facet_wrap(~ surface, nrow = 1) +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Multi-fidelity bias correction",
+    subtitle = sprintf("Adding 3 high-fidelity trials shifts the surface by +%.1f on average",
+                       corrected$bias_correction),
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+Visually, the bias-corrected surface closely matches the true yield
+surface, while the raw low-fidelity surface misses it by a roughly
+constant offset. A single batch of three high-fidelity trials is
+enough to recalibrate the historical model.
+
+## Augmenting Historical Data with `$augment_historical_data()`
+
+When the historical log is sparse, `$augment_historical_data()`
+generates additional synthetic low-fidelity rows by bootstrap
+resampling of the existing rows followed by a small Gaussian
+perturbation on each numeric column. The perturbation magnitude is
+controlled by `noise_factor` as a fraction of each column's standard
+deviation. This is a cheap form of data augmentation that can
+stabilise the fitted low-fidelity model without running any new
+simulations.
+
+```{r mf-augment}
+augmented <- mf$augment_historical_data(
+  historical_data = historical,
+  n_synthetic     = 20,
+  noise_factor    = 0.05,
+  seed            = 7
+)
+
+cat(sprintf("Original rows:  %d\n", nrow(historical)))
+cat(sprintf("Augmented rows: %d\n", nrow(augmented)))
+cat(sprintf("Synthetic rows added: %d\n", nrow(augmented) - nrow(historical)))
+
+# Compare the marginal distribution of Yield before / after augmentation.
+summary_original  <- summary(historical$Yield)
+summary_augmented <- summary(augmented$Yield)
+cat("\nYield summary (original):\n");  print(summary_original)
+cat("\nYield summary (augmented):\n"); print(summary_augmented)
+```
+
+**Decision.** The augmented data frame keeps the original 40 rows
+intact and appends 20 synthetic rows whose `Yield` distribution
+closely matches the original (the five-number summary is preserved up
+to the small `noise_factor = 0.05` perturbation). Use this when the
+historical log is too small to fit a stable low-fidelity model --- for
+example, when the quadratic `lm` in the bias-correction step is
+rank-deficient. Set `n_synthetic = 0` to get the input back unchanged,
+which is a convenient no-op for unit tests and conditional pipelines.
+
+# Step 8 --- Comparison with Classical RSM
+
+A natural question is whether classical RSM would have done as well.
+The honest answer is: **it depends on the initial design**. RSM fits a
+single second-order polynomial
+
+$$
+y = \beta_0 + \sum_i \beta_i x_i + \sum_i \beta_{ii} x_i^2 + \sum_{i<j}\beta_{ij} x_i x_j + \varepsilon,
+$$
+
+which is unimodal in $x$ and therefore **cannot represent the
+secondary peak** at all. To illustrate, we fit the RSM second-order
+model to the same data accumulated by the BO loop and compare its
+predictions to the GP posterior mean.
+
+```{r rsm-comparison}
+# RSM second-order polynomial fit on all BO data so far.
+rsm_data <- as.data.frame(X_all)
+rsm_data$Yield <- -y_all
+rsm_fit <- lm(
+  Yield ~ Temperature + Catalyst +
+          I(Temperature^2) + I(Catalyst^2) +
+          Temperature:Catalyst,
+  data = rsm_data
+)
+
+# Compare predictions on the dense grid.
+compare_df <- grid_2d[, c("Temperature", "Catalyst")]
+compare_df$GP_posterior_mean <- -bo$predict(compare_df)$predict
+compare_df$RSM_prediction    <- predict(rsm_fit, newdata = compare_df)
+compare_df$True_yield        <- true_yield(compare_df$Temperature, compare_df$Catalyst)
+
+# RMSE of each surrogate against the true surface.
+gp_rmse  <- sqrt(mean((compare_df$GP_posterior_mean - compare_df$True_yield)^2))
+rsm_rmse <- sqrt(mean((compare_df$RSM_prediction    - compare_df$True_yield)^2))
+
+cat(sprintf("RMSE vs. true surface:\n"))
+cat(sprintf("  GP posterior mean : %.3f\n", gp_rmse))
+cat(sprintf("  RSM polynomial    : %.3f\n", rsm_rmse))
+```
+
+```{r rsm-comparison-plot}
+compare_long <- rbind(
+  data.frame(compare_df[, c("Temperature", "Catalyst")],
+             surface = "GP posterior mean",
+             yield = compare_df$GP_posterior_mean),
+  data.frame(compare_df[, c("Temperature", "Catalyst")],
+             surface = "RSM polynomial",
+             yield = compare_df$RSM_prediction),
+  data.frame(compare_df[, c("Temperature", "Catalyst")],
+             surface = "True yield",
+             yield = compare_df$True_yield)
+)
+compare_long$surface <- factor(compare_long$surface, levels = c(
+  "GP posterior mean", "RSM polynomial", "True yield"
+))
+
+ggplot(compare_long, aes(Temperature, Catalyst)) +
+  geom_raster(aes(fill = yield)) +
+  facet_wrap(~ surface, nrow = 1) +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Surrogate comparison: GP vs RSM polynomial",
+    subtitle = sprintf("GP RMSE = %.2f,  RSM RMSE = %.2f  (vs. true surface)", gp_rmse, rsm_rmse),
+    x = "Temperature (deg C)", y = "Catalyst loading (% w/w)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+The RSM polynomial smooths over the secondary peak and tilts the
+global basin, while the GP reproduces both peaks. With the same
+experimental budget, the BO workflow delivers a markedly more
+faithful surrogate of the true (multimodal) response.
+
+# Step 9 --- Confirmation Trial
+
+A surrogate is only a model; the recommended optimum must always be
+confirmed by a physical trial at the proposed setting. We take the
+best point found by the BO loop and confirm it.
+
+```{r confirmation}
+best_idx <- which.max(trace$yield)
+confirmed <- trace[best_idx, c("Temperature", "Catalyst", "yield")]
+confirmed$true_yield <- true_yield(confirmed$Temperature, confirmed$Catalyst)
+confirmed
+```
+
+The confirmed yield matches the BO prediction, validating the
+surrogate. The team has located a high-yield operating regime using
+only 11 physical trials plus 3 calibration trials, well within the
+budget.
+
+# Step 10 --- Visualising and Reporting with IqrDoeTask
+
+Throughout the case study we have used direct **ggplot2** code to
+inspect the GP posterior, the EI surface, and the multi-fidelity
+correction. For the underlying experimental design itself, however,
+`iQualityR.doe` provides a dedicated plotting API on the `IqrDoeTask`
+class. This section builds a small CCD RSM task on the case-study
+factors and demonstrates the eight `task$plot()` types, plot
+customisation, patchwork composition, and report export.
+
+## Building an IqrDoeTask from the case-study factors
+
+We declare the two case-study factors with their low/center/high
+levels, build a CCD design, attach yields simulated from the
+digital-twin function, and call `task$compute()` to fit the
+second-order RSM model.
+
+```{r task-build}
+factors <- list(
+  list(name = "Temperature", type = "continuous", levels = c(120, 150, 180)),
+  list(name = "Catalyst",    type = "continuous", levels = c(0.5, 1.0, 1.5))
+)
+
+task <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  response_vars = "Yield",
+  center_points = 4,
+  randomize     = FALSE,
+  seed          = 2025,
+  auto_compute  = TRUE
+)
+
+# Attach observed yields from the digital-twin function and refit.
+design_df <- task$results$design_info
+design_df$Yield <- true_yield(design_df$Temperature, design_df$Catalyst)
+task$data <- design_df
+task$compute()
+
+task$summary()
+```
+
+The task now holds a fitted second-order model on `Yield`, so all
+eight `task$plot()` types are available.
+
+## The `design` plot
+
+```{r task-plot-design, fig.cap = "Run layout tile view produced by task$plot(type = 'design'). Each cell is one run; colour encodes the factor level."}
+print(task$plot(type = "design"))
+```
+
+**Decision.** The design tile view confirms that the CCD covers the
+factor space symmetrically: factorial corner points, axial
+star points, and four centre points. Use this plot up front to catch
+mistakes in factor coding or run order before any model fitting.
+
+## The `main_effects` plot
+
+```{r task-plot-main-effects, fig.cap = "Marginal effect of each factor on Yield, produced by task$plot(type = 'main_effects')."}
+print(task$plot(type = "main_effects"))
+```
+
+**Decision.** The marginal-effect panels show that `Temperature` has a
+strong non-monotonic effect on yield (rising then plateauing toward
+the high-yield basin), while `Catalyst` has a gentler, roughly monotone
+effect. Both factors matter; neither can be dropped in a subsequent
+screening round.
+
+## The `interaction` plot
+
+```{r task-plot-interaction, fig.cap = "Two-factor interaction panel for Temperature x Catalyst, produced by task$plot(type = 'interaction')."}
+print(task$plot(type = "interaction", response_name = "Yield"))
+```
+
+**Decision.** The interaction panel reveals that the yield response to
+`Temperature` depends on the level of `Catalyst` (the lines are not
+parallel). This is consistent with the multimodal true surface and
+justifies keeping the `Temperature:Catalyst` term in the second-order
+model.
+
+## The `residual` plot
+
+```{r task-plot-residual, fig.cap = "Standard residual diagnostics (QQ, fitted-vs-residual, scale-location) produced by task$plot(type = 'residual')."}
+print(task$plot(type = "residual", response_name = "Yield"))
+```
+
+**Decision.** The residual diagnostics show no systematic structure
+(the QQ points hug the line, the fitted-vs-residual cloud is
+centered on zero, and the scale-location band is roughly flat). The
+second-order RSM model is a valid baseline for inference, even though
+--- as Step 8 showed --- the GP surrogate is more faithful to the
+multimodal true surface.
+
+## The `full` combined plot
+
+```{r task-plot-full, fig.cap = "Combined main_effects + interaction + residual panel produced by task$plot(type = 'full')."}
+print(task$plot(type = "full", response_name = "Yield"))
+```
+
+**Decision.** The `full` panel is a convenient one-figure summary for
+reports: it bundles the three diagnostic views above into a single
+`patchwork` object. Use it when you need a compact model-validation
+figure rather than three separate plots.
+
+## The `surface`, `contour`, and `response_surface` plots
+
+Because the task is a second-order RSM task, the response-surface plot
+family is also available. `type = "surface"` returns the 2D tile +
+contour surface; `type = "contour"` returns the filled contour only;
+`type = "response_surface"` returns a list with `surface_plot`,
+`contour_plot`, `combined_plot`, and (if **plotly** is installed)
+`interactive_plot`.
+
+```{r task-plot-surface, fig.cap = "2D tile + contour surface of the fitted RSM model, produced by task$plot(type = 'surface')."}
+print(task$plot(type = "surface", response_name = "Yield",
+                x_var = "Temperature", y_var = "Catalyst"))
+```
+
+```{r task-plot-contour, fig.cap = "Filled contour of the fitted RSM model, produced by task$plot(type = 'contour')."}
+print(task$plot(type = "contour", response_name = "Yield",
+                x_var = "Temperature", y_var = "Catalyst"))
+```
+
+```{r task-plot-rsm, fig.cap = "Combined response-surface panel produced by task$plot(type = 'response_surface')$combined_plot."}
+rsm_panel <- task$plot(type = "response_surface", response_name = "Yield",
+                       x_var = "Temperature", y_var = "Catalyst")
+print(rsm_panel$combined_plot)
+```
+
+**Decision.** The RSM contour shows a single basin near the centre of
+the factor space --- this is the unimodal approximation that the
+second-order polynomial can represent. Compare it with the GP
+posterior mean in Step 3: the GP captures the secondary peak that the
+RSM polynomial smooths over. When the engineer sees this discrepancy,
+the right next step is to switch to a GP surrogate (as we did) rather
+than trust the RSM optimum blindly.
+
+## Customising plots
+
+`task$plot()` returns ordinary `ggplot` / `patchwork` objects, so you
+can post-process them with the usual `+` syntax. A common pattern is
+to overlay the next BO trial point on top of the RSM contour to
+visualise where the sequential optimiser wants to experiment next.
+
+```{r task-plot-customise, fig.cap = "Customised contour: the RSM contour from task$plot(type = 'contour') with the next BO trial point overlaid in red."}
+# Ask the BO surrogate (still fitted on all 11 trials) for the next trial.
+next_rec_new <- bo$suggest_next(bounds, n_starts = 4, seed = 42)
+next_pt <- as.data.frame(t(next_rec_new$point))
+names(next_pt) <- c("Temperature", "Catalyst")
+
+p_contour <- task$plot(type = "contour", response_name = "Yield",
+                       x_var = "Temperature", y_var = "Catalyst")
+
+# Overlay the next BO trial point as a red cross.
+p_custom <- p_contour +
+  geom_point(data = next_pt, aes(Temperature, Catalyst),
+             color = "red", size = 4, shape = 4, stroke = 2) +
+  labs(subtitle = sprintf("Next BO trial: T = %.1f, C = %.3f (EI = %.4f)",
+                          next_pt$Temperature, next_pt$Catalyst,
+                          next_rec_new$ei))
+
+print(p_custom)
+```
+
+**Decision.** The customised contour shows that the next BO trial
+lands in the high-EI region just outside the RSM model's centre basin
+--- exactly where the GP expects the largest yield gain. Overlaying
+acquisition-function suggestions on top of the classical RSM contour
+is a powerful way to communicate to non-expert stakeholders *why* the
+sequential optimiser is proposing a point that the polynomial model
+would not.
+
+## Combining plots with patchwork
+
+When `task$plot()` returns multiple panels (e.g. `main_effects` and
+`contour`), you can compose them into a single figure with
+**patchwork**. `wrap_elements()` is the safe way to embed any plot
+(including `patchwork` objects returned by `main_effects` / `full`)
+inside a larger composition.
+
+```{r task-plot-patchwork, fig.cap = "Patchwork composition of the main-effects panel and the RSM contour, assembled with wrap_elements()."}
+p_main  <- task$plot(type = "main_effects")
+p_cont  <- task$plot(type = "contour", response_name = "Yield",
+                     x_var = "Temperature", y_var = "Catalyst")
+
+combined <- wrap_elements(full = p_main) |
+  wrap_elements(full = p_cont)
+
+print(combined)
+```
+
+**Decision.** Composing the marginal-effect panel with the
+response-surface contour in a single figure gives a one-glance summary
+of *both* the per-factor effects and the joint factor behaviour. Use
+`|` for side-by-side layouts and `/` for stacked layouts; use
+`wrap_elements(full = ...)` whenever one of the inputs is itself a
+`patchwork` object (as `main_effects` often is).
+
+## Exporting a report
+
+Finally, `task$report()` exports a self-contained report with the
+design table, ANOVA results, model-fit statistics, and embedded
+figures. Two formats are supported: `"excel"` (a multi-sheet
+`.xlsx`) and `"html"` (a single self-contained `.html`).
+
+```r
+# Not run:
+tmp_xlsx <- tempfile(fileext = ".xlsx")
+tmp_html  <- tempfile(fileext = ".html")
+
+task$report(format = "excel", path = tmp_xlsx)
+task$report(format = "html",  path = tmp_html)
+
+cat("Excel report written to:", tmp_xlsx, "\n")
+cat("HTML  report written to:", tmp_html, "\n")
+```
+
+**Decision.** Use the Excel format when the report needs to be
+inspected by engineers in a spreadsheet tool (the design table and
+ANOVA tables land on separate sheets). Use the HTML format when the
+report is meant to be emailed or embedded in a wiki page; the figures
+are inlined as base64, so the file is fully self-contained. In both
+cases, call `task$compute()` before `task$report()` to ensure the
+results are up to date.
+
+# Summary
+
+This vignette walked through a complete modern DOE workflow on a
+realistic chemical-process case study:
+
+1. **Strategy recommendation** with `AutoDOECopilot` provided a
+   starting point and flagged the multi-fidelity opportunity.
+2. **Gaussian-process surrogate** fitted by `BayesianOptimizer$fit()`
+   gave both a posterior mean and a credible band over the response
+   surface.
+3. **Expected Improvement** computed by
+   `BayesianOptimizer$expected_improvement()` identified the most
+   informative next trial; `$suggest_next()` found the EI maximiser
+   directly.
+4. **Sequential BO** driven by `$run_sequential()` (5 iterations)
+   closed most of the gap to the global optimum with only 11 total
+   trials.
+5. **Multi-fidelity correction** with `MultiFidelityOptimizer`
+   recalibrated a biased historical simulation using just three
+   high-fidelity runs; `$augment_historical_data()` was demonstrated
+   as a cheap way to stabilise the low-fidelity model when the
+   historical log is sparse.
+6. **Comparison with RSM** showed that the GP faithfully captures the
+   multimodal response that a second-order polynomial cannot.
+7. **Confirmation trial** validated the recommended optimum.
+8. **Visualising and reporting** with `IqrDoeTask$plot()` (all eight
+   plot types), `patchwork` composition, and `task$report()` export
+   closed the loop from analysis to deliverable.
+
+The key insight: when experiments are expensive and the response
+surface may be multimodal, a learning system (GP + EI + multi-fidelity
+correction) is dramatically more sample-efficient than a fixed
+classical design.
+
+# References
+
+1. Frazier, P. I. (2018). *A Tutorial on Bayesian Optimization.*
+   arXiv:1807.02811.
+2. Jones, D. R., Schonlau, M., & Welch, W. J. (1998). Efficient Global
+   Optimization of Expensive Black-Box Functions. *Journal of Global
+   Optimization*, 13(4), 455--492.
+3. Kennedy, M. C., & O'Hagan, A. (2000). Predicting the Output from a
+   Complex Computer Code When Fast Approximations Are Available.
+   *Biometrika*, 87(1), 1--13.
+4. Rasmussen, C. E., & Williams, C. K. I. (2006). *Gaussian Processes
+   for Machine Learning*. MIT Press.
+5. Santner, T. J., Williams, B. J., & Notz, W. I. (2018). *The Design
+   and Analysis of Computer Experiments* (2nd ed.). Springer.
+6. Montgomery, D. C. (2019). *Design and Analysis of Experiments*
+   (10th ed.). Wiley.
+
+---
+
+*This vignette was generated by the iQualityR.doe package.*

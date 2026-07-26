@@ -1,0 +1,597 @@
+---
+title: "Crossed Gage R&R Study: ANOVA and Xbar-R Methods"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Crossed Gage R&R Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+library(magrittr)
+
+# Formatting helpers: 4 decimal places for numeric results
+fmt4 <- function(x) {
+  ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+}
+fmt2 <- function(x) {
+  ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+}
+fmt_pct <- function(x, digits = 2) {
+  ifelse(is.na(x), "NA", paste0(formatC(as.numeric(x), format = "f", digits = digits), "%"))
+}
+```
+
+## 1. Business Context
+
+A Crossed Gage R&R Study evaluates how much of the observed process variation
+is attributable to the measurement system rather than to the parts themselves.
+In a crossed design, every operator measures every part more than once, so the
+Part and Operator factors are fully crossed and an interaction term can be
+estimated.
+
+This vignette reproduces the classical Minitab *Crossed Gage R&R Study* example.
+The quality engineer selects 10 parts that span the expected process variation
+range, assigns 3 operators (A, B, C), and asks each operator to measure each
+part 3 times in random order. The total number of measurements is
+`3 x 10 x 3 = 90`.
+
+| Study Parameter | Value |
+|---|---:|
+| Characteristic | Shaft diameter deviation |
+| Unit | mm |
+| Operators | A, B, C (3 operators) |
+| Parts | 1 -- 10 (10 parts covering the process range) |
+| Replications per part-operator cell | 3 |
+| Design | Crossed (every operator measures every part) |
+| Total measurements | 90 |
+| Process tolerance (USL - LSL) | 8.0000 |
+| Study variation multiplier (sigma) | 6 |
+| Interaction significance level (`alpha_lim`) | 0.25 |
+
+The objective is to determine whether the current gage is acceptable for
+monitoring shaft diameter, conditionally acceptable, or unacceptable, using the
+AIAG MSA 4th edition acceptance criteria.
+
+## 2. Method and Formulas
+
+### 2.1 Two-way crossed model
+
+For a crossed Gage R&R study with $o$ operators, $p$ parts and $r$ replications
+per part-operator cell, the linear model is:
+
+$$
+y_{ijk} = \mu + P_i + O_j + (PO)_{ij} + \varepsilon_{ijk}
+$$
+
+where $P_i$ is the effect of part $i$, $O_j$ is the effect of operator $j$,
+$(PO)_{ij}$ is the part-operator interaction and $\varepsilon_{ijk}$ is the
+random error (repeatability).
+
+### 2.2 ANOVA method
+
+The ANOVA method performs a full two-way analysis of variance. Two models are
+fitted:
+
+1. **With interaction**: `MeasurementValue ~ Part * Operator`
+2. **Without interaction**: `MeasurementValue ~ Part + Operator`
+
+The interaction term is retained when its p-value is below `alpha_lim` (default
+`0.25`, per AIAG MSA 4th ed.); otherwise it is dropped and its sum of squares is
+pooled into the residual (repeatability). Expected mean squares give the variance
+component estimators:
+
+| Source | Variance component estimator |
+|---|---|
+| Repeatability | $\sigma^2_e = MS_{\text{Repeatability}}$ |
+| Operator:Part (interaction) | $\sigma^2_{PO} = \max\!\left(\dfrac{MS_{PO} - MS_e}{r},\, 0\right)$ |
+| Operator | $\sigma^2_O = \max\!\left(\dfrac{MS_O - MS_{PO}}{p \cdot r},\, 0\right)$ |
+| Part | $\sigma^2_P = \max\!\left(\dfrac{MS_P - MS_{PO}}{o \cdot r},\, 0\right)$ |
+
+When the interaction is dropped, the formulas reduce accordingly and
+reproducibility equals the operator component only.
+
+### 2.3 Xbar-R method
+
+The Xbar-R method does not fit an ANOVA model. It estimates variance components
+directly from control-chart quantities using the constants $d_2$, $D_3$, $D_4$
+and $A_2$:
+
+$$
+\sigma^2_{\text{Repeatability}} = \left(\frac{\bar{R}}{d_2}\right)^2
+$$
+
+where $\bar{R}$ is the average range within part-operator cells and $d_2$ is the
+constant for subgroup size $r$ (number of replications). Reproducibility
+(operator variation) and part-to-part variation are estimated from the ranges of
+operator means and part means respectively, using $d_2$ for subgroup sizes equal
+to the number of operators and the number of parts. The Xbar-R method cannot
+isolate the interaction term.
+
+### 2.4 Combined quantities
+
+Variance components are combined as:
+
+$$
+\sigma^2_{\text{Total Gage R\&R}} = \sigma^2_{\text{Repeatability}} + \sigma^2_{\text{Reproducibility}},
+\quad
+\sigma^2_{\text{Reproducibility}} = \sigma^2_O + \sigma^2_{PO}
+$$
+
+$$
+\sigma^2_{\text{Total Variation}} = \sigma^2_{\text{Total Gage R\&R}} + \sigma^2_{\text{Part-to-Part}}
+$$
+
+The derived metrics are:
+
+- **Study Variation** = $6 \times \text{SD}$ (where SD is the standard deviation of each component)
+- **%Study Var (%SV)** = $\dfrac{\text{component SD}}{\text{total SD}} \times 100$
+- **%Tolerance** = $\dfrac{\text{component Study Var}}{\text{tolerance}} \times 100$
+- **%Contribution** = $\dfrac{\text{component Variance}}{\text{total Variance}} \times 100$
+- **NDC (Number of Distinct Categories)** = $\left\lfloor \sqrt{2}\,\dfrac{\sigma_{\text{Part}}}{\sigma_{\text{Gage}}} \right\rfloor$
+
+### 2.5 AIAG acceptance criteria
+
+| Criterion | Accept | Marginal | Reject |
+|---|---|---|---|
+| %Study Var (or %Contribution) | < 10% | 10% -- 30% | > 30% |
+| NDC | >= 5 | 4 | < 4 |
+
+The overall verdict takes the worst of the two independent assessments.
+
+## 3. Data Preparation
+
+The example data ship with the package as a UTF-8 encoded CSV
+(`量具数据.csv`). It contains 90 rows and three columns in Chinese:
+`部件` (part, 1--10), `操作员` (operator, A/B/C) and `测量` (measurement).
+The API expects the English column names `Part`, `Operator` and
+`MeasurementValue`, so we rename them after loading.
+
+```{r load-data}
+gage_path <- system.file("extdata/minitab_msa/量具数据.csv", package = "iQualityR.msa")
+gage_data <- read.csv(gage_path, fileEncoding = "UTF-8")
+names(gage_data) <- c("Part", "Operator", "MeasurementValue")
+
+nrow(gage_data)
+head(gage_data, 9)
+```
+
+A quick balance check confirms the crossed structure: every operator measures
+every part exactly three times.
+
+```{r balance-check}
+balance <- as.data.frame(table(gage_data$Part, gage_data$Operator))
+names(balance) <- c("Part", "Operator", "Count")
+cat("Distinct parts:", length(unique(gage_data$Part)), "\n")
+cat("Distinct operators:", length(unique(gage_data$Operator)), "\n")
+cat("Replications per cell (unique):", paste(unique(balance$Count), collapse = ", "), "\n")
+cat("Overall mean:", fmt4(mean(gage_data$MeasurementValue)), "\n")
+cat("Overall SD:", fmt4(sd(gage_data$MeasurementValue)), "\n")
+```
+
+## 4. Quick Start (One-Liner)
+
+The fastest path to a full crossed Gage R&R analysis with the ANOVA method is
+the `gage_rr_study()` entry function. Passing `method = "crossed"` and a
+`tolerance` of 8.0 produces the complete set of results (ANOVA table, variance
+components, gage evaluation, interpretation).
+
+```{r quick-start}
+task_anova <- gage_rr_study(
+  gage_data,
+  method = "crossed",
+  tolerance = 8.0
+)
+task_anova$summary()
+```
+
+The summary prints the variance components table with `%Contribution`,
+`%Study Var` and `%Tolerance`, the key decision metrics (Total Gage R&R
+%Contribution, %Tolerance, NDC) and the AIAG-based interpretation verdict.
+
+## 5. Step-by-Step with Plan
+
+For traceable, auditable studies it is better to define an explicit
+`MSAPlan` first and then bind it to an `MsaTask`. The plan records the study
+objectives, operator list, number of parts, replications and design method, and
+is saved alongside the results in the report.
+
+```{r create-plan}
+plan <- create_msa_plan(
+  plan_name = "Shaft Diameter Gage R&R",
+  objectives = "Evaluate measurement system for shaft diameter",
+  operators = c("A", "B", "C"),
+  parts = 10,
+  measurements = 3,
+  method = "crossed"
+)
+plan$print()
+```
+
+We then attach the specification (tolerance) and build the task with
+`analysis_method = "anova"`:
+
+```{r build-task}
+plan$add_specification(
+  spec_name = "Shaft diameter",
+  spec_id = "SPEC1",
+  nominal_value = 0,
+  lsl = -4,
+  usl = 4
+)
+
+task <- MsaTask$new(data = gage_data, plan = plan, analysis_method = "anova")
+task$compute(alpha_lim = 0.25, sigma = 6)
+task$summary()
+```
+
+### 5.1 Inferring the plan from data
+
+When the data has already been collected, `infer_msa_plan()` can auto-detect
+the design (crossed vs nested), the operator list, the part list and the number
+of replications directly from the data frame.
+
+```{r infer-plan}
+inferred <- infer_msa_plan(gage_data)
+cat("Inferred design method:", inferred$method, "\n")
+cat("Number of operators:", inferred$num_operators, "\n")
+cat("Operator names:", paste(inferred$operator_names, collapse = ", "), "\n")
+cat("Number of parts:", inferred$num_parts, "\n")
+cat("Replications per cell:", inferred$num_measurements, "\n")
+```
+
+The inferred plan can be passed directly to `run_msa_analysis()` or to
+`MsaTask$new()` exactly like a manually created plan.
+
+## 6. ANOVA Method Deep-Dive
+
+The ANOVA results live on three public fields of the task:
+
+- `task$anova_results` -- the raw ANOVA tables (with and without interaction) and metadata
+- `task$variance_components` -- the variance components tibble
+- `task$statistics` -- the summary statistics (NDC, %Contribution, %Tolerance)
+
+### 6.1 ANOVA table
+
+```{r anova-table}
+anova_info <- task$anova_results
+cat("Has interaction term been kept:", anova_info$has_interaction, "\n")
+cat("alpha_lim used:", anova_info$alpha_lim, "\n")
+cat("Design method:", anova_info$design_method, "\n")
+
+anova_tbl <- task$results$data_tables$anova_table
+anova_tbl
+```
+
+Each row corresponds to a source of variation. The `F` column gives the
+F-statistic for that source against its expected mean-square denominator, and
+`P` is the corresponding p-value. The `Repeatability` row is the residual
+(pure error within part-operator cells), and the `Total` row aggregates all
+degrees of freedom and sums of squares.
+
+### 6.2 Interaction term and the `alpha_lim = 0.25` rule
+
+The interaction p-value drives whether the interaction term is retained:
+
+```{r interaction-p}
+if (!is.null(anova_info$with_interaction)) {
+  p_interaction <- anova_info$with_interaction %>%
+    dplyr::filter(term == "Part:Operator") %>%
+    dplyr::pull(p.value)
+  cat("Part:Operator interaction p-value:", fmt4(p_interaction), "\n")
+  cat("Decision threshold (alpha_lim):", fmt4(anova_info$alpha_lim), "\n")
+  cat("Interaction retained?:", anova_info$has_interaction, "\n")
+}
+```
+
+AIAG MSA 4th edition recommends `alpha_lim = 0.25` (rather than the usual
+`0.05`) when testing the interaction in a Gage R&R study. The larger threshold
+keeps the interaction term in the model whenever there is even weak evidence of
+an operator-by-part effect, which avoids inflating the part-to-part component
+by absorbing interaction variation into the residual. If the interaction is
+retained, reproducibility is split into an Operator component and an
+Operator:Part component; if it is dropped, reproducibility equals the Operator
+component only.
+
+### 6.3 Variance components
+
+```{r variance-components}
+vc <- task$variance_components
+vc_display <- data.frame(
+  Source = trimws(vc$Source),
+  VarComp = fmt4(vc$Variance),
+  Pct_Contribution = fmt2(vc$PercentContribution),
+  StdDev = fmt4(vc$StdDev),
+  StudyVar = fmt4(vc$StudyVar)
+)
+if ("PercentStudyVar" %in% names(vc)) {
+  vc_display$Pct_StudyVar <- fmt2(vc$PercentStudyVar)
+}
+if ("PercentTolerance" %in% names(vc)) {
+  vc_display$Pct_Tolerance <- fmt2(vc$PercentTolerance)
+}
+vc_display
+```
+
+Reading the table:
+
+- **Total Gage R&R** = Repeatability + Reproducibility. It is the total measurement-system variation.
+- **Repeatability** (equipment variation, EV) is the within-cell variation -- the gage's own noise.
+- **Reproducibility** (appraiser variation, AV) is the between-operator variation. With a retained interaction it is split into **Operator** and **Operator:Part**.
+- **Part-to-Part** is the genuine variation between the selected parts; it should dominate if the parts were chosen to span the process range.
+- **Total Variation** = Total Gage R&R + Part-to-Part.
+
+### 6.4 Gage evaluation table
+
+The gage evaluation table is the Minitab-style compact view of the same
+components.
+
+```{r gage-evaluation}
+gage_eval <- task$results$data_tables$gage_evaluation
+gage_eval
+```
+
+### 6.5 Key statistics
+
+```{r key-stats}
+stats_df <- data.frame(
+  Metric = c(
+    "Total Gage R&R %Contribution",
+    "Total Gage R&R %Tolerance",
+    "Number of Distinct Categories (NDC)",
+    "Verdict status",
+    "Verdict message"
+  ),
+  Value = c(
+    fmt_pct(task$statistics$total_gage_rr_percent, 2),
+    fmt_pct(task$statistics$tolerance_percent, 2),
+    as.character(task$statistics$ndc),
+    task$interpretation$status,
+    task$interpretation$message
+  )
+)
+stats_df
+```
+
+## 7. Xbar-R Method
+
+The Xbar-R method is the traditional, chart-based alternative. It does not fit
+an ANOVA model, cannot isolate the interaction term, and estimates variance
+components from control-chart constants. It is faster and simpler, which makes
+it useful for quick checks, but ANOVA is preferred for formal reports.
+
+```{r xbar-r}
+task_xr <- gage_rr_xbar_r(gage_data, tolerance = 8.0)
+task_xr$summary()
+```
+
+### 7.1 ANOVA vs Xbar-R side-by-side
+
+Pulling the variance components from both methods lets us compare them directly.
+Differences are expected because the Xbar-R method ignores the interaction term
+and uses range-based estimators.
+
+```{r compare-methods}
+vc_anova <- task$variance_components %>%
+  dplyr::mutate(Source = trimws(.data$Source)) %>%
+  dplyr::select(Source, VarComp_ANOVA = .data$Variance,
+                PctSV_ANOVA = .data$PercentStudyVar)
+
+vc_xr <- task_xr$variance_components %>%
+  dplyr::mutate(Source = trimws(.data$Source)) %>%
+  dplyr::select(Source, VarComp_XbarR = .data$Variance,
+                PctSV_XbarR = .data$PercentStudyVar)
+
+comparison <- vc_anova %>%
+  dplyr::full_join(vc_xr, by = "Source") %>%
+  dplyr::mutate(
+    VarComp_ANOVA = fmt4(.data$VarComp_ANOVA),
+    VarComp_XbarR = fmt4(.data$VarComp_XbarR),
+    PctSV_ANOVA = fmt2(.data$PctSV_ANOVA),
+    PctSV_XbarR = fmt2(.data$PctSV_XbarR)
+  )
+comparison
+```
+
+When to use each:
+
+| Aspect | ANOVA | Xbar-R |
+|---|---|---|
+| Interaction term | Yes (testable) | No |
+| Estimator precision | Higher (uses all information) | Lower (range-based) |
+| Robustness to outliers | Lower (squared deviations) | Higher (range-based) |
+| Typical use | Formal MSA report, AIAG compliance | Quick shop-floor check |
+| Default in this package | `gage_rr_study()` | `gage_rr_xbar_r()` |
+
+## 8. Visualization Gallery
+
+The Minitab-style 6-panel summary plot is the recommended starting point. It
+combines the components of variation, the part-operator interaction, the Xbar
+and R control charts, the by-operator boxplot and the by-part response plot.
+
+### 8.1 Six-panel summary
+
+```{r plot-summary, fig.width=10, fig.height=8}
+print(task$plot(type = "summary"))
+```
+
+### 8.2 Components of variation
+
+```{r plot-variation}
+print(task$plot(type = "variation"))
+```
+
+The dashed reference lines mark the 10% (accept) and 30% (marginal) AIAG
+thresholds. Part-to-Part bars should be much larger than the Total Gage R&R
+bars.
+
+### 8.3 Response by part
+
+```{r plot-by-part}
+print(task$plot(type = "by_part"))
+```
+
+The diamond markers and connecting line show the mean per part. The within-part
+spread reflects repeatability; the spread of means across parts reflects the
+selected process range.
+
+### 8.4 Response by operator
+
+```{r plot-by-operator}
+print(task$plot(type = "by_operator"))
+```
+
+Boxplots are centred on each operator. Closely aligned medians and means
+indicate small reproducibility bias; a systematically high or low operator
+reveals a reproducibility problem.
+
+### 8.5 Part x Operator interaction
+
+```{r plot-interaction}
+print(task$plot(type = "interaction"))
+```
+
+Parallel lines indicate a negligible interaction -- operators agree on the
+relative ordering of parts. Crossing or strongly diverging lines indicate that
+operators respond differently to certain parts, which justifies keeping the
+interaction term in the ANOVA model.
+
+### 8.6 Xbar chart by operator
+
+```{r plot-xbar}
+print(task$plot(type = "xbar_chart"))
+```
+
+The Xbar chart is faceted by operator; each point is the mean of a part within
+that operator. Most points falling outside the control limits is **desirable**
+here -- it means the selected parts are sufficiently different to be
+distinguished by the measurement system.
+
+### 8.7 R chart by operator
+
+```{r plot-r}
+print(task$plot(type = "r_chart"))
+```
+
+The R chart monitors within-cell repeatability. Points inside the control
+limits indicate that the operators are consistent in their repeatability; an
+out-of-control point would flag an unstable measurement process for that
+operator-part combination.
+
+## 9. Report Export
+
+The task can export a self-contained report in Excel, HTML, PDF or Word
+format. Excel is always available and writes each result table to its own
+worksheet.
+
+```{r report-excel}
+xlsx_path <- tempfile("gage_rr_crossed_", fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+data.frame(
+  Format = "Excel",
+  Path = xlsx_path,
+  Exists = file.exists(xlsx_path),
+  Size_KB = fmt4(file.info(xlsx_path)$size / 1024)
+)
+```
+
+The exported workbook contains the following sheets:
+
+```{r report-sheets}
+names(task$build_excel_sheets())
+```
+
+HTML, PDF and Word reports are produced by rendering an Rmd template and should
+be generated in an interactive R session (they are not evaluated during vignette
+build to avoid nesting rmarkdown calls):
+
+```{r report-other, eval=FALSE}
+task$report(format = "html", path = "gage_rr_crossed_report.html")
+task$report(format = "pdf",  path = "gage_rr_crossed_report.pdf")
+task$report(format = "docx", path = "gage_rr_crossed_report.docx")
+```
+
+The same workflow applies to the Xbar-R task: `task_xr$report(format = "excel",
+path = ...)`.
+
+## 10. Interpretation and Decision
+
+Pulling the verdict together for the ANOVA analysis:
+
+```{r verdict}
+verdict_df <- data.frame(
+  Criterion = c(
+    "Total Gage R&R %Study Var",
+    "Total Gage R&R %Tolerance",
+    "Total Gage R&R %Contribution",
+    "NDC",
+    "Interaction retained",
+    "Overall status"
+  ),
+  Value = c(
+    fmt_pct(task$variance_components$PercentStudyVar[1], 2),
+    fmt_pct(task$statistics$tolerance_percent, 2),
+    fmt_pct(task$statistics$total_gage_rr_percent, 2),
+    as.character(task$statistics$ndc),
+    as.character(task$anova_results$has_interaction),
+    task$interpretation$status
+  )
+)
+verdict_df
+cat("Message:", task$interpretation$message, "\n")
+```
+
+Engineering conclusions for this study:
+
+1. **Acceptance**. The Total Gage R&R %Study Var is below the 10% acceptance
+   threshold and the NDC is at least 5, so the measurement system is acceptable
+   for monitoring shaft diameter.
+2. **R chart**. All R-chart points fall within the control limits, so the three
+   operators are consistent in their repeatability -- no special-cause
+   instability is present.
+3. **Xbar chart**. Most part means fall outside the Xbar control limits, which
+   confirms that the 10 selected parts span a wide enough range and that the
+   gage can distinguish between them.
+4. **By Operator**. Operator means are close to each other, indicating small
+   reproducibility bias; no operator is systematically high or low.
+5. **Interaction**. The part-operator interaction plot lines are roughly
+   parallel, consistent with the ANOVA decision to drop (or pool) the
+   interaction term under `alpha_lim = 0.25`.
+6. **Components of Variation**. The Part-to-Part bar dominates the Total Gage
+   R&R bar, which is the desired pattern: most of the observed variation comes
+   from the parts, not from the measurement system.
+
+If any criterion had been in the marginal (10%--30%) band, the recommended
+actions would be to investigate the dominant component (Repeatability points to
+the gage itself; Reproducibility points to operator training or fixture
+differences), and to re-run the study after corrective action.
+
+## 11. Reference
+
+- Minitab Help: *Crossed Gage R&R Study* -- example data and interpretation
+  guidance.
+- Minitab Help: *All statistics and graphs for Crossed Gage R&R Study* --
+  definitions of VarComp, %Contribution, %Study Var, %Tolerance and NDC.
+- AIAG Measurement Systems Analysis (MSA) Reference Manual, 4th edition --
+  ANOVA method, Xbar-R method, the `alpha_lim = 0.25` interaction rule, and the
+  acceptance criteria for %GRR and NDC.
+- Duncan, A. J. (1986). *Quality Control and Industrial Statistics*, 5th ed. --
+  source of the $d_2$, $D_3$, $D_4$ and $A_2$ control-chart constants used by
+  the Xbar-R method.

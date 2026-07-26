@@ -1,0 +1,198 @@
+---
+title: "Introduction to iQualityR.core"
+subtitle: "Foundational infrastructure for the iQualityR framework"
+author: "Zhiming Chen"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{Introduction to iQualityR.core}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+library(iQualityR.core)
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.path = "fig-iqr-core-"
+)
+```
+
+# Overview
+
+The `iQualityR.core` package provides the foundational infrastructure
+for the iQualityR quality engineering framework. It defines R6 abstract
+base classes for plans, tasks, analyzers, plotters, and reporters; a
+unified ggplot2 theme system; Excel export utilities; metadata
+management following a 4M1E convention (Man, Machine, Material, Method,
+Environment); simple internationalization (en-US, zh-CN); and utility
+functions for validation, formatting, and configuration.
+
+Downstream packages such as `iQualityR.plot`, `iQualityR.stat`, and
+`iQualityR.msa` build on these components. Users of those packages do
+not need to interact with `iQualityR.core` directly, but understanding
+the architecture helps when extending or customizing analyses.
+
+# Base classes
+
+## IqrPlanBase
+
+An `IqrPlanBase` object stores the configuration of an analysis: the
+task tag, the confidence level, named criteria (e.g. specification
+limits), and 4M1E metadata.
+
+```{r plan}
+plan <- IqrPlanBase$new(
+  task_tag = "capability",
+  conf_level = 0.95
+)
+
+plan$set_criteria(lsl = 0, usl = 10)
+plan$set_meta("man",       operator = "John", experience = 5)
+plan$set_meta("machine",   model = "Machine A")
+plan$set_meta("material",  batch = "B-2025")
+plan$set_meta("method",    procedure = "SOP-001")
+plan$set_meta("environment", temperature = 23)
+plan$set_meta("project",   id = "Q-001")
+
+plan$conf_level
+plan$criteria$usl
+```
+
+Convert the plan to a plain list:
+
+```{r plan-list}
+str(plan$to_list(), max.level = 2)
+```
+
+## IqrAnalyzerBase
+
+`IqrAnalyzerBase` is the abstract executor that runs an analysis and
+stores statistics, diagnostics, data tables, and raw output. Subclasses
+override the private `.run_logic` method.
+
+```{r analyzer}
+analyzer <- IqrAnalyzerBase$new()
+
+analyzer$setup(list(alpha = 0.05, method = "t-test"))
+
+analyzer$set_statistic("mean", 10.1)
+analyzer$set_diagnostic("normality", "OK")
+analyzer$set_datatable("runs", data.frame(
+  run = 1:3,
+  value = c(9.8, 10.2, 10.3)
+))
+
+str(analyzer$get_results(), max.level = 2)
+```
+
+## IqrTaskBase, IqrPlotterBase, IqrReporter
+
+- `IqrTaskBase` is the high-level coordinator. A subclass wires
+  together a plan, data, an analyzer, a plotter, and a reporter.
+- `IqrPlotterBase` is the abstract interface for plot rendering.
+- `IqrReporter` handles Excel and R Markdown export.
+
+# Theme and plots
+
+`IqrTheme` exposes three built-in visual styles (`academic`,
+`workbench`, `tech`) and ggplot2 scales.
+
+```{r theme-ggplot, message = FALSE}
+library(ggplot2)
+
+theme <- IqrTheme$new(theme_style = "tech")
+
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width,
+                 color = Species)) +
+  geom_point() +
+  theme$theme_iqr() +
+  theme$scale_color_iqr() +
+  labs(title = "Sepal dimensions by species")
+```
+
+Switch styles at any time:
+
+```{r theme-switch, message = FALSE}
+theme$set_theme("workbench")
+
+ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
+  geom_bar(show.legend = FALSE) +
+  theme$theme_iqr() +
+  theme$scale_fill_iqr() +
+  labs(title = "Engine cylinder distribution")
+```
+
+# Internationalization
+
+Two locales are supported. `iqr_t` looks up a message key and
+interpolates named placeholders.
+
+```{r i18n}
+iqr_t("common.missing_required_column", locale = "en-US", column = "X")
+iqr_t("common.missing_required_column", locale = "zh-CN", column = "X")
+```
+
+The active locale can be set globally with `iqr_set_locale`:
+
+```{r set-locale}
+iqr_set_locale("zh-CN")
+iqr_t("common.missing_required_column", column = "MeasurementValue")
+iqr_set_locale("en-US")
+```
+
+# Utility functions
+
+Common formatting and validation helpers:
+
+- `format_p_value` summarizes statistical significance
+- `moving_range_stats` computes moving ranges and their mean/median
+- `safe_tolerance` returns the span `usl - lsl`, or `NULL` if missing
+- `generate_anon_id` produces unique randomized identifiers
+- `validate_metadata`, `validate_inputs`, `validate_output_dir`
+  ensure data structure
+
+```{r utils}
+format_p_value(c(0.0001, 0.005, 0.05, 0.1, 0.5))
+moving_range_stats(c(10.2, 10.3, 10.1, 10.5, 10.2), m_span = 2)
+safe_tolerance(10, 5)
+safe_tolerance(10, NULL)
+head(generate_anon_id(6, k = 6))
+```
+
+# Excel export
+
+`ExcelExporter` writes themed multi-sheet workbooks:
+
+```{r excel-export, eval = TRUE}
+theme <- IqrTheme$new("academic")
+exporter <- ExcelExporter$new(theme$config)
+
+sheets <- list(
+  Summary = data.frame(
+    statistic = c("mean", "sd", "n"),
+    value = c(10.1, 0.4, 50)
+  ),
+  Raw = data.frame(run = 1:5, value = rnorm(5, 10, 0.5))
+)
+
+out <- tempfile(fileext = ".xlsx")
+exporter$export_excel(sheets, path = out, title = "Analysis Report")
+file.exists(out)
+```
+
+# Architecture notes
+
+- All base classes are R6 reference classes. Subclasses typically
+  override a small set of private methods (e.g. `.run_logic`) and
+  inherit the rest.
+- Dependencies are kept minimal: R6, ggplot2, openxlsx, and rmarkdown
+  are the only heavy imports. Optional packages (`systemfonts`,
+  `sysfonts`, `showtext`) provide on-demand CJK font handling.
+- Result objects are plain lists so they serialize to JSON, Excel,
+  or R Markdown without friction.

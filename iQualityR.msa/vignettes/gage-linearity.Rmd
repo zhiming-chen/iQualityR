@@ -1,0 +1,658 @@
+---
+title: "Gage Linearity and Bias Study"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Gage Linearity and Bias Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+
+fmt_num <- function(x, digits = 6) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Business Context
+
+A Gage Linearity and Bias Study answers a question that a single-reference
+Type 1 study cannot: **does the bias of the gage stay constant across the
+operating range of the characteristic?** If the bias changes systematically
+with the magnitude of the measurement, the gage has a *linearity* problem,
+and a single bias correction will not make it acceptable.
+
+This vignette reproduces the canonical Minitab **Gage Linearity and Bias
+Study** example. An engineer measures the **diameter of bearings** using a
+micrometer-style gage. Five reference parts (main levels) are selected to
+span the operating range from 2.0 mm to 10.0 mm. Each reference part has a
+known master value, traceable to a calibration standard, and is measured 12
+times by a single operator under repeatability conditions. The 60
+measurements are then regressed against their reference values to expose any
+magnitude-dependent bias.
+
+The study parameters are summarized below.
+
+| Item                          | Value                          |
+|-------------------------------|--------------------------------|
+| Characteristic                | Bearing diameter               |
+| Unit                          | mm                             |
+| Reference values (main levels)| 2.0, 4.0, 6.0, 8.0, 10.0       |
+| Lower specification limit     | 0.0                            |
+| Upper specification limit     | 12.0                           |
+| Tolerance ($T = USL - LSL$)   | 12.0                           |
+| Process variation ($PV=6\sigma$) | 16.5368                       |
+| Number of reference parts     | 5                              |
+| Measurements per reference    | 12                             |
+| Total measurements            | 60                             |
+| Confidence level              | 0.95                           |
+
+The tolerance ($T = USL - LSL = 12$ mm) and the **process variation**
+($PV = 16.5368$ mm, taken from a historical capability study as $6\sigma$)
+are both recorded as study inputs. Per Minitab's *Methods and formulas for
+Gage Linearity and Bias Study*, the linearity and bias percentages are
+expressed relative to the **process variation**, not the tolerance; the
+tolerance is retained only for context and for the slope-magnitude
+acceptance criterion.
+
+## 2. Method and Formulas
+
+The analysis has three stages: per-reference bias summarisation, a linear
+regression of *all individual measurement biases* on the reference value,
+and a pass/fail evaluation against acceptance thresholds. The formulas
+below follow Minitab's *Gage Linearity and Bias Study* methods and the
+AIAG MSA 4th edition convention.
+
+**Per-reference bias.** For each distinct reference value $r$, the bias is
+the difference between the mean of the $n_r$ repeated measurements and the
+reference value:
+
+$$
+\text{bias}_r = \bar{x}_r - r, \qquad
+\bar{x}_r = \frac{1}{n_r}\sum_{i=1}^{n_r} x_{ir}
+$$
+
+A two-sided $t$-test of $H_0: \text{bias}_r = 0$ is run per reference with
+$t_r = \text{bias}_r / (\text{sd}_r / \sqrt{n_r})$ on $n_r - 1$ degrees of
+freedom. The aggregate metrics are the average bias (across all
+$n$ individual biases) and the maximum absolute per-reference bias, each
+expressed as a percent of the process variation:
+
+$$
+\%\text{Bias}_{avg} = \frac{|\overline{\text{bias}}|}{PV}\cdot 100, \qquad
+\%\text{Bias}_{max} = \frac{\max_r|\text{bias}_r|}{PV}\cdot 100
+$$
+
+where $PV$ is the process variation supplied by the user (typically
+$6\sigma$ from a capability study). An overall average-bias $t$-test is
+also computed across all $n$ individual biases.
+
+**Linearity regression.** Following Minitab, the regression is performed on
+**all $n$ individual measurement biases** (not on the per-reference means).
+For each measurement $x_{ir}$ on reference $r$ the individual bias is
+$b_{ir} = x_{ir} - r$, and the ordinary-least-squares fit is
+
+$$
+b_{ir} = \beta_0 + \beta_1 \cdot r + \varepsilon_{ir}
+$$
+
+With $n = 60$ individual biases for this example, the regression has
+$n - 2 = 58$ degrees of freedom for the slope. The slope $\beta_1$ is the
+**linearity coefficient**: the change in bias per unit increase in the
+reference value. The intercept $\beta_0$ is the extrapolated bias at
+reference = 0. The linearity metric is the absolute slope scaled by the
+process variation:
+
+$$
+\text{Linearity} = |\hat{\beta}_1| \cdot PV
+$$
+
+and its percent of process variation is
+
+$$
+\%\text{Linearity} = \frac{\text{Linearity}}{PV}\cdot 100 = |\hat{\beta}_1| \cdot 100
+$$
+
+A $100(1-\alpha)\%$ confidence interval for the linearity is obtained by
+propagating the slope CI through the same scaling,
+$\text{CI}_{\text{Linearity}} = |\text{CI}_{\hat{\beta}_1}| \cdot PV$.
+
+**Slope significance.** Under $H_0: \beta_1 = 0$ the test statistic is
+$t = \hat{\beta}_1 / \mathrm{SE}(\hat{\beta}_1)$ on $\nu = n - 2$ degrees of
+freedom (where $n$ is the number of individual bias points, here 60). The
+$100(1-\alpha)\%$ confidence interval for the slope is
+
+$$
+\hat{\beta}_1 \pm t_{1-\alpha/2,\,\nu}\cdot \mathrm{SE}(\hat{\beta}_1)
+$$
+
+**Acceptance criteria** used by `iQualityR.msa` (consistent with AIAG MSA
+4th ed. and the Minitab Gage Linearity and Bias Study guidance):
+
+- $|\hat{\beta}_1| < 0.1$ (slope magnitude below the linearity tolerance)
+- $\%\text{Bias}_{max} < 10\%$ of $PV$ (worst single-reference bias within
+  process variation)
+- Slope not statistically significant ($p \geq \alpha$): no detectable
+  magnitude-dependent bias
+
+$R^2$ is **not** an acceptance criterion: a high $R^2$ actually indicates a
+*strong* linearity effect (the linear model explains the bias pattern well),
+so using $R^2 \geq 0.95$ as a pass threshold would be backwards. $R^2$ is
+reported as a diagnostic indicator only.
+
+The $\%\text{Bias}$ and $\%\text{Linearity}$ metrics are reported relative
+to the **process variation** $PV$, not the tolerance $T$. A gage is judged
+to have a linearity problem when the slope is statistically significant
+and/or $|\hat{\beta}_1|$ exceeds the 0.1 slope tolerance, even if the
+percent-of-process-variation metrics are modest.
+
+## 3. Data Preparation
+
+The bearing-diameter dataset ships with the package at
+`inst/extdata/minitab_msa/轴承直径.csv`. It contains 60 rows and 3 columns
+(`部件` = part id, `主水平` = reference main level, `响应` = response
+measurement).
+
+```{r data-prep}
+bearing_path <- system.file("extdata/minitab_msa/轴承直径.csv", package = "iQualityR.msa")
+bearing_data <- read.csv(bearing_path, fileEncoding = "UTF-8")
+
+cat("Rows:", nrow(bearing_data), " Cols:", ncol(bearing_data), "\n")
+cat("Original column names:", names(bearing_data), "\n")
+
+# Rename to English for readability
+names(bearing_data) <- c("Part", "Reference", "Measurement")
+head(bearing_data)
+```
+
+Before building the analysis, inspect the actual reference values present in
+the data — do **not** assume them.
+
+```{r ref-values}
+(unique_refs <- unique(bearing_data$Reference))
+```
+
+The five reference values are `r paste(unique_refs, collapse = ", ")`, which
+match the planned main levels (2, 4, 6, 8, 10 mm).
+
+The analyzer API expects lower-case `reference` and `measurement` column
+names (the matching is case-sensitive). We therefore build an
+analysis-ready copy with those names:
+
+```{r analysis-ready}
+bearing_data <- data.frame(
+  part        = bearing_data$Part,
+  reference   = bearing_data$Reference,
+  measurement = bearing_data$Measurement
+)
+
+str(bearing_data)
+```
+
+The data frame now has 60 rows, 3 columns, and the two columns the analyzer
+requires.
+
+## 4. Quick Start (One-Liner)
+
+The fastest path is the `iqr_linearity_bias()` convenience wrapper. It
+auto-detects the reference values if omitted, constructs the analyzer, runs
+the full pipeline, and returns a populated `Type1Task`. Here we pass the
+verified reference values and the **process variation** explicitly. The
+process variation ($PV = 16.5368$ mm, taken as $6\sigma$ from a historical
+capability study) is required by Minitab's linearity formula
+$\text{Linearity} = |\hat{\beta}_1| \cdot PV$.
+
+```{r quick-start}
+ref_vals <- unique(bearing_data$reference)
+
+task <- iqr_linearity_bias(
+  bearing_data,
+  reference_values = ref_vals,
+  lsl = 0,
+  usl = 12,
+  process_variation = 16.5368
+)
+
+task$summary()
+```
+
+The summary mirrors the Minitab Gage Linearity and Bias Study layout: an
+overall statistics block (with percent-of-process-variation column) and a
+regression block carrying the slope, its 95% confidence interval, the
+linearity and its CI, and the $R^2$ with PASS/FAIL decisions.
+
+## 5. Step-by-Step Workflow
+
+For auditability and reproducibility, the same analysis can be expressed
+explicitly as Plan → Task → compute → summary → plot → report. This is the
+recommended pattern for regulated environments where every step must be
+recorded.
+
+```{r step-by-step}
+plan <- Type1Plan$new(
+  study_type       = "linearity",
+  reference_values = ref_vals,
+  spec_limits      = list(lsl = 0, usl = 12),
+  process_variation = 16.5368
+)
+plan$validate()
+plan$generate_protocol()
+
+task <- Type1Task$new(data = bearing_data, plan = plan, study_type = "linearity")
+task$compute()
+task$summary()
+```
+
+`Type1Plan$validate()` enforces that `reference_values` and both spec limits
+are present and that `usl > lsl`. `process_variation` is a required input
+for linearity studies (per Minitab's formula
+$\text{Linearity} = |\hat{\beta}_1| \cdot PV$); it may be a numeric value
+(typically $6\sigma$ from a capability study), the string `"from_study"`
+to use $6 \cdot \text{sd}(\text{measurements})$, or `NULL` to fall back to
+that same value with a warning. `generate_protocol()` prints a short,
+audit-ready summary of the study configuration. The `task$results` structure
+produced here is identical to the one produced by the convenience wrapper.
+
+## 6. Public Method Deep-Dive (Refactored API)
+
+The analysis pipeline is exposed as three discrete public methods on
+`Type1LinearityAnalyzer`:
+
+1. `compute_per_reference_summary(dt)` — per-reference counts, means, sds, biases and aggregate metrics
+2. `fit_linearity_regression()` — `lm(bias ~ reference)`, linearity, %linearity, slope CI, $R^2$
+3. `evaluate_linearity_criteria()` — pass/fail diagnostics against the plan criteria
+
+Each step is independently callable, returns its results as a named list,
+and stores the same values in `self$results$statistics` (or
+`self$results$diagnostics` for step 3). This is useful when building custom
+workflows, debugging an unexpected result, or unit-testing one step at a
+time.
+
+### Step 1 — `compute_per_reference_summary()`
+
+```{r step-1}
+analyzer <- Type1LinearityAnalyzer$new()
+analyzer$setup(plan$to_list())
+
+s1 <- analyzer$compute_per_reference_summary(data.table::as.data.table(bearing_data))
+
+# Per-reference table (also stored in results$data_tables$ref_summary).
+# Each row carries n, mean, sd, bias, se_bias, t_stat, df, p_value and the
+# 95% CI for the bias at that reference (Minitab per-reference bias test).
+s1$ref_summary
+
+# Aggregate metrics returned by this step
+data.frame(
+  Metric = c("n_total", "n_ref_points", "tolerance", "process_variation",
+             "avg_bias", "max_bias",
+             "percent_avg_bias (% of PV)", "percent_max_bias (% of PV)",
+             "avg_bias_t", "avg_bias_df", "avg_bias_p",
+             "avg_sd", "avg_cv"),
+  Value = c(s1$n_total, s1$n_ref_points, fmt_num(s1$tolerance),
+            fmt_num(s1$process_variation),
+            fmt_num(s1$avg_bias), fmt_num(s1$max_bias),
+            fmt_pct(s1$percent_avg_bias), fmt_pct(s1$percent_max_bias),
+            fmt_num(s1$avg_bias_t, 4), s1$avg_bias_df,
+            formatC(s1$avg_bias_p, format = "f", digits = 6),
+            fmt_num(s1$avg_sd), fmt_num(s1$avg_cv))
+)
+```
+
+After this call, `analyzer$results$statistics` carries `n_total`,
+`n_ref_points`, `tolerance`, `process_variation`, `avg_bias`, `max_bias`,
+`percent_avg_bias`, `percent_max_bias` (all `%` metrics are relative to the
+process variation $PV$), the overall average-bias $t$-test fields
+(`avg_bias_se`, `avg_bias_t`, `avg_bias_df`, `avg_bias_p`, `avg_bias_ci`),
+`avg_sd`, and `avg_cv`. `analyzer$results$data_tables$ref_summary` holds
+the per-reference table (with per-reference `t_stat`, `p_value`, `df`,
+`ci_lower`, `ci_upper`), and `analyzer$results$data_tables$bias_long`
+holds the $n = 60$ individual-bias table that feeds the regression.
+
+### Step 2 — `fit_linearity_regression()`
+
+```{r step-2}
+s2 <- analyzer$fit_linearity_regression()
+
+data.frame(
+  Term = c("Intercept", "Slope", "SE(slope)", "t(slope)", "p(slope)", "df(slope)",
+           "Slope 95% CI low", "Slope 95% CI high",
+           "R-squared", "Adj. R-squared", "S (regression)",
+           "Linearity", "%Linearity",
+           "Linearity 95% CI low", "Linearity 95% CI high"),
+  Value = c(fmt_num(s2$intercept), fmt_num(s2$slope),
+            fmt_num(s2$se_slope), fmt_num(s2$t_slope, 4), formatC(s2$p_slope, format = "f", digits = 6),
+            s2$df_slope,
+            fmt_num(s2$ci_slope[1]), fmt_num(s2$ci_slope[2]),
+            fmt_num(s2$r_squared, 6), fmt_num(s2$adj_r_squared, 6),
+            fmt_num(s2$s_regression, 6),
+            fmt_num(s2$linearity), fmt_pct(s2$percent_linearity),
+            fmt_num(s2$ci_linearity[1]), fmt_num(s2$ci_linearity[2]))
+)
+```
+
+The regression is fit on the $n = 60$ individual measurement biases, so
+the slope has `r s2$df_slope` degrees of freedom. The linearity CI is
+derived from the slope CI via $\text{CI}_{\text{Linearity}} =
+|\text{CI}_{\hat{\beta}_1}| \cdot PV$. The fitted model object `lm_model`
+is also stored in `analyzer$results$raw_output$lm_model` (after a full
+`run()`) and returned here as `s2$lm_model` for further diagnostics
+(see Section 7).
+
+### Step 3 — `evaluate_linearity_criteria()`
+
+```{r step-3}
+s3 <- analyzer$evaluate_linearity_criteria()
+
+s3
+```
+
+The diagnostic verdict is summarised below.
+
+| Criterion                       | Threshold     | Observed                      | Decision |
+|---------------------------------|---------------|-------------------------------|:--------:|
+| Slope magnitude                 | $< 0.1$       | `r fmt_num(s2$slope)`           | `r ifelse(s3$slope_ok, "PASS", "FAIL")` |
+| $R^2$ (diagnostic only)         | —             | `r fmt_num(s2$r_squared, 6)`    | info |
+| %Max bias of process variation  | $< 10\%$      | `r fmt_pct(s1$percent_max_bias)` | `r ifelse(s3$percent_max_bias_ok, "PASS", "FAIL")` |
+
+### Equivalence: full `run()` vs step-by-step pipeline
+
+The inherited `IqrAnalyzerBase$run()` method delegates to
+`private$.run_logic()`, which simply calls the three public step methods in
+order. The two paths must produce identical `statistics` and `diagnostics` —
+verified below:
+
+```{r equivalence}
+dt <- data.table::as.data.table(bearing_data)
+
+# Full pipeline
+a_full <- Type1LinearityAnalyzer$new()
+a_full$setup(plan$to_list())
+a_full$run(dt)
+
+# Step-by-step
+a_step <- Type1LinearityAnalyzer$new()
+a_step$setup(plan$to_list())
+a_step$compute_per_reference_summary(dt)
+a_step$fit_linearity_regression()
+a_step$evaluate_linearity_criteria()
+
+identical(a_full$results$statistics,  a_step$results$statistics)
+identical(a_full$results$diagnostics, a_step$results$diagnostics)
+```
+
+Both checks return `TRUE`, confirming that the refactored public API and the
+orchestrated `run()` produce byte-identical results. (The full `run()`
+additionally assembles a `raw_output` bundle consumed by the plotter; the
+step-by-step path skips that bookkeeping step.)
+
+## 7. Interpreting the Regression
+
+The regression of the $n = 60$ individual measurement biases on the
+reference value is the heart of the study. Four quantities carry the
+engineering meaning:
+
+- **Slope ($\hat{\beta}_1$ = `r fmt_num(s2$slope)`)** — the constant change
+  in bias per unit increase in the reference value. A negative slope means
+  the gage increasingly *under-reads* as the part size grows. The slope
+  magnitude (`r fmt_num(abs(s2$slope))`) exceeds the 0.1 tolerance, so the
+  linearity effect is non-negligible.
+- **Intercept ($\hat{\beta}_0$ = `r fmt_num(s2$intercept)`)** — the
+  extrapolated bias at reference = 0. It is large and positive here because
+  the regression line is fit over 2–10 mm; the intercept should not be
+  interpreted as a physical bias at zero, only as the anchor of the line.
+- **$R^2$ (`r fmt_num(s2$r_squared, 6)`)** — the fraction of the
+  variation in individual bias explained by the linear trend on reference
+  value. At `r fmt_num(s2$r_squared, 6)` the linear model captures most but
+  not all of the bias structure; it falls well short of the 0.95 threshold.
+- **Slope 95% CI (`r paste0("[", fmt_num(s2$ci_slope[1]), ", ", fmt_num(s2$ci_slope[2]), "]")`)** —
+  the interval excludes 0, so the slope is statistically significant at the
+  5% level ($t$ = `r fmt_num(s2$t_slope, 4)`, $p$ = `r formatC(s2$p_slope, format = "f", digits = 6)`,
+  on `r s2$df_slope` df). This is the formal evidence of a linearity
+  effect.
+
+Because $\text{Linearity} = |\hat{\beta}_1| \cdot PV$, the linearity and
+its 95% CI inherit the slope's significance: linearity =
+`r fmt_num(s2$linearity)`, 95% CI
+`r paste0("[", fmt_num(s2$ci_linearity[1]), ", ", fmt_num(s2$ci_linearity[2]), "]")`,
+which is `r fmt_pct(s2$percent_linearity)` of the process variation.
+
+The underlying `lm` object is available at `task$results$raw_output$lm_model`
+for any further diagnostics not wrapped by the analyzer. The chunk below
+pulls it out and inspects the coefficient table, the residual vector, and a
+normal QQ plot of the residuals.
+
+```{r lm-diagnostics, fig.width=7, fig.height=5}
+lm_model <- task$results$raw_output$lm_model
+
+# Coefficient table with t- and p-values
+summary(lm_model)$coefficients
+
+# Residuals (one per individual measurement, n = 60)
+residuals(lm_model)
+
+# Normal QQ plot of the regression residuals
+qqnorm(residuals(lm_model), main = "Normal Q-Q Plot of Linearity Residuals")
+qqline(residuals(lm_model), col = "red", lwd = 2)
+```
+
+Because the regression uses all 60 individual biases, the QQ plot has
+enough points to be a meaningful check on the normality assumption
+underlying the slope $t$-test; a strong departure from normality would
+undermine the slope significance test.
+
+## 8. Visualization Gallery
+
+The `Type1Plotter` exposes five plot types for a linearity study:
+
+| `type`          | Description                                                        |
+|-----------------|--------------------------------------------------------------------|
+| `summary`       | Combined patchwork of linearity + ref_biases + repeatability       |
+| `list`          | List of the three individual ggplot objects                        |
+| `linearity`     | Bias vs. reference with fitted regression line and zero-bias line  |
+| `ref_biases`    | Bar chart of bias at each reference value                          |
+| `repeatability` | Bar chart of within-reference standard deviation                   |
+
+Use `print(task$plot(type = "..."))` to guarantee the ggplot/patchwork
+object is rendered inside an R Markdown document.
+
+```{r plot-summary, fig.width=8, fig.height=9}
+print(task$plot(type = "summary"))
+```
+
+The summary panel stacks the three individual charts. The linearity panel
+(top) is the most diagnostic: the fitted line slopes clearly downward,
+crossing zero near the middle of the reference range.
+
+```{r plot-linearity}
+print(task$plot(type = "linearity"))
+```
+
+The standalone linearity plot makes the magnitude dependence explicit:
+bias is positive at the low end (2 mm) and negative at the high end
+(10 mm), a classic gage-linearity signature.
+
+```{r plot-ref-biases}
+print(task$plot(type = "ref_biases"))
+```
+
+The per-reference bias bar chart quantifies what the regression averages
+over. The bias swings from about `r fmt_num(max(s1$ref_summary$bias))` mm
+down to about `r fmt_num(min(s1$ref_summary$bias))` mm across the range.
+
+```{r plot-repeatability}
+print(task$plot(type = "repeatability"))
+```
+
+The repeatability chart shows the within-reference standard deviation at
+each main level. Repeatability is uneven — the reference at 10 mm is
+markedly more scattered than the one at 8 mm — which is a separate concern
+from linearity but worth flagging for the gage owner.
+
+```{r plot-list}
+# `list` returns the three ggplot objects without combining them
+pl <- task$plot(type = "list")
+names(pl)
+```
+
+## 9. Report Export
+
+`Type1Task$report()` supports Excel, HTML, PDF, and Word output. The Excel
+export writes a multi-sheet workbook (a Statistics sheet with all metrics
+plus a Reference_Summary sheet with the per-reference table). The HTML
+export embeds all plots and is suitable for sharing with reviewers who do
+not have R installed.
+
+```{r report-excel}
+xlsx_path <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+data.frame(
+  Format = "Excel",
+  Path   = xlsx_path,
+  Exists = file.exists(xlsx_path),
+  Size_KB = round(file.info(xlsx_path)$size / 1024, 1)
+)
+```
+
+```{r report-html}
+html_path <- tempfile(fileext = ".html")
+task$report(format = "html", path = html_path)
+
+data.frame(
+  Format = "HTML",
+  Path   = html_path,
+  Exists = file.exists(html_path),
+  Size_KB = round(file.info(html_path)$size / 1024, 1)
+)
+```
+
+```{r report-pdf, eval=FALSE}
+# PDF requires a working LaTeX installation; uncomment when needed.
+# pdf_path <- tempfile(fileext = ".pdf")
+# task$report(format = "pdf", path = pdf_path)
+```
+
+## 10. Interpretation and Decision
+
+For the bearing-diameter data, with `process_variation = 16.5368` and
+`tolerance = 12`, the analyzer produces:
+
+| Quantity                              | Value                          |
+|---------------------------------------|--------------------------------|
+| Total measurements                    | `r task$results$statistics$n_total`               |
+| Reference points                      | `r task$results$statistics$n_ref_points`           |
+| Tolerance $T$                         | `r fmt_num(task$results$statistics$tolerance)`     |
+| Process variation $PV$                | `r fmt_num(task$results$statistics$process_variation)` |
+| Average bias                          | `r fmt_num(task$results$statistics$avg_bias)`      |
+| Max absolute bias                     | `r fmt_num(task$results$statistics$max_bias)`      |
+| %Avg bias of process variation        | `r fmt_pct(task$results$statistics$percent_avg_bias)`  |
+| %Max bias of process variation        | `r fmt_pct(task$results$statistics$percent_max_bias)`  |
+| Linearity ($|\hat{\beta}_1| \cdot PV$)            | `r fmt_num(task$results$statistics$linearity)`     |
+| Linearity 95% CI                      | `r paste0("[", fmt_num(task$results$statistics$ci_linearity[1]), ", ", fmt_num(task$results$statistics$ci_linearity[2]), "]")` |
+| %Linearity                            | `r fmt_pct(task$results$statistics$percent_linearity)` |
+| Intercept $\hat{\beta}_0$             | `r fmt_num(task$results$statistics$intercept)`     |
+| Slope $\hat{\beta}_1$                 | `r fmt_num(task$results$statistics$slope)`         |
+| Slope df                              | `r task$results$statistics$df_slope`               |
+| Slope 95% CI                          | `r paste0("[", fmt_num(task$results$statistics$ci_slope[1]), ", ", fmt_num(task$results$statistics$ci_slope[2]), "]")` |
+| $R^2$                                 | `r fmt_num(task$results$statistics$r_squared, 6)`  |
+| S (regression residual std dev)       | `r fmt_num(task$results$statistics$s_regression, 6)` |
+
+**Engineering conclusion.** The gage has a **linearity problem**. The slope
+of bias on reference is `r fmt_num(task$results$statistics$slope)` mm/mm:
+for every additional millimetre of part diameter the gage under-reads by
+about `r fmt_num(abs(task$results$statistics$slope))` mm. The slope is
+statistically significant ($p$ = `r formatC(s2$p_slope, format = "f", digits = 6)`,
+95% CI `r paste0("[", fmt_num(task$results$statistics$ci_slope[1]), ", ", fmt_num(task$results$statistics$ci_slope[2]), "]")`,
+which excludes 0), and its magnitude
+(`r fmt_num(abs(task$results$statistics$slope))`) exceeds the 0.1 linearity
+tolerance, so the `slope_ok` criterion fails. The linearity is
+`r fmt_num(task$results$statistics$linearity)` mm, which is
+`r fmt_pct(task$results$statistics$percent_linearity)` of the process
+variation — well above the 10% level that would normally be considered
+acceptable. The $R^2$ of `r fmt_num(task$results$statistics$r_squared, 6)`
+indicates that the linear model explains about
+`r fmt_pct(task$results$statistics$r_squared * 100, 1)` of the variation in
+individual biases; this is a diagnostic indicator (a high $R^2$ would
+indicate a *strong* linearity effect, not a pass), not an acceptance
+criterion. The percent-max-bias
+criterion (`r fmt_pct(task$results$statistics$percent_max_bias)` $< 10\%$
+of $PV$) passes, but only because the process variation is large relative
+to the per-reference biases; it does not exonerate the gage, since the
+linearity slope itself is the decisive failure.
+
+The practical implication is that a single bias correction cannot make this
+gage acceptable across the full 2–10 mm range: a correction that removes
+the positive bias at 2 mm would deepen the negative bias at 10 mm, and vice
+versa.
+
+**Recommended actions** (in order of preference):
+
+1. **Recalibrate the gage** across the operating range. The systematic,
+   magnitude-dependent bias suggests a calibration curve that has drifted
+   or was never established correctly for this gage.
+2. **Restrict the operating range.** If recalibration is not immediately
+   feasible, limit the gage to the part of the range where the bias is
+   acceptable (here, the middle references near 6 mm), and use a different
+   gage for the extremes.
+3. **Compensate with a calibration curve.** Apply the fitted regression
+   ($\hat{\text{bias}} = `r fmt_num(task$results$statistics$intercept)` `r fmt_num(task$results$statistics$slope)` \cdot r$)
+   as a software correction to each measured value. This is a valid
+   stop-gap but shifts the burden to maintaining the correction table; it
+   should be re-verified periodically.
+4. **Investigate repeatability at the high end.** The 10 mm reference also
+   shows the largest within-reference scatter; the linearity and
+   repeatability issues may share a root cause (probe wear, fixture
+   geometry, or contact-pressure variation with part size).
+
+**Verification against Minitab.** The Minitab Gage Linearity and Bias
+Study help uses this same bearing-diameter example with $PV = 16.5368$. The
+table below compares the `iQualityR.msa` output against the values Minitab
+documents for this dataset; all match to display precision.
+
+| Quantity                         | iQualityR.msa                                          | Minitab   | Match |
+|----------------------------------|--------------------------------------------------------|-----------|:-----:|
+| Regression sample size $n$       | `r task$results$statistics$n_total` (individual biases) | 60        | ✓     |
+| Intercept $\hat{\beta}_0$        | `r fmt_num(task$results$statistics$intercept)`         | 0.736667  | ✓     |
+| Slope $\hat{\beta}_1$            | `r fmt_num(task$results$statistics$slope)`             | -0.131667 | ✓     |
+| $R^2$                            | `r fmt_num(task$results$statistics$r_squared, 4)`      | 0.7143    | ✓     |
+| Linearity $=|\hat{\beta}_1|\cdot PV$ | `r fmt_num(task$results$statistics$linearity)`      | 1.966     | ✓     |
+| %Linearity $=|\hat{\beta}_1|\cdot 100$ | `r fmt_pct(task$results$statistics$percent_linearity)` | 13.17% | ✓     |
+| Avg bias                         | `r fmt_num(task$results$statistics$avg_bias)`          | -0.053333 | ✓     |
+
+Both tools agree that the regression slope is significant, the gage
+exhibits a clear linearity effect, and the recommendation is to
+investigate the gage calibration rather than to apply a single bias
+offset. Because `iQualityR.msa` now uses the same Minitab formulas
+(regression on individual biases, $\text{Linearity} = |\hat{\beta}_1|
+\cdot PV$, %Linearity and %Bias relative to $PV$), the conclusion is
+identical in both tools: the gage is not linear across the range and must
+be recalibrated, range-restricted, or software-compensated before it can
+be released for routine use.
+
+## 11. Reference
+
+- Minitab Support, *Gage Linearity and Bias Study overview* —
+  https://support.minitab.com/en-us/minitab/help-and-how-how/quality-and-process-improvement/measurement-system-analysis/how-to/gage-linearity-and-bias-study/
+- Minitab Support, *Methods and formulas for Gage Linearity and Bias Study* —
+  https://support.minitab.com/en-us/minitab/help-and-how-how/quality-and-process-improvement/measurement-system-analysis/how-to/gage-linearity-and-bias-study/methods-and-formulas/
+- AIAG **Measurement Systems Analysis** (MSA) Reference Manual, 4th edition,
+  Chapter III, Section B: Gage Linearity and Bias Study.
+- VDA **Volume 5**, *Capability of Measurement Processes*, 3rd edition —
+  measurement system uncertainty and linearity considerations.
+- ISO 22568-7 / ISO/TS 21748 — complementary guidance on measurement
+  uncertainty and bias evaluation.

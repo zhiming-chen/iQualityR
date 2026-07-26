@@ -1,0 +1,335 @@
+---
+title: "Taguchi Robust Design"
+author: "iQualityR Team"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Taguchi Robust Design}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4,
+  fig.align = "center"
+)
+```
+
+## 1. Introduction
+
+Taguchi's robust design philosophy seeks to identify **control factor
+settings that make the product/process insensitive to noise factors**.
+Rather than eliminating noise (which is often impossible or expensive),
+the approach exploits interactions between control and noise factors to
+minimize response variability.
+
+`iQualityR.doe` implements the full Taguchi workflow:
+
+* Signal-to-Noise (SN) ratio computation (larger / nominal / smaller)
+* Robustness analysis with control x noise inner/outer arrays
+* Contribution (pooling) analysis
+* Optimal-level prediction with confidence intervals
+* Dynamic SN ratios for signal-response systems
+
+This vignette follows a **machining surface-finish case study** and a
+**sensor calibration dynamic-response example**.
+
+```{r setup}
+library(iQualityR.doe)
+set.seed(42)
+```
+
+## 2. Case Study: Surface Finish Robustness
+
+### Problem
+
+A CNC machining team wants to minimize surface roughness ($R_a$, nm) of
+a milled aluminum part. The team identifies 3 control factors and 2
+noise factors:
+
+| Type | Factor | Level 1 | Level 2 | Unit |
+|---|---|---|---|---|
+| Control | Spindle Speed | 8000 | 12000 | rpm |
+| Control | Feed Rate | 0.05 | 0.15 | mm/tooth |
+| Control | Tool Coating | Uncoated | TiAlN | --- |
+| Noise | Material Hardness | Low | High | HRC |
+| Noise | Coolant Flow | Low | High | L/min |
+
+**Goal**: smaller-the-better surface roughness.
+
+### 2.1 Inner / Outer Array Design
+
+An $L_8$ inner array (3 control factors at 2 levels) crossed with an
+$L_4$ outer array (2 noise factors at 2 levels) provides the robust
+design layout.
+
+```{r robust-design}
+control_factors <- list(
+  list(name = "Speed",   type = "categorical", levels = c(8000, 12000)),
+  list(name = "Feed",    type = "categorical", levels = c(0.05, 0.15)),
+  list(name = "Coating", type = "categorical", levels = c("Uncoated", "TiAlN"))
+)
+noise_factors <- list(
+  list(name = "Hardness", type = "categorical", levels = c("Low", "High")),
+  list(name = "Coolant",  type = "categorical", levels = c("Low", "High"))
+)
+
+# Generate the crossed design manually for the example.
+# 8 control x 4 noise = 32 rows.
+control_runs <- expand.grid(
+  Speed = c(-1, 1),
+  Feed  = c(-1, 1),
+  Coating = c(-1, 1)
+)
+# Use a subset matching an L8 structure (8 rows).
+control_runs <- control_runs[c(1, 2, 3, 4, 5, 6, 7, 8), ]
+
+noise_runs <- expand.grid(
+  Hardness = c(-1, 1),
+  Coolant  = c(-1, 1)
+)
+
+experiment <- merge(control_runs, noise_runs, by = NULL)
+# Simulate response: smaller roughness at high speed, low feed, TiAlN coating.
+# Noise: high hardness increases roughness, high coolant reduces it.
+experiment$Roughness <- 120 -
+  15 * (experiment$Speed == 1) +          # high speed -> lower Ra
+  20 * (experiment$Feed == 1) +            # high feed -> higher Ra
+  -10 * (experiment$Coating == 1) +        # TiAlN -> lower Ra
+  12 * (experiment$Hardness == 1) +        # high hardness -> higher Ra
+  -8 * (experiment$Coolant == 1) +         # high coolant -> lower Ra
+  rnorm(nrow(experiment), 0, 2)
+
+head(experiment, 4)
+```
+
+### 2.2 Robustness Analysis
+
+```{r robust-analysis}
+analyzer <- TaguchiAnalyzer$new()
+robust_result <- analyzer$analyze_robustness(
+  data            = experiment,
+  control_factors = c("Speed", "Feed", "Coating"),
+  noise_factors   = c("Hardness", "Coolant"),
+  response        = "Roughness",
+  sn_type         = "smaller"   # smaller-the-better
+)
+robust_result
+```
+
+### Decision
+
+The SN ratios (in dB, smaller-the-better convention where **higher SN =
+more robust**) show which control-factor combination minimizes variability
+while keeping the mean low. The combination with the highest SN is the
+most robust.
+
+## 3. SN Ratio Computation
+
+### 3.1 Three SN types
+
+```{r sn-types}
+analyzer <- TaguchiAnalyzer$new()
+
+# Larger-the-better (e.g. yield, strength)
+sn_larger <- analyzer$compute_sn_ratio(c(70, 75, 80, 85), type = "larger")
+
+# Smaller-the-better (e.g. defect count, roughness)
+sn_smaller <- analyzer$compute_sn_ratio(c(5, 8, 3, 6), type = "smaller")
+
+# Nominal-the-best (e.g. dimension, pH)
+sn_nominal <- analyzer$compute_sn_ratio(c(10.1, 9.9, 10.0, 10.2),
+                                         type = "nominal")
+c(larger = sn_larger, smaller = sn_smaller, nominal = sn_nominal)
+```
+
+### Interpretation
+
+| SN Type | Goal | Formula |
+|---|---|---|
+| Larger | Maximize mean | $SN = -10\log_{10}(\frac{1}{n}\sum 1/y^2)$ |
+| Smaller | Minimize mean | $SN = -10\log_{10}(\frac{1}{n}\sum y^2)$ |
+| Nominal | Minimize variance around target | $SN = 10\log_{10}(\bar{y}^2 / s^2)$ |
+
+For all types, **higher SN indicates a more robust setting**.
+
+## 4. Contribution Analysis
+
+### 4.1 ANOVA-based contribution
+
+```{r contribution}
+# Example ANOVA table (from a standard R anova() call or custom).
+anova_df <- data.frame(
+  Term    = c("Speed", "Feed", "Coating", "Speed:Feed", "Error"),
+  Df      = c(1, 1, 1, 1, 3),
+  Sum_Sq  = c(400, 900, 250, 50, 30),
+  Mean_Sq = c(400, 900, 250, 50, 10),
+  stringsAsFactors = FALSE
+)
+
+contrib <- analyzer$compute_contribution(anova_df)
+contrib
+```
+
+### Decision
+
+The contribution percentages show that **Feed Rate** (largest
+contribution) is the dominant factor, followed by **Spindle Speed**.
+The Speed:Feed interaction is negligible and can be pooled into error
+for a more precise error estimate.
+
+## 5. Optimal-Level Prediction
+
+### 5.1 Predicting the optimal SN ratio
+
+Given the robustness results, `predict_optimal()` computes the best level
+for each control factor and predicts the SN ratio at those settings:
+
+```{r predict-optimal}
+pred <- analyzer$predict_optimal(
+  robustness_results = robust_result,
+  control_factors    = c("Speed", "Feed", "Coating"),
+  sn_type            = "smaller",
+  conf_level         = 0.95
+)
+pred$optimal_levels
+pred$predicted_sn
+pred$ci
+```
+
+### Interpretation
+
+The additive model predicts the SN ratio at the optimal combination as:
+
+$$\hat{SN} = \bar{SN}_{overall} + \sum_{j} (\bar{SN}_{j, opt} - \bar{SN}_{overall})$$
+
+The 95% confidence interval provides a range for the predicted SN,
+allowing the engineer to assess whether the improvement is statistically
+significant.
+
+### Decision
+
+For the smaller-the-better roughness response, the optimal settings are
+high spindle speed (12000 rpm), low feed rate (0.05 mm/tooth), and
+TiAlN-coated tool --- exactly matching the engineering intuition that
+faster cutting with coated tools produces smoother surfaces.
+
+## 6. Case Study: Dynamic Taguchi (Sensor Calibration)
+
+### Problem
+
+A sensor manufacturer calibrates a pressure transducer where the input
+**signal factor** M (reference pressure) should produce a linear output
+response y (voltage). The team wants the input-output relationship to be
+**proportional** (zero-intercept) and insensitive to noise.
+
+Two control factors:
+
+| Factor | Level 1 | Level 2 |
+|---|---|---|
+| Amplifier Gain | Low | High |
+| Filter Cutoff | 100 Hz | 500 Hz |
+
+Signal factor: reference pressure at 5 levels (1, 2, 3, 4, 5 bar).
+
+### 6.1 Dynamic SN Ratio
+
+For a **zero-point proportional** model ($y = \beta M$):
+
+$$\beta = \frac{\sum y_i M_i}{\sum M_i^2}, \quad
+V_e = \frac{\sum y_i^2 - \beta^2 \sum M_i^2}{n - 1}, \quad
+SN = 10\log_{10}\frac{\beta^2}{V_e}$$
+
+```{r dynamic-sn}
+analyzer <- TaguchiAnalyzer$new()
+
+# A single control-factor combination with 5 signal levels.
+# True gain beta = 2.0 (volts per bar).
+y_vals <- c(2.1, 3.9, 6.1, 8.2, 9.8)
+M_vals <- c(1, 2, 3, 4, 5)
+
+sn_dynamic <- analyzer$compute_dynamic_sn_ratio(
+  y    = y_vals,
+  M    = M_vals,
+  type = "zero_point"
+)
+sn_dynamic
+```
+
+### 6.2 Linear (reference-point) dynamic SN
+
+For a **linear** model ($y = \beta_0 + \beta_1 M$):
+
+```{r dynamic-linear}
+sn_linear <- analyzer$compute_dynamic_sn_ratio(
+  y    = y_vals,
+  M    = M_vals,
+  type = "linear"
+)
+sn_linear
+```
+
+### Interpretation
+
+The zero-point proportional SN is lower because the data has a small
+intercept offset. The linear SN captures the fit quality including the
+intercept.
+
+### 6.3 Full Dynamic Robustness Analysis
+
+```{r dynamic-robust}
+# 2 control factors x 5 signal levels = 20 rows.
+dat <- expand.grid(Gain = c(1, 2), Cutoff = c(1, 2),
+                    M = c(1, 2, 3, 4, 5))
+# True proportional gain varies by control setting.
+dat$Y <- 2.0 * dat$M + (dat$Gain - 1) * 0.3 * dat$M +
+  (dat$Cutoff - 1) * (-0.1) * dat$M + rnorm(nrow(dat), 0, 0.05)
+
+res <- analyzer$analyze_dynamic_robustness(
+  data            = dat,
+  control_factors = c("Gain", "Cutoff"),
+  signal_factor   = "M",
+  response        = "Y",
+  type            = "zero_point"
+)
+res
+```
+
+### Decision
+
+The dynamic robustness analysis shows that **Gain = High** (level 2)
+produces the highest SN ratio, meaning the sensor's input-output gain is
+most stable and predictable at that setting. The slope values confirm
+the true gain of approximately 2.3 V/bar at the optimal setting.
+
+## 7. Summary Table: Taguchi Workflow
+
+| Step | Method | Purpose |
+|---|---|---|
+| 1 | `taguchi_design()` or manual | Generate inner/outer array |
+| 2 | `compute_sn_ratio()` | Compute SN for each run |
+| 3 | `analyze_robustness()` | Aggregate SN by control combination |
+| 4 | `compute_contribution()` | ANOVA contribution analysis |
+| 5 | `predict_optimal()` | Select optimal levels + CI |
+| 6 | `compute_dynamic_sn_ratio()` | Dynamic (signal-response) SN |
+| 7 | `analyze_dynamic_robustness()` | Dynamic multi-run aggregation |
+
+## 8. Conclusion
+
+This vignette demonstrated the Taguchi robust-design workflow:
+
+* **SN ratios** for larger / nominal / smaller quality characteristics
+* **Robustness analysis** with control x noise crossed arrays
+* **Contribution analysis** for factor ranking
+* **Optimal-level prediction** with confidence intervals
+* **Dynamic Taguchi** for signal-response systems (sensor calibration)
+
+Key principle: **robust design is about minimizing variability, not just
+the mean**. The SN ratio captures both, and the control-factor settings
+that maximize SN are those that make the process least sensitive to noise.
+
+The next vignette, *AI/ML Advanced Features*, covers Bayesian
+optimization, surrogate modeling, and predictive DOE.

@@ -1,0 +1,573 @@
+---
+title: "Attribute Agreement Analysis: Kappa, Wagner and Kendall Statistics"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Attribute Agreement Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+
+fmt_num <- function(x, digits = 4) {
+  x <- suppressWarnings(as.numeric(x))
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  formatC(x, format = "f", digits = digits)
+}
+fmt_pct <- function(x, digits = 2) {
+  x <- suppressWarnings(as.numeric(x))
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  paste0(formatC(100 * x, format = "f", digits = digits), "%")
+}
+fmt_p <- function(x, digits = 4) {
+  x <- suppressWarnings(as.numeric(x))
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  if (x < 10^-digits) return(paste0("<", formatC(10^-digits, format = "f", digits = digits)))
+  formatC(x, format = "f", digits = digits)
+}
+round_df <- function(x, digits = 4) {
+  x <- as.data.frame(x)
+  num_cols <- vapply(x, is.numeric, logical(1))
+  x[num_cols] <- lapply(x[num_cols], round, digits = digits)
+  x
+}
+```
+
+## 1. Business Context
+
+A textile dyeing company produces printed fabric rolls. Before each roll is released to the customer, a team of visual inspectors rates the print quality on an **ordinal 1–5 scale**, where `1` represents the worst print quality and `5` represents the best. The quality engineering team needs to validate that the inspection system — the four inspectors combined — produces consistent and accurate ratings.
+
+The study follows the classical Minitab *Attribute Agreement Analysis* example design:
+
+| Parameter | Value |
+|---|---|
+| Inspectors (appraisers) | Amanda, Britt, Eric, Mike |
+| Fabric samples | 50 |
+| Trials per inspector | 2 |
+| Total rating events | 4 × 50 × 2 = 400 |
+| Rating scale | Ordinal, 1 (worst) — 5 (best) |
+| Known standard | Yes, one engineering master rating per sample |
+| Kappa method | Fleiss (multiple raters, long format) |
+| Scale type | Ordinal (enables Kendall statistics) |
+
+Each inspector rates every sample twice, so the study supports three complementary questions:
+
+1. **Within-appraiser repeatability** — does the same inspector give the same rating on trial 1 and trial 2?
+2. **Between-appraiser agreement** — do different inspectors agree with each other on the same sample?
+3. **Appraiser-vs-standard accuracy** — do the inspectors' ratings agree with the known engineering standard?
+
+Because the scale is ordinal, the analysis reports both Kappa statistics (exact agreement) and Kendall statistics (ordered association), giving a complete picture of inspection system capability.
+
+## 2. Method and Formulas
+
+### Observed and expected agreement
+
+Let $n$ be the number of comparison units and let $r_i$ and $c_j$ be the row and column marginals of the $n \times n$ classification table.
+
+$$
+P_o = \frac{\#\text{ matches}}{\#\text{ comparisons}}, \qquad
+P_e = \frac{\sum_i r_i \, c_j}{n^2}
+$$
+
+### Cohen's kappa (two raters)
+
+$$
+\kappa = \frac{P_o - P_e}{1 - P_e}
+$$
+
+Cohen's kappa applies to exactly two raters (or two rating streams) classifying the same set of subjects. The standard error is
+
+$$
+\mathrm{SE}(\kappa) = \sqrt{\frac{P_o(1 - P_o)}{n(1 - P_e)^2}},
+$$
+
+and the test statistic $Z = \kappa / \mathrm{SE}(\kappa)$ is evaluated against the standard normal distribution.
+
+### Fleiss' kappa (multiple raters)
+
+For $k$ raters each classifying $n$ subjects into $c$ categories, let $n_{ij}$ be the count of raters assigning subject $i$ to category $j$, and $p_j = \sum_i n_{ij} / (nk)$ the overall proportion of category $j$.
+
+$$
+P_o = \frac{1}{n}\sum_{i=1}^{n}\frac{\sum_j n_{ij}^2 - n_{i\cdot}}{n_{i\cdot}(n_{i\cdot}-1)},
+\qquad
+P_e = \sum_{j=1}^{c} p_j^2,
+\qquad
+\kappa = \frac{P_o - P_e}{1 - P_e}
+$$
+
+### Kendall's W (concordance coefficient)
+
+For ordinal data, Kendall's $W$ measures how consistently $k$ raters rank $n$ subjects:
+
+$$
+W = \frac{12 \sum_{i=1}^{n}(R_i - \bar R)^2}{k^2(n^3 - n) - k \sum T}
+$$
+
+where $R_i$ is the sum of ranks for subject $i$ and $T$ is a tie correction. $W$ ranges from 0 (no concordance) to 1 (perfect concordance).
+
+### Kendall's tau-b (appraiser vs standard)
+
+Kendall's tau-b measures the rank correlation between each appraiser's ordered ratings and the known standard:
+
+$$
+\tau_b = \frac{n_c - n_d}{\sqrt{(n_0 - n_1)(n_0 - n_2)}}
+$$
+
+where $n_c$ and $n_d$ are concordant and discordant pairs, and $n_1, n_2$ are tie corrections.
+
+### Wagner two-way method
+
+The Wagner method compares two raters directly. $V$ is the concordance proportion (exact match rate) and $BP$ is the mean absolute distance between ratings:
+
+$$
+V = \frac{\#\text{ concordant}}{n}, \qquad
+BP = \frac{1}{n}\sum_{i=1}^{n}|x_i - y_i|
+$$
+
+### Kappa interpretation bands
+
+| Kappa range | Interpretation |
+|---|---|
+| $< 0$ | Poor |
+| $0.00$ — $0.19$ | Slight |
+| $0.20$ — $0.39$ | Fair |
+| $0.40$ — $0.59$ | Moderate |
+| $0.60$ — $0.74$ | Good |
+| $0.75$ — $0.89$ | Strong |
+| $\geq 0.90$ | Excellent |
+
+**Acceptance criteria:** $\kappa \geq 0.90$ is strong enough for system release; $\kappa \geq 0.75$ is good and may be conditionally accepted depending on risk. For the Wagner method, $V \geq 0.75$ is Acceptable, $0.50 \leq V < 0.75$ is Conditionally Acceptable, and $V < 0.50$ is Unacceptable.
+
+## 3. Data Preparation
+
+The fabric print quality data ships with the package as a UTF-8 CSV file. It contains 400 rows and 5 columns with Chinese headers that we rename to English for programmatic access.
+
+```{r load-data}
+fabric_path <- system.file("extdata/minitab_msa/织物印刷质量.csv", package = "iQualityR.msa")
+fabric_data <- read.csv(fabric_path, fileEncoding = "UTF-8")
+names(fabric_data) <- c("Appraiser", "Rating", "Sample", "Trial", "Standard")
+
+dim(fabric_data)
+head(fabric_data, 12)
+```
+
+```{r data-summary}
+data.frame(
+  Appraisers = paste(sort(unique(fabric_data$Appraiser)), collapse = ", "),
+  Samples = length(unique(fabric_data$Sample)),
+  Trials = length(unique(fabric_data$Trial)),
+  Rating_Levels = paste(sort(unique(fabric_data$Rating)), collapse = ", "),
+  Total_Rows = nrow(fabric_data),
+  Has_Standard = all(!is.na(fabric_data$Standard))
+)
+```
+
+## 4. Quick Start (One-Liner)
+
+For a multi-rater ordinal study in long format, `iqr_fleiss_kappa()` runs the full analysis in a single call — no explicit plan object required.
+
+```{r quick-start}
+task <- iqr_fleiss_kappa(
+  fabric_data,
+  sample_col = "Sample",
+  rater_col = "Appraiser",
+  rating_col = "Rating",
+  standard_col = "Standard",
+  trial_col = "Trial",
+  scale_type = "ordinal",
+  category_order = as.character(1:5)
+)
+
+task$summary()
+```
+
+The returned `task` object holds the complete kappa and Kendall results. The rest of this vignette walks through the same analysis using the explicit Plan/Task workflow and then drills into each output table and plot.
+
+## 5. Step-by-Step Workflow
+
+The explicit workflow gives full control over study parameters and produces a reproducible protocol. The flow is: **Plan → validate → protocol → Task → compute → summary → plot → report**.
+
+```{r step-plan}
+plan <- AttrGagePlan$new(
+  plan_name = "Fabric Print Quality Inspection",
+  objectives = "Validate visual inspection agreement on ordinal 1-5 print quality scale",
+  appraisers = c("Amanda", "Britt", "Eric", "Mike"),
+  samples = 1:50,
+  standards = NULL,
+  categories = as.character(1:5),
+  category_order = as.character(1:5),
+  scale_type = "ordinal",
+  trials = 2,
+  comparison_mode = "one_way",
+  kappa_method = "fleiss",
+  conf_level = 0.95
+)
+
+plan$set_meta(
+  "data",
+  sample_col = "Sample",
+  rater_col = "Appraiser",
+  rating_col = "Rating",
+  standard_col = "Standard",
+  trial_col = "Trial"
+)
+
+plan$validate()
+plan$generate_protocol()
+```
+
+```{r step-task}
+task <- AttrGageTask$new(
+  data = fabric_data,
+  plan = plan,
+  theme = "academic",
+  mode = "kappa",
+  kappa_method = "fleiss"
+)
+
+task$compute()
+task$summary()
+```
+
+## 6. Cohen Kappa (Two Raters)
+
+Cohen's kappa is the right tool when exactly two raters classify the same subjects. To demonstrate it, we subset the fabric data to **Amanda vs Britt** on trial 1 and reshape to wide format.
+
+```{r cohen-data}
+ab_trial1 <- fabric_data[
+  fabric_data$Appraiser %in% c("Amanda", "Britt") & fabric_data$Trial == 1,
+  c("Sample", "Appraiser", "Rating")
+]
+cohen_wide <- reshape(ab_trial1, idvar = "Sample", timevar = "Appraiser", direction = "wide")
+names(cohen_wide) <- sub("^Rating\\.", "", names(cohen_wide))
+head(cohen_wide, 10)
+```
+
+```{r cohen-run}
+cohen_task <- iqr_cohen_kappa(
+  cohen_wide,
+  eval1_col = "Amanda",
+  eval2_col = "Britt",
+  theme = "academic"
+)
+
+cohen_task$summary()
+
+ck <- cohen_task$kappa_results$raw_output
+data.frame(
+  Statistic = c("Kappa", "SE", "Z", "P(>0)", "Po", "Pe", "Interpretation"),
+  Value = c(
+    fmt_num(ck$kappa, 4),
+    fmt_num(ck$se, 4),
+    fmt_num(ck$z, 4),
+    fmt_p(ck$p_value, 4),
+    fmt_pct(ck$Po, 2),
+    fmt_pct(ck$Pe, 2),
+    ck$interpretation
+  )
+)
+
+knitr::kable(
+  round_df(ck$response_table, 4),
+  caption = "Response-level agreement: Amanda vs Britt (Cohen)"
+)
+```
+
+```{r cohen-plot}
+print(cohen_task$plot(type = "kappa_benchmark"))
+```
+
+## 7. Wagner Two-Way Method
+
+The Wagner method evaluates two raters through the concordance proportion $V$ and the bias proportion $BP$. It is especially useful for ordinal scales because $BP$ captures the *magnitude* of disagreement, not just whether ratings match exactly.
+
+```{r wagner-run}
+wagner_task <- iqr_wagner(
+  cohen_wide,
+  eval1_col = "Amanda",
+  eval2_col = "Britt",
+  theme = "academic"
+)
+
+wagner_task$summary()
+
+wk <- wagner_task$kappa_results$raw_output
+data.frame(
+  Metric = c("V (concordance)", "BP (bias)", "N", "Concordant", "SE_V", "Z", "P(>0)", "Grade"),
+  Value = c(
+    fmt_pct(wk$V, 4),
+    fmt_num(wk$BP, 4),
+    wk$n,
+    wk$concordant,
+    fmt_num(wk$se_V, 4),
+    fmt_num(wk$z, 4),
+    fmt_p(wk$p_value, 4),
+    wk$grade
+  )
+)
+```
+
+The Wagner grade thresholds are:
+
+- $V \geq 0.75$ — **Acceptable**
+- $0.50 \leq V < 0.75$ — **Conditionally Acceptable**
+- $V < 0.50$ — **Unacceptable**
+
+```{r wagner-plot}
+print(wagner_task$plot(type = "summary"))
+```
+
+## 8. Fleiss Kappa Deep-Dive
+
+The Fleiss kappa analysis produces a rich set of tables that answer every agreement question in the study. All tables below are extracted from `task$kappa_results$raw_output`.
+
+### Overall kappa
+
+```{r fleiss-overall}
+kr <- task$kappa_results$raw_output
+ci <- kr$ci
+
+data.frame(
+  Statistic = c(
+    "Method", "Scale type", "Kappa", "SE", "Z", "P(>0)",
+    "95% CI lower", "95% CI upper",
+    "Observed agreement (Po)", "Expected agreement (Pe)",
+    "N subjects", "N raters per subject", "N appraisers", "N categories",
+    "Interpretation"
+  ),
+  Value = c(
+    kr$method,
+    kr$scale_type,
+    fmt_num(kr$kappa, 4),
+    fmt_num(kr$se, 4),
+    fmt_num(kr$z, 4),
+    fmt_p(kr$p_value, 4),
+    fmt_num(ci[1], 4),
+    fmt_num(ci[2], 4),
+    fmt_pct(kr$Po, 2),
+    fmt_pct(kr$Pe, 2),
+    kr$n_subjects,
+    kr$n_raters,
+    kr$n_appraisers,
+    kr$n_categories,
+    kr$interpretation
+  )
+)
+```
+
+### Each appraiser vs standard
+
+This table compares every inspector against the known engineering master. A low kappa here flags an inspector who needs retraining.
+
+```{r fleiss-vs-standard}
+knitr::kable(
+  round_df(kr$appraiser_vs_standard, 4),
+  caption = "Each appraiser vs known standard: matches, percent agreement, kappa"
+)
+```
+
+### Between-appraiser agreement
+
+Pairwise agreement across all appraiser combinations, averaged over trials.
+
+```{r fleiss-pairwise}
+knitr::kable(
+  round_df(kr$pairwise_appraisers, 4),
+  caption = "Between-appraiser pairwise agreement"
+)
+```
+
+### Within-appraiser repeatability
+
+Each appraiser's trial-1 vs trial-2 self-consistency.
+
+```{r fleiss-within}
+knitr::kable(
+  round_df(kr$within_appraiser, 4),
+  caption = "Within-appraiser repeatability across two trials"
+)
+```
+
+### Response-level kappa
+
+Each rating level (1–5) is collapsed into a binary "this level vs all others" question and kappa is recomputed. This reveals whether a particular rating level is unstable even when the overall kappa looks acceptable.
+
+```{r fleiss-response-kappa}
+knitr::kable(
+  round_df(kr$response_kappa, 4),
+  caption = "Response-level Fleiss kappa (each level vs all others)"
+)
+
+knitr::kable(
+  round_df(kr$response_kappa_vs_standard, 4),
+  caption = "Response-level kappa vs standard"
+)
+```
+
+### Sample disagreement table (top disputed samples)
+
+Samples are ranked by the number of discordant ratings, making it easy to identify borderline fabric rolls that drive inspector disagreement.
+
+```{r fleiss-sample-disagreement}
+knitr::kable(
+  round_df(head(kr$sample_disagreement, 15), 4),
+  caption = "Top 15 samples by disagreement count"
+)
+```
+
+## 9. Kendall Ordinal Statistics
+
+Kappa measures *exact* agreement: a rating of 4 vs 5 counts as a complete mismatch, even though the two levels are adjacent on an ordinal scale. For ordinal data this is overly strict. Kendall's $W$ (concordance coefficient) and Kendall's tau-b (rank correlation) use the *order* of the categories, so a 4-vs-5 disagreement is penalised far less than a 1-vs-5 disagreement.
+
+These outputs appear only when `scale_type = "ordinal"` is set on the plan.
+
+### Kendall's W — between appraisers
+
+```{r kendall-between}
+knitr::kable(
+  round_df(kr$ordinal$between_appraisers, 4),
+  caption = "Kendall's coefficient of concordance (between appraisers)"
+)
+```
+
+### Kendall's W — within appraiser
+
+```{r kendall-within}
+knitr::kable(
+  round_df(kr$ordinal$within_appraiser, 4),
+  caption = "Kendall's W within each appraiser (trial-to-trial concordance)"
+)
+```
+
+### Kendall's tau-b — each appraiser vs standard
+
+```{r kendall-vs-standard}
+knitr::kable(
+  round_df(kr$ordinal$appraiser_vs_standard, 4),
+  caption = "Kendall's tau-b: each appraiser vs known standard"
+)
+```
+
+### Kendall's tau-b — all appraisers vs standard
+
+```{r kendall-all-vs-standard}
+knitr::kable(
+  round_df(kr$ordinal$all_appraisers_vs_standard, 4),
+  caption = "Kendall's tau-b: all appraisers pooled vs known standard"
+)
+```
+
+## 10. Visualization Gallery
+
+The `AttrGagePlotter` supports the following plot types. Each is rendered via `print(task$plot(type = "..."))`.
+
+```{r plot-catalogue}
+plot_catalogue <- data.frame(
+  Plot_Type = c(
+    "summary", "kappa_benchmark", "pairwise_agreement",
+    "appraiser_standard", "kendall_ordinal", "response_agreement",
+    "sample_disagreement", "confusion_matrix"
+  ),
+  Purpose = c(
+    "Combined overview panel of all available kappa graphics",
+    "Overall kappa value against interpretation bands",
+    "Between-appraiser pairwise kappa and percent agreement",
+    "Each appraiser vs known standard (kappa and match rate)",
+    "Kendall W and tau-b coefficients for ordinal studies",
+    "Response-level match-to-standard rate by rating level",
+    "Top disputed samples ranked by discordant rating count",
+    "Rating count matrix or rater-vs-rater confusion matrix"
+  )
+)
+knitr::kable(plot_catalogue, caption = "Available attribute agreement plot types")
+```
+
+```{r plot-summary, fig.height=6}
+print(task$plot(type = "summary"))
+```
+
+```{r plot-kappa-benchmark}
+print(task$plot(type = "kappa_benchmark"))
+```
+
+```{r plot-pairwise}
+print(task$plot(type = "pairwise_agreement"))
+```
+
+```{r plot-appraiser-standard}
+print(task$plot(type = "appraiser_standard"))
+```
+
+```{r plot-kendall}
+print(task$plot(type = "kendall_ordinal"))
+```
+
+```{r plot-response}
+print(task$plot(type = "response_agreement"))
+```
+
+```{r plot-sample-disagreement}
+print(task$plot(type = "sample_disagreement"))
+```
+
+```{r plot-confusion}
+print(task$plot(type = "confusion_matrix"))
+```
+
+## 11. Report Export
+
+The task exports a self-contained report in Excel, HTML, or PDF format. The Excel workbook contains one sheet per result table (overall kappa, appraiser-vs-standard, pairwise, within-appraiser, response-level, sample disagreement, Kendall tables, and raw data).
+
+```{r report-export}
+xlsx_path <- tempfile("fabric_attribute_agreement_", fileext = ".xlsx")
+html_path <- tempfile("fabric_attribute_agreement_", fileext = ".html")
+
+task$report(format = "excel", path = xlsx_path)
+task$report(format = "html", path = html_path)
+
+data.frame(
+  Format = c("Excel", "HTML"),
+  Path = c(xlsx_path, html_path),
+  Exists = c(file.exists(xlsx_path), file.exists(html_path)),
+  Size_KB = round(c(file.info(xlsx_path)$size, file.info(html_path)$size) / 1024, 1)
+)
+```
+
+## 12. Interpretation and Decision
+
+Synthesising the tables above, the engineering conclusion for the fabric print quality inspection system is:
+
+**Within-appraiser repeatability.** All four inspectors show high trial-to-trial consistency, with kappa values well above the 0.75 acceptance threshold. This means each inspector is internally stable when re-rating the same fabric sample.
+
+**Between-appraiser agreement.** Pairwise kappa values between inspector pairs are in the Strong range (0.75–0.89) or above, confirming that different inspectors apply the 1–5 scale consistently.
+
+**Appraiser vs standard.** This is the most demanding test. **Amanda** shows the strongest agreement with the known standard ($\kappa \approx 1.0$, near-perfect), while **Eric** is the weakest ($\kappa \approx 0.82$, still in the Strong band). All four inspectors exceed the 0.75 acceptance threshold, and the pooled appraiser-vs-standard kappa confirms system-level accuracy.
+
+**Kendall ordinal statistics.** Kendall's W between appraisers and Kendall's tau-b vs standard both fall in the 0.95–0.98 range, indicating that even when inspectors disagree on the exact integer rating, their *ordering* of fabric quality is almost perfectly aligned with the engineering standard. This is critical for a 1–5 ordinal scale where a one-level difference (e.g., 4 vs 5) is operationally minor.
+
+**Overall decision.** The inspection system is **acceptable** for release. All inspectors demonstrate good-to-strong agreement with the standard, Kendall coefficients confirm strong ordinal consistency, and no individual rating level shows instability. Eric's slightly lower kappa suggests a minor calibration opportunity, but it does not block system acceptance.
+
+## 13. Reference
+
+- Minitab Help, *Attribute Agreement Analysis* — kappa statistics, appraiser agreement tables, and Kendall coefficients.
+- AIAG, *Measurement Systems Analysis (MSA)*, 4th edition, Chapter III — Attribute Measurement Systems Study.
+- Cohen, J. (1960). "A coefficient of agreement for nominal scales." *Educational and Psychological Measurement*, 20(1), 37–46.
+- Fleiss, J. L. (1971). "Measuring nominal scale agreement among many raters." *Psychological Bulletin*, 76(5), 378–382.
+- Wagner, C. H. (1982). "Simpson's paradox in real life." *The American Statistician* — two-way concordance method for paired raters.
+- Kendall, M. G. (1948). *Rank Correlation Methods*. Charles Griffin, London.

@@ -1,0 +1,42 @@
+Package: iQualityR
+Type: Package
+Title: Integrated Quality Engineering Framework
+Version: 0.1.0
+Authors@R: person(given = "Zhiming", family = "Chen", email = "zhimingc383@gmail.com", role = c("aut", "cre"))
+Author: Zhiming Chen [aut, cre]
+Maintainer: Zhiming Chen <zhimingc383@gmail.com>
+Description: A meta-package that installs and loads the complete iQualityR
+    quality engineering framework. It brings together nine cooperating packages
+    covering core infrastructure (iQualityR.core), statistical foundations
+    (iQualityR.stat), visualization (iQualityR.plot), measurement system
+    analysis (iQualityR.msa), process capability (iQualityR.capa), design of
+    experiments (iQualityR.doe), sampling plans (iQualityR.sampling),
+    reliability analysis (iQualityR.reliability), and predictive quality
+    modeling (iQualityR.predict). Loading iQualityR attaches all member
+    packages so their APIs are immediately available, mirroring the tidyverse
+    convention.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.1.0)
+Imports:
+    iQualityR.core (>= 0.1.0),
+    iQualityR.plot (>= 0.1.0),
+    iQualityR.stat (>= 0.1.0),
+    iQualityR.msa (>= 0.1.0),
+    iQualityR.capa (>= 0.1.0),
+    iQualityR.doe (>= 0.1.0),
+    iQualityR.sampling (>= 0.1.0),
+    iQualityR.reliability (>= 0.1.0),
+    iQualityR.predict (>= 0.1.0),
+    utils
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+VignetteBuilder: knitr

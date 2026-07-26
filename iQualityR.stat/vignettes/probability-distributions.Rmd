@@ -1,0 +1,393 @@
+---
+title: "Probability Distribution Analysis Guide"
+author: "iQualityR Development Team"
+date: "`r Sys.Date()`"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Probability Distribution Analysis Guide}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+ 
+```{r setup, echo = FALSE}
+library(iQualityR.stat)
+library(R6)
+
+library(patchwork)
+library(iQualityR.core)
+library(iQualityR.plot)
+
+```
+
+## 1. What is Probability Distribution Analysis?
+
+In quality management, we often need to answer questions like:
+
+-   **Conformity Assessment**: What is the probability that the number of non-conforming items in a batch does not exceed 3?
+-   **Specification Compliance**: What is the probability that the product dimension falls within specification limits?
+-   **Risk Assessment**: What is the likelihood that the time between failures is less than 100 hours?
+-   **Sampling Decision**: If we inspect 50 items, what is the maximum number of non-conforming items allowed to accept the batch as acceptable?
+
+**iQualityR's Probability Distribution Module**
+is designed to help you answer these questions quickly and accurately. It supports **16
+probability distributions**, covering the vast majority of statistical inference scenarios in quality management.
+
+### Module Features
+
+| Feature | Description |
+|---------|-------------|
+| **Dual Interface Design** | R6 class interface (chained calls) + convenience functions (one-time use) |
+| **16 Distributions** | 12 continuous + 4 discrete |
+| **4 Calculation Modes** | Left tail, right tail, within interval, outside interval |
+| **Visualization** | PDF/CDF plots, shaded regions, wire annotations |
+| **Result Interpretation** | Translates statistical terminology into language understandable by quality personnel |
+| **Report Export** | Console printing, data frame export, Excel report |
+
+------------------------------------------------------------------------
+
+## 2. Quick Start
+
+### Scenario 1: Normal Distribution - Product Dimension Compliance Probability
+
+Assuming a product's critical dimension follows a normal distribution N(100, 5), with an upper specification limit of 108, find the probability that the dimension exceeds the upper limit.
+
+```{r norm-example, warning=FALSE}
+# library(iQualityR.stat)
+
+# Create normal distribution object
+prob <- iqr_prob$new(type = "norm", params = list(mean = 100, sd = 5),theme = "academic")
+
+# Calculate P(X > 108)
+prob$calc(values = 108, mode = "prob", calc_type = "upper")
+
+# Plot (with CDF)
+prob$plot(show_cdf = TRUE)
+```
+
+**Interpretation**: P(X \> 108) = 0.0548, meaning approximately 5.5%
+of products will exceed the upper specification limit, corresponding to approximately 55,000 DPMO.
+
+### Scenario 2: Binomial Distribution - Sampling Compliance Decision
+
+A production process has an average non-conforming rate of 5%. If we inspect 50 items, find the probability that the number of non-conforming items does not exceed 3.
+
+```{r binom-example}
+# Create binomial distribution object
+prob_binom <- iqr_prob$new(type = "binom",  params = list(size = 50, prob = 0.05))
+
+# Calculate P(X <= 3)
+prob_binom$calc(values = 3, mode = "prob", calc_type = "lower")
+
+# Generate management-level interpretation
+prob_binom$interpret(audience = "manager")
+```
+
+**Common Misconception**: Many people directly calculate 3/50 =
+6%, but this differs from the meaning of the binomial distribution. The 87.3% from the binomial distribution represents the likelihood of the event "no more than 3 items" occurring, taking into account sampling variability.
+
+### Scenario 3: Exponential Distribution - Equipment Time Between Failures
+
+The time between failures for a piece of equipment follows an exponential distribution (average 500 hours). Find the probability that the equipment fails within 100 hours.
+
+```{r exp-example, warning=FALSE}
+prob_exp <- iqr_prob$new(type = "exp", params = list(rate = 1/500))
+prob_exp$calc(values = 100, mode = "prob", calc_type = "lower")
+prob_exp$plot(show_cdf = TRUE)
+```
+
+------------------------------------------------------------------------
+
+## 3. Available Distributions Overview
+
+### 3.1 View All Distributions
+
+```{r list-dists}
+# List all available distributions
+list_prob_distributions()
+```
+
+### 3.2 Continuous Distributions (12 types)
+
+| Distribution | Parameters | Typical Applications |
+|--------------|------------|---------------------|
+| **norm** | mean, sd | Measurement error, product quality characteristics |
+| **weibull** | shape, scale | Life analysis, reliability |
+| **lnorm** | meanlog, sdlog | Particle size, reaction time |
+| **gamma** | shape, scale | Waiting time, cumulative quantities |
+| **exp** | rate | Time between failures |
+| **t** | df | Small sample inference |
+| **f** | df1, df2 | Variance comparison, ANOVA |
+| **chisq** | df | Goodness of fit, variance test |
+| **beta** | shape1, shape2 | Proportion/rate (yield, defect rate) |
+| **unif** | min, max | Uniform distribution (MSA) |
+| **logis** | location, scale | Robust analysis |
+| **cauchy** | location, scale | Heavy-tailed distribution |
+
+### 3.3 Discrete Distributions (5 types)
+
+| Distribution | Parameters | Typical Applications |
+|--------------|------------|---------------------|
+| **binom** | size, prob | Number of non-conforming items |
+| **pois** | lambda | Number of defects, event occurrence count |
+| **nbinom** | size, prob | Number of successes before a given number of failures |
+| **hyper** | m, n, k | Finite population sampling |
+| **geom** | prob | Number of trials before first failure |
+
+------------------------------------------------------------------------
+
+## 4. Calculation Mode Details
+
+### 4.1 Probability Calculation (Given X, Find P)
+
+```{r prob-modes}
+# Standard normal distribution
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+
+# Left tail: P(X <= 1.96)
+prob$calc(values = 1.96, calc_type = "lower")
+
+# Right tail: P(X > 1.96)
+prob$calc(values = 1.96, calc_type = "upper")
+
+# Within interval: P(-1.96 <= X <= 1.96)
+prob$calc(values = c(-1.96, 1.96), calc_type = "between")
+
+# Outside interval: P(X < -1.96 or X > 1.96)
+prob$calc(values = c(-1.96, 1.96), calc_type = "outside")
+```
+
+### 4.2 Quantile Calculation (Given P, Find X)
+
+```{r quant-mode}
+# Given probability, find quantile
+prob$calc(values = 0.975, mode = "quant")  # 97.5% quantile
+prob$calc(values = c(0.025, 0.975), mode = "quant")  # Two-sided quantiles
+```
+
+------------------------------------------------------------------------
+
+## 5. Visualization Options
+
+### 5.1 Basic PDF Plot
+
+```{r basic-plot, warning=FALSE}
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+prob$calc(values = 1.96, calc_type = "upper")
+prob$plot()
+```
+
+### 5.2 PDF + CDF Combined Plot
+
+```{r pdf-cdf-plot,warning=FALSE}
+prob$plot(show_cdf = TRUE)
+```
+
+### 5.3 Multi-Distribution Comparison (Facet)
+
+```{r multi-dist-plot, warning=FALSE}
+prob_multi <- iqr_prob$new(
+  dist_list = list(
+    list(id = "Standard Normal", type = "norm", params = list(mean = 0, sd = 1)),
+    list(id = "Wide Distribution", type = "norm", params = list(mean = 0, sd = 2)),
+    list(id = "Narrow Distribution", type = "norm", params = list(mean = 0, sd = 0.5))
+  )
+)
+
+prob_multi$calc(values = 1.96, calc_type = "upper")
+prob_multi$plot(facet = TRUE)
+```
+
+### 5.4 Discrete Distribution Visualization
+
+```{r discrete-plot, warning=FALSE}
+prob_disc <- iqr_prob$new(type = "pois", params = list(lambda = 5))
+prob_disc$calc(values = 7, calc_type = "lower")
+prob_disc$plot(show_cdf = TRUE)
+```
+
+------------------------------------------------------------------------
+
+## 6. Result Interpretation Features
+
+### 6.1 For Management
+
+```{r interp-manager, eval = TRUE}
+prob <- iqr_prob$new(type = "binom", params = list(size = 50, prob = 0.05))
+prob$calc(values = 3, calc_type = "lower")
+prob$interpret(audience = "manager")
+```
+
+### 6.2 For Technical Personnel
+
+```{r interp-technical}
+prob$interpret(audience = "technical")
+```
+
+### 6.3 For Customers
+
+```{r interp-client}
+prob$interpret(audience = "client")
+```
+
+### 6.4 Hypothesis Test Interpretation
+
+```{r htest-interp}
+# Hypothesis test results can also be interpreted directly
+set.seed(123)
+group1 <- rnorm(30, mean = 100, sd = 10)
+group2 <- rnorm(30, mean = 105, sd = 10)
+
+t_result <- t.test(group1, group2)
+interp <- StatInterpreter$new()
+interp$interpret(t_result, audience = "manager")
+```
+
+------------------------------------------------------------------------
+
+## 7. Convenience Functions (No R6 Object Required)
+
+If you only need quick queries and don't want to create R6 objects, you can use convenience functions:
+
+### 7.1 prob_calc() - Quick Calculation
+
+```{r prob-calc}
+# Normal distribution: P(X > 1.96)
+prob_calc(type = "norm", params = list(mean = 0, sd = 1),
+          x = 1.96, calc_type = "upper")
+
+# Binomial distribution: P(X <= 3), with interpretation
+prob_calc(type = "binom", params = list(size = 50, prob = 0.05),
+          x = 3, calc_type = "lower", interpret = TRUE)
+```
+
+### 7.2 prob_plot() - Quick Plotting
+
+```{r prob-plot-func, warning=FALSE}
+prob_plot(type = "norm", params = list(mean = 0, sd = 1),
+          x = 1.96, calc_type = "upper", show_cdf = TRUE)
+```
+
+### 7.3 list_prob_distributions() - View Distribution List
+
+```{r list-prob-func}
+list_prob_distributions()
+```
+
+------------------------------------------------------------------------
+
+## 8. Report Export
+
+### 8.1 Data Frame Export
+
+```{r report-df}
+prob <- iqr_prob$new(type = "norm", params = list(mean = 100, sd = 5))
+prob$calc(values = 108, calc_type = "upper")
+
+# Export as data frame
+df <- prob$report()
+print(df)
+```
+
+### 8.2 Excel Report
+
+```{r report-excel, eval = FALSE}
+# Export as Excel report (multiple worksheets)
+prob$report_excel(path = "Probability_Analysis_Report.xlsx")
+```
+
+Excel report contains: - **Calculation Results**: Input values, calculation results, formula descriptions -
+**Distribution Parameters**: Distribution type, parameters, support set, description - **Usage Instructions**: Meaning of mode and
+calc_type
+
+------------------------------------------------------------------------
+
+## 9. Custom Distributions
+
+If built-in distributions don't meet your needs, you can add custom distributions through the registry:
+
+```{r custom-dist, eval = FALSE}
+# Register custom distribution
+register_dist(
+  dist_type = "my_custom",
+  d = function(x, p) dnorm(x, p$mean, p$sd) * 1.1,  # Custom density function
+  p = function(q, p, lower.tail) pnorm(q, p$mean, p$sd, lower.tail),
+  q = function(p_val, p, lower.tail) qnorm(p_val, p$mean, p$sd, lower.tail),
+  defaults = list(mean = 0, sd = 1),
+  is_discrete = FALSE,
+  support = "(-inf, +inf)",
+  description = "My custom distribution"
+)
+
+# Use custom distribution
+prob <- iqr_prob$new(type = "my_custom", params = list(mean = 0, sd = 1))
+prob$calc(values = 1.96, calc_type = "upper")
+```
+
+------------------------------------------------------------------------
+
+## 10. Common Scenario Quick Reference
+
+| Scenario | Distribution | Code Example |
+|---------------------|---------------------|------------------------------|
+| Product dimension yield | norm | `prob_calc("norm", list(mean=100, sd=5), x=108, "upper")` |
+| Sampling non-conforming count | binom | `prob_calc("binom", list(size=50, prob=0.05), x=3, "lower")` |
+| Defects per unit time | pois | `prob_calc("pois", list(lambda=2), x=4, "upper")` |
+| Equipment life | weibull | `prob_calc("weibull", list(shape=2, scale=1000), x=500, "lower")` |
+| Reaction time | lnorm | `prob_calc("lnorm", list(meanlog=4, sdlog=0.5), x=100, "upper")` |
+| Variance ratio test | f | `prob_calc("f", list(df1=9, df2=9), x=3.18, "upper")` |
+| Finite population sampling | hyper | `prob_calc("hyper", list(m=10, n=90, k=5), x=1, "upper")` |
+
+------------------------------------------------------------------------
+
+## 11. Frequently Asked Questions
+
+### Q1: What's the difference between "lower" and "upper" for calc_type?
+
+-   **lower**: Calculate left-tail probability P(X <= x)
+-   **upper**: Calculate right-tail probability P(X > x)
+-   **between**: Calculate interval probability P(a <= X <= b)
+-   **outside**: Calculate probability outside interval P(X < a or X > b)
+
+### Q2: When to use probability calculation vs quantile calculation?
+
+-   **Probability Calculation** (mode = "prob"): Given X value, find corresponding probability. For example: "probability that dimension exceeds 108"
+-   **Quantile Calculation** (mode = "quant"): Given probability, find corresponding X value. For example: "what dimension do 95% of products not exceed"
+
+### Q3: How to choose the appropriate distribution?
+
+| Data Type | Recommended Distribution |
+|-----------|--------------------------|
+| Continuous measurement data (symmetric) | Normal distribution (norm) |
+| Continuous measurement data (right-skewed) | Lognormal (lnorm) or Gamma (gamma) |
+| Life/reliability | Weibull (weibull) or Exponential (exp) |
+| Non-conforming count (fixed sample) | Binomial (binom) |
+| Defects per unit area/time | Poisson (pois) |
+| Proportion/rate | Beta distribution (beta) |
+
+### Q4: How are "business recommendations" in result interpretation generated?
+
+The system automatically provides recommendations based on calculated probability values: - **>= 95%**: Process is good, maintain status quo - **90-95%**: Basically in control, pay appropriate attention - **80-90%**: Acceptable but with risk, strengthen monitoring - **50-80%**: Risk exists, consider process adjustment - **< 50%**: High risk, recommend investigation of causes
+
+------------------------------------------------------------------------
+
+*This vignette was written by the iQualityR Team | Version
+`r packageVersion("iQualityR.stat")`*

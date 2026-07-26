@@ -1,0 +1,124 @@
+---
+title: "Hypothesis Testing and Normality Testing"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Hypothesis Testing and Normality Testing}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+```{r include=FALSE}
+library(iQualityR.stat)
+library(R6)
+
+library(patchwork)
+library(iQualityR.core)
+library(iQualityR.plot)
+
+```
+
+## Overview
+
+Hypothesis testing is a core tool in quality management for determining whether differences are statistically significant. Normality testing is a prerequisite for many statistical methods. This module provides complete calculation, visualization, interpretation, and reporting functions.
+
+## Hypothesis Testing
+
+### Quick Functions
+
+```{r setup}
+library(iQualityR.stat)
+```
+
+#### One-Sample t Test
+
+```{r one_sample}
+set.seed(123)
+x <- rnorm(30, mean = 5.2, sd = 1)
+
+result <- htest_run(test_type = "t_test_1s", x = x, mu = 5)
+result$p.value
+```
+
+#### Two-Sample t Test
+
+```{r two_sample}
+set.seed(123)
+x <- rnorm(30, mean = 5, sd = 1)
+y <- rnorm(30, mean = 5.5, sd = 1)
+
+result <- htest_run(test_type = "t_test_2s", x = x, y = y)
+result$p.value
+```
+
+#### Paired t Test
+
+```{r paired}
+set.seed(123)
+before <- rnorm(20, mean = 100, sd = 10)
+after <- before + rnorm(20, mean = 3, sd = 5)
+
+result <- htest_run(test_type = "t_test_paired", x = before, y = after)
+result$p.value
+```
+
+#### Variance Test
+
+```{r var_test}
+set.seed(123)
+x <- rnorm(30, mean = 5, sd = 1)
+y <- rnorm(30, mean = 5, sd = 1.5)
+
+result <- htest_run(test_type = "f_test", x = x, y = y)
+result$p.value
+```
+
+## Normality Testing
+
+### Supported Test Methods
+
+| Method | Description | Applicable Sample Size |
+|--------|-------------|------------------------|
+| `sw` | Shapiro-Wilk | 3-5000 |
+| `ad` | Anderson-Darling | 8+ |
+| `lillie` | Lilliefors (Kolmogorov-Smirnov) | 4+ |
+| `sf` | Shapiro-Francia | 5-5000 |
+| `cvm` | Cramer-von Mises | 8+ |
+
+### Quick Functions
+
+```{r normality_test}
+set.seed(123)
+x <- rnorm(50)
+
+result <- normality_test(x, method = "sw")
+result$p.value
+result$is_normal
+```
+
+### Auto-Select Method
+
+```{r auto_method}
+set.seed(123)
+x <- rnorm(100)
+
+result <- normality_test(x, method = "auto")
+result$method
+```
+
+## Unified Interpreter
+
+`StatInterpreter` provides unified statistical result interpretation:
+
+```{r stat_interpreter}
+interpreter <- StatInterpreter$new()
+
+interpreter$interpret(result, audience = "manager")
+```

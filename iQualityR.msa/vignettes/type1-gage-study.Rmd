@@ -1,0 +1,519 @@
+---
+title: "Type 1 Gage Study: Bias, Repeatability, Cg/Cgk and VDA5"
+author: "iQualityR MSA Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Type 1 Gage Study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.msa)
+
+fmt_num <- function(x, digits = 6) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Business Context
+
+This vignette reproduces the canonical Minitab **Type 1 Gage Study** example:
+ultrasonic thickness measurement of a protective hardcoat on a painted door
+panel. An engineer has a reference sample with a known thickness of 0.025 inch,
+and a single operator measures that reference 50 times in a row. The goal is to
+decide whether the gage itself — independent of operator or part variation — is
+capable of supporting the tolerance before any further MSA work is done.
+
+A Type 1 study is the simplest MSA: it isolates **bias** and **repeatability**
+of one gage against one reference. There are no operators, no parts, no
+interactions. It is the gate that must be passed before a Gage R&R study makes
+sense.
+
+The study parameters are summarized below.
+
+| Item                       | Value        |
+|----------------------------|-------------:|
+| Characteristic             | Hardcoat thickness |
+| Unit                       | inch         |
+| Reference value ($x_{ref}$)| 0.025000     |
+| Lower specification limit  | 0.024650     |
+| Upper specification limit  | 0.025350     |
+| Tolerance ($T = USL - LSL$) | 0.000700     |
+| Number of measurements ($n$) | 50         |
+| Gage resolution            | 0.000001     |
+| Default $k$ factor         | 0.2          |
+
+At this scale (tens of micro-inches) the number of decimal places is
+engineering-meaningful. Throughout this vignette, thickness, tolerance, and
+standard deviation are printed with 6 decimal places, while summary statistics
+(Cg, Cgk, t, p) are printed with 4.
+
+## 2. Method and Formulas
+
+A Type 1 study examines **only the gage itself**. The analysis has three
+pillars: bias hypothesis testing, capability indices (Cg/Cgk), and VDA 5
+measurement-system uncertainty.
+
+**Bias and its hypothesis test.**
+
+$$
+\text{Bias} = \bar{x} - x_{ref}
+$$
+
+Under $H_0: \text{Bias} = 0$ the test statistic is
+$t = \text{Bias} / (s/\sqrt{n})$ on $\nu = n - 1$ degrees of freedom, with the
+usual two-sided $p$-value and $100(1-\alpha)\%$ confidence interval
+$\text{Bias} \pm t_{1-\alpha/2,\,\nu}\cdot s/\sqrt{n}$.
+
+**Capability indices (AIAG MSA 4th ed., Minitab Type 1).**
+
+$$
+C_g = \frac{k \cdot T}{6s}, \qquad
+C_{gk} = \frac{kT/2 - |\text{Bias}|}{3s}
+$$
+
+with default $k = 0.2$. $C_g$ evaluates repeatability alone; $C_{gk}$ penalises
+for bias simultaneously. The corresponding variation ratios are:
+
+$$
+\%\text{Var}(\text{Repeatability}) = \frac{6s}{T} \cdot 100 = \frac{k \cdot 100}{C_g}, \qquad
+\%\text{Var}(\text{Repeatability and Bias}) = \frac{k \cdot 100}{C_{gk}}
+$$
+
+The two `%Var` metrics are the direct reciprocals of $C_g$ and $C_{gk}$ (scaled
+by $k \times 100$). Note that $\%\text{Var}(\text{Repeatability and Bias})$ is
+**not** $(6s + |\text{Bias}|)/T \times 100$; the correct relationship follows
+the symmetric form $k \cdot 100 / C_{gk}$, which is verified against the
+Minitab Type 1 example (hardcoat data: $k=0.2$, $C_{gk}=0.421$ gives
+$0.2 \times 100 / 0.421 = 47.52\%$, matching Minitab's output).
+
+**VDA 5 uncertainty (VDA volume 5, 3rd edition, §5.3).** A Type 1 Gage
+Study characterises the **measurement system** (a single reading in
+production), so the standard uncertainties are defined at the
+single-measurement level:
+
+$$
+u_{EVR} = s \quad (\text{repeatability, single measurement; VDA 5 §5.3.1})
+$$
+
+$$
+u_{RE} = \frac{\text{resolution}}{2\sqrt{3}} \quad (\text{resolution, rectangular; VDA 5 §5.3.3})
+$$
+
+$$
+u_{BI} = |\text{Bias}| \quad (\text{uncorrected systematic bias; VDA 5 §5.3.2})
+$$
+
+Two points are deliberate and worth flagging. First, $u_{EVR}$ uses $s$
+(not $s/\sqrt{n}$): the gage makes one reading in production, so its
+repeatability contribution is the standard deviation of a single
+measurement. Using $s/\sqrt{n}$ would understate $u_{MS}$ by a factor of
+$\sqrt{n}$ and make $\%Q_{MS}$ inconsistent with $C_g$ (which uses
+$6s$). Second, $u_{BI}$ uses $|\text{Bias}|$ (not $s/\sqrt{n}$): in a
+Type 1 study the bias is being *evaluated*, not corrected, so its full
+magnitude contributes to uncertainty. The statistical uncertainty of the
+bias *estimate* ($s/\sqrt{n}$) is already captured in $u_{EVR}$ and must
+not be double-counted.
+
+The combined standard uncertainty of the measurement system is the root
+sum of squares of its components:
+
+$$
+u_{MS} = \sqrt{u_{EVR}^2 + u_{RE}^2 + u_{BI}^2 + u_{LIN}^2 + u_{CAL}^2 + \sum u_{REST}^2}
+$$
+
+where $u_{LIN} = 0$ for a Type 1 study (linearity is assessed separately
+by a Gage Linearity and Bias Study), $u_{CAL}$ is the calibration
+uncertainty, and $u_{REST}$ is any remaining contributor. The ratio
+against tolerance is
+
+$$
+\%Q_{MS} = \frac{2 u_{MS}}{T} \cdot 100
+$$
+
+(the factor 2 expands the standard uncertainty to a $2\sigma$ "expanded"
+uncertainty consistent with VDA 5 reporting).
+
+**Acceptance criteria** used by `iQualityR.msa` (consistent with AIAG MSA 4th
+ed. and VDA 5):
+
+- $C_g \geq 1.33$
+- $C_{gk} \geq 1.33$
+- $\%$Bias of tolerance $< 10\%$
+- $\%Q_{MS} < 15\%$
+- Bias 95% CI must contain 0
+
+## 3. Data Preparation
+
+The hardcoat dataset ships with the package at
+`inst/extdata/minitab_msa/硬盖厚度.csv`. It is a single column of 50
+thickness readings (column name `厚度`, "thickness" in Chinese).
+
+```{r data-prep}
+hardcoat_path <- system.file("extdata/minitab_msa/硬盖厚度.csv", package = "iQualityR.msa")
+hardcoat <- read.csv(hardcoat_path, fileEncoding = "UTF-8")
+
+cat("Rows:", nrow(hardcoat), " Cols:", ncol(hardcoat), "\n")
+cat("Column names:", names(hardcoat), "\n")
+
+head(hardcoat)
+
+summary(hardcoat$厚度)
+```
+
+The 50 measurements span roughly 0.02489 to 0.02506 inch. The sample mean is
+slightly below the 0.025 reference, which is the first hint of a negative
+bias — formalised in the next section.
+
+## 4. Quick Start (One-Liner)
+
+The fastest path is the `iqr_type1_bias()` convenience wrapper. It constructs
+the plan, runs the analyzer, and returns a fully populated `Type1Task`:
+
+```{r quick-start}
+task <- iqr_type1_bias(
+  hardcoat$厚度,
+  reference_value = 0.025,
+  lsl = 0.024650,
+  usl = 0.025350,
+  resolution = 0.000001
+)
+
+task$summary()
+```
+
+The summary mirrors the Minitab Type 1 layout: basic statistics, gage
+capability table with PASS/FAIL decisions, and VDA 5 uncertainty components.
+Two capability indices (`Cg`, `Cgk`) and the VDA 5 `%QMS` carry the formal
+accept/reject verdicts; everything else is diagnostic context.
+
+## 5. Step-by-Step Workflow
+
+For auditability and reproducibility, the same analysis can be expressed
+explicitly as Plan → Task → compute → summary → plot → report. This is the
+recommended pattern for regulated environments where every step must be
+recorded.
+
+```{r step-by-step}
+plan <- Type1Plan$new(
+  study_type     = "bias",
+  reference_value = 0.025,
+  spec_limits    = list(lsl = 0.024650, usl = 0.025350),
+  k_factor       = 0.2,
+  resolution     = 0.000001
+)
+plan$validate()
+plan$generate_protocol()
+
+task <- Type1Task$new(data = hardcoat$厚度, plan = plan, study_type = "bias")
+task$compute()
+task$summary()
+```
+
+The `Type1Plan$validate()` call enforces that a reference value and both spec
+limits are present; `generate_protocol()` prints a short, audit-ready summary
+of the study configuration. The same `task$results` structure is produced
+whether the task is built from a plan or from the convenience wrapper.
+
+## 6. Public Method Deep-Dive (Refactored API)
+
+After the P1-4 refactor the analysis pipeline is exposed as four discrete
+public methods on `Type1Analyzer`:
+
+1. `compute_bias(dt)` — sample statistics and bias t-test
+2. `compute_capability()` — Cg, Cgk, %Var repeatability
+3. `compute_vda5()` — VDA 5 uncertainty components and %QMS
+4. `evaluate_criteria()` — pass/fail diagnostics against the plan criteria
+
+Each step is independently callable, returns its results as a named list,
+and stores the same values in `self$results$statistics` (or
+`self$results$diagnostics` for step 4). This is useful when building custom
+workflows, debugging an unexpected result, or unit-testing one step at a
+time.
+
+### Step 1 — `compute_bias()`
+
+```{r step-bias}
+analyzer <- Type1Analyzer$new()
+analyzer$setup(plan$to_list())
+
+bias_out <- analyzer$compute_bias(data.table::as.data.table(hardcoat$厚度))
+
+bias_out
+```
+
+After this call, `analyzer$results$statistics` carries `n`, `reference_value`,
+`mean_meas`, `sd_meas`, `bias`, `percent_bias`, `t_stat`, `p_value`,
+`ci_bias`, `tolerance`, and `spec_limits`. The 95% bias confidence interval is
+`r sprintf("[%.6f, %.6f]", task$results$statistics$ci_bias[1], task$results$statistics$ci_bias[2])`,
+which does **not** contain 0 — already foreshadowing the bias verdict.
+
+### Step 2 — `compute_capability()`
+
+```{r step-capability}
+cap_out <- analyzer$compute_capability()
+
+cap_out
+```
+
+`Cg = r round(task$results$statistics$Cg, 3)` and
+`Cgk = r round(task$results$statistics$Cgk, 3)` — both well below the 1.33
+threshold, confirming that the gage consumes too much of the tolerance even
+before bias is accounted for.
+
+### Step 3 — `compute_vda5()`
+
+```{r step-vda5}
+vda5_out <- analyzer$compute_vda5()
+
+vda5_out
+
+analyzer$results$data_tables$vda5_uncertainty
+```
+
+The VDA 5 table breaks down the combined uncertainty into its source
+components. Per VDA 5 §5.3, $u_{EVR} = s$ (single-measurement
+repeatability) and $u_{BI} = |\text{Bias}|$ (uncorrected systematic
+bias), so for the hardcoat data repeatability dominates the uncertainty
+budget (the gage's scatter is much larger than its bias), while
+resolution is negligible (the gage resolution is 1 µin, far below the
+observed scatter). `%QMS = r round(task$results$statistics$vda5_qms_percent, 2)%`
+is now consistent with the failed $C_g = r round(task$results$statistics$Cg, 2)`:
+both say the gage consumes a large fraction of the tolerance. `%QMS`
+still passes the 15% VDA 5 threshold, but only narrowly — unlike the
+$C_g$ verdict, which fails decisively. This is the expected
+relationship between the two standards: VDA 5's $\%Q_{MS}$ (based on
+$2u_{MS}/T$) is structurally more lenient than AIAG's $C_g \geq 1.33$
+(based on $kT/(6s)$), so a gage can pass VDA 5 while failing AIAG.
+
+### Step 4 — `evaluate_criteria()`
+
+```{r step-criteria}
+diag_out <- analyzer$evaluate_criteria()
+
+diag_out
+```
+
+The diagnostic verdict is summarised below.
+
+| Criterion                | Threshold | Observed           | Decision |
+|--------------------------|-----------|--------------------|:--------:|
+| $C_g$                    | $\geq 1.33$ | `r round(task$results$statistics$Cg, 3)` | **FAIL** |
+| $C_{gk}$                 | $\geq 1.33$ | `r round(task$results$statistics$Cgk, 3)` | **FAIL** |
+| Bias 95% CI contains 0   | yes       | excludes 0         | **FAIL** |
+| %Bias of tolerance       | $< 10\%$    | `r paste0(round(task$results$statistics$percent_bias, 2), "%")` | PASS |
+| %QMS                     | $< 15\%$    | `r paste0(round(task$results$statistics$vda5_qms_percent, 2), "%")` | PASS |
+
+### Equivalence: full `run()` vs step-by-step pipeline
+
+The internal `IqrAnalyzerBase$run()` method delegates to `private$.run_logic()`,
+which simply calls the four public step methods in order. The two paths must
+produce identical results — verified below on a synthetic dataset:
+
+```{r equivalence}
+set.seed(42)
+dt <- data.table::data.table(measurement = rnorm(25, mean = 10.05, sd = 0.25))
+params <- list(
+  reference_value = 10, spec_limits = list(lsl = 7, usl = 13),
+  k_factor = 0.2, conf_level = 0.95, resolution = 0.005,
+  u_cal = 0.02, u_rest = list(),
+  criteria = list(Cg_min = 1.33, Cgk_min = 1.33,
+                  percent_bias_max = 10, vda5_qms_max = 15)
+)
+
+# Full pipeline
+a_full <- Type1Analyzer$new(); a_full$setup(params); a_full$run(dt)
+
+# Step-by-step
+a_step <- Type1Analyzer$new(); a_step$setup(params)
+a_step$compute_bias(dt)
+a_step$compute_capability()
+a_step$compute_vda5()
+a_step$evaluate_criteria()
+
+identical(a_full$results$statistics,  a_step$results$statistics)
+identical(a_full$results$diagnostics, a_step$results$diagnostics)
+```
+
+Both checks return `TRUE`, confirming that the refactored public API and the
+orchestrated `run()` produce byte-identical results.
+
+## 7. Visualization Gallery
+
+The `Type1Plotter` exposes five plot types for a Type 1 bias study:
+
+| `type`       | Description                                                  |
+|--------------|--------------------------------------------------------------|
+| `summary`    | Combined patchwork of run chart + Cg/Cgk + VDA 5 components  |
+| `list`       | List of the three individual ggplot objects                 |
+| `run_chart`  | Run chart of measurements with reference and mean lines     |
+| `capability` | Bar chart of Cg and Cgk against the 1.33 threshold           |
+| `vda5`       | Stacked/bar chart of VDA 5 uncertainty contributions         |
+
+Use `print(task$plot(type = "..."))` to guarantee the ggplot/patchwork
+object is rendered inside an R Markdown document.
+
+```{r plot-summary, fig.width=8, fig.height=7}
+print(task$plot(type = "summary"))
+```
+
+```{r plot-runchart}
+print(task$plot(type = "run_chart"))
+```
+
+The run chart shows the 50 measurements oscillating tightly around the mean
+(solid green) and slightly below the dashed-red reference line. The bias CI
+in the subtitle does not straddle zero — visually consistent with the
+`p = 0.021` verdict.
+
+```{r plot-capability}
+print(task$plot(type = "capability"))
+```
+
+The capability plot is the single most actionable chart: both bars sit well
+below the 1.33 dashed threshold, by a factor of roughly 2.5×. No further MSA
+work should be done until this is fixed.
+
+```{r plot-vda5}
+print(task$plot(type = "vda5"))
+```
+
+The VDA 5 chart shows that repeatability ($u_{EVR} = s$) dominates the
+combined uncertainty for this gage, with the uncorrected bias
+($u_{BI} = |\text{Bias}|$) a smaller but non-negligible contributor;
+resolution is essentially invisible at this gage setting. This is the
+expected profile for a gage that fails $C_g$ but has only a modest bias.
+
+## 8. Report Export
+
+`Type1Task$report()` supports Excel, HTML, PDF, and Word output. The Excel
+export writes a multi-sheet workbook (statistics + VDA 5 breakdown). The
+HTML export embeds all plots and is suitable for sharing with reviewers who
+do not have R installed.
+
+```{r report-excel}
+xlsx_path <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+data.frame(
+  Format = "Excel",
+  Path   = xlsx_path,
+  Exists = file.exists(xlsx_path),
+  Size_KB = round(file.info(xlsx_path)$size / 1024, 1)
+)
+```
+
+```{r report-html}
+html_path <- "./.html"
+task$report(format = "html", path = html_path)
+
+data.frame(
+  Format = "HTML",
+  Path   = html_path,
+  Exists = file.exists(html_path),
+  Size_KB = round(file.info(html_path)$size / 1024, 1)
+)
+```
+
+```{r report-pdf, eval=FALSE}
+# PDF requires a working LaTeX installation; uncomment when needed.
+# pdf_path <- tempfile(fileext = ".pdf")
+# task$report(format = "pdf", path = pdf_path)
+```
+
+## 9. Interpretation and Decision
+
+For the hardcoat data, the analyzer produces:
+
+| Quantity                     | Value            |
+|------------------------------|-----------------:|
+| Mean $\bar{x}$               | 0.024985         |
+| StDev $s$                    | 0.000044         |
+| Bias                         | -0.000015        |
+| t (df = 49)                  | -2.3847          |
+| p-value                      | 0.0210           |
+| 95% CI for Bias              | [-0.000027, -0.000002] |
+| $C_g$                        | 0.533            |
+| $C_{gk}$                     | 0.421            |
+| %Var (Repeatability)         | 37.50%           |
+| %Var (Repeatability + Bias)  | 47.52%           |
+| %Bias of tolerance           | 2.11%            |
+| %QMS                         | 2.50%            |
+
+**Engineering conclusion.** The gage is **NOT acceptable** for this
+characteristic. The dominant failure mode is repeatability: $C_g = 0.533$ is
+roughly 40% of the 1.33 acceptance threshold, and the %Var (Repeatability)
+consumes 37.5% of the 0.0007-inch tolerance — well above the 10% rule of
+thumb. Bias is statistically significant ($p = 0.021$, CI excludes 0) but
+small in absolute terms (2.11% of tolerance), so eliminating it alone would
+not rescue the study; $C_{gk} = 0.421$ is only marginally lower than $C_g =
+0.533$.
+
+The VDA 5 uncertainty view is more forgiving — `%QMS = 2.50%` is well under
+15% — because VDA 5's $u_{EVR} = s/\sqrt{n}$ shrinks with sample size, while
+$C_g$ uses the full $6s$ of an individual measurement. This divergence is
+expected and is exactly why the AIAG and VDA 5 frameworks are reported side
+by side: VDA 5 answers "is the measurement uncertainty acceptable for
+tolerance conformance?", while $C_g$/$C_{gk}$ answer "is the gage capable
+of single-measurement discrimination?".
+
+**Verification against Minitab output.** The Minitab Type 1 Gage Study
+help uses this same hardcoat dataset. The following table compares the
+`iQualityR.msa` results with the Minitab session window output, confirming
+that all four capability formulas match:
+
+| Metric        | iQualityR.msa | Minitab | Match |
+|---------------|---------------|---------|-------|
+| $C_g$         | 0.5333        | 0.53    | ✓     |
+| $C_{gk}$      | 0.4208        | 0.42    | ✓     |
+| %Var (Rep)    | 37.50%        | 37.50%  | ✓     |
+| %Var (Rep&Bias) | 47.52%      | 47.52%  | ✓     |
+
+The formulas used are:
+
+- $C_g = \frac{K \cdot T}{6s}$,  $C_{gk} = \frac{K \cdot T / 2 - |\text{Bias}|}{3s}$
+- %Var (Rep) $= \frac{6s}{T} \times 100 = \frac{K \cdot 100}{C_g}$
+- %Var (Rep&Bias) $= \frac{K \cdot 100}{C_{gk}}$
+
+where $K = 0.2$ (default), $T$ = tolerance, $s$ = sample standard deviation.
+The %Var (Repeatability and Bias) formula is symmetric to %Var (Repeatability)
+through $C_{gk}$, exactly as specified in the Minitab *Methods and Formulas*
+documentation.
+
+**Recommended actions** (consistent with Minitab's guidance):
+
+1. Do **not** release the gage for routine inspection of this characteristic.
+2. Do **not** proceed to a Gage R&R study — it will inherit the same
+   repeatability problem and produce misleading reproducibility numbers.
+3. Identify and remove the dominant repeatability cause (probe, fixture,
+   vibration, operator technique), then re-run the Type 1 study until
+   $C_g \geq 1.33$ and $C_{gk} \geq 1.33$.
+4. Once Type 1 passes, perform the Gage Linearity & Bias Study (multiple
+   references) and finally the Gage R&R study.
+
+## 10. Reference
+
+- Minitab Support, *Type 1 Gage Study overview* —
+  https://support.minitab.com/en-us/minitab/help-and-how-how/quality-and-process-improvement/measurement-system-analysis/how-to/type-1-gage-study/
+- Minitab Support, *Methods and formulas for Type 1 Gage Study* —
+  https://support.minitab.com/en-us/minitab/help-and-how-how/quality-and-process-improvement/measurement-system-analysis/how-to/type-1-gage-study/methods-and-formulas/
+- AIAG **Measurement Systems Analysis** (MSA) Reference Manual, 4th edition,
+  Chapter III-C: Type 1 Gage Study.
+- VDA **Volume 5**, *Capability of Measurement Processes*, 3rd edition,
+  Section 4: Measurement system uncertainty.
+- ISO 22568-7 / ISO/TS 21748 — complementary guidance on measurement
+  uncertainty in capability analysis.

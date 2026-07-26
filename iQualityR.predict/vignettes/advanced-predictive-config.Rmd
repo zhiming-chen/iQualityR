@@ -1,0 +1,413 @@
+---
+title: "Professional Predictive Modeling Configuration Guide"
+author: "iQualityR Development Team"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Professional Predictive Modeling Configuration Guide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup, echo = FALSE}
+library(iQualityR.predict)
+```
+
+## 1. Expert Mode Overview
+
+Expert mode is designed for **data scientists, statistical experts, and advanced quality engineers**, providing complete control over the modeling process.
+
+### Business vs Expert Mode Comparison
+
+| Dimension | Business Mode | Expert Mode |
+|-----------|---------------|-------------|
+| **Algorithm Selection** | Auto | Manual specification |
+| **Parameter Tuning** | Default | Fully customizable |
+| **Validation Strategy** | 5-fold CV | Any resampling strategy |
+| **Feature Engineering** | None | Full recipes package functionality |
+| **Model Comparison** | None | Multi-model parallel evaluation |
+| **Low-level Access** | None | Direct access to tidymodels objects |
+
+---
+
+## 2. Expert Mode Basic Configuration
+
+### 2.1 Passing Configuration via expert_config
+
+The core of expert mode is the `expert_config` parameter. Once this parameter is passed, the system automatically switches to expert mode.
+
+```{r expert-basic-setup, eval = FALSE}
+# Expert mode example
+task <- regression_analysis(
+  data = your_data,
+  target = "your_target",
+  expert_config = list(
+    # Pass tidymodels/mlr3 configuration here
+  )
+)
+```
+
+### 2.2 Defining Model Specifications
+
+Define models using the `parsnip` package:
+
+```{r model-spec, eval = FALSE}
+library(parsnip)
+
+# Linear regression
+model_spec <- linear_reg() %>%
+  set_engine("lm")
+
+# Ridge regression (with regularization parameter)
+model_spec <- linear_reg(penalty = 0.1, mixture = 0) %>%
+  set_engine("glmnet")
+
+# Random forest (with hyperparameters)
+model_spec <- rand_forest(trees = 1000, min_n = 5) %>%
+  set_engine("randomForest") %>%
+  set_mode("regression")
+
+# XGBoost
+model_spec <- boost_tree(
+  trees = 500,
+  tree_depth = 6,
+  min_n = 10,
+  loss_reduction = 0.01,
+  sample_size = 0.8,
+  learn_rate = 0.01
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+```
+
+### 2.3 Defining Preprocessing Recipes
+
+Define feature engineering workflows using the `recipes` package:
+
+```{r recipe-def, eval = FALSE}
+library(recipes)
+
+rec <- recipe(target ~ ., data = training_data) %>%
+  step_normalize(all_numeric_predictors()) %>%      # Standardize
+  step_dummy(all_nominal_predictors()) %>%           # One-hot encode categorical variables
+  step_nzv(all_predictors()) %>%                     # Remove near-zero variance variables
+  step_corr(all_predictors(), threshold = 0.9) %>%   # Remove highly correlated variables
+  step_pca(all_numeric_predictors(), num_comp = 5)   # PCA dimensionality reduction
+```
+
+---
+
+## 3. Expert Mode Complete Examples
+
+### 3.1 Complete Workflow with Parameter Tuning
+
+```{r full-tuning-example, eval = FALSE}
+library(rsample)
+library(tune)
+library(yardstick)
+library(workflows)
+
+# 1. Define resampling strategy
+cv_folds <- vfold_cv(solder_data, v = 5, repeats = 3)
+
+# 2. Define tuning grid
+rf_grid <- expand.grid(
+  trees = c(200, 500, 1000),
+  min_n = c(2, 5, 10)
+)
+
+# 3. Define evaluation metrics
+metrics <- metric_set(rmse, rsq, mae)
+
+# 4. Build expert config
+expert_config <- list(
+  model_spec = rand_forest(trees = tune(), min_n = tune()) %>%
+    set_engine("randomForest", importance = "permutation") %>%
+    set_mode("regression"),
+
+  recipe = recipe(strength ~ ., data = solder_data) %>%
+    step_normalize(all_numeric_predictors()),
+
+  resampling = cv_folds,
+  tune_grid = rf_grid,
+  metric = metrics,
+
+  control = control_grid(
+    verbose = TRUE,
+    save_pred = TRUE,
+    extract = function(x) extract_model(x)
+  )
+)
+
+# 5. Execute modeling
+task <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  expert_config = expert_config
+)
+
+task$compute()
+```
+
+### 3.2 Accessing Internal Objects
+
+In expert mode, you can access all intermediate objects:
+
+```{r access-internal, eval = FALSE}
+# Access internal objects after training
+
+# Access final model
+task$results$raw_model
+
+# Access tidymodels workflow object
+task$results$workflow
+
+# Access tuning results
+task$results$tuning_results
+
+# View tuning metrics
+tuning_results <- task$executor$analyzer$tuning_results
+show_best(tuning_results, metric = "rmse")
+
+# Visualize tuning results
+autoplot(tuning_results, metric = "rmse")
+```
+
+---
+
+## 4. Advanced Features
+
+### 4.1 Multi-Model Comparison
+
+```{r model-comparison, eval = FALSE}
+# Train and compare multiple models separately
+models_list <- list(
+  linear = regression_analysis(data, "strength", c("temp", "pressure"),
+                               model_type = "linear"),
+  rf = regression_analysis(data, "strength", c("temp", "pressure"),
+                           model_type = "random_forest"),
+  xgb = regression_analysis(data, "strength", c("temp", "pressure"),
+                            model_type = "xgboost")
+)
+
+# Execute all models
+models_list <- lapply(models_list, function(m) m$compute())
+
+# Compare R-squared
+sapply(models_list, function(m) m$results$metrics$r_squared)
+
+# Compare RMSE
+sapply(models_list, function(m) m$results$metrics$rmse)
+```
+
+### 4.2 Custom Workflows
+
+Use the full tidymodels workflow:
+
+```{r custom-workflow, eval = FALSE}
+library(tidymodels)
+
+# 1. Data split
+set.seed(123)
+split <- initial_split(solder_data, prop = 0.8)
+train_data <- training(split)
+test_data <- testing(split)
+
+# 2. Cross-validation
+cv <- vfold_cv(train_data, v = 5)
+
+# 3. Define recipe
+rec <- recipe(strength ~ ., data = train_data) %>%
+  step_normalize(all_numeric_predictors())
+
+# 4. Define model
+mod <- rand_forest(trees = 500, min_n = 5) %>%
+  set_engine("randomForest") %>%
+  set_mode("regression")
+
+# 5. Workflow
+wf <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(mod)
+
+# 6. Train
+fit_model <- wf %>% fit(data = train_data)
+
+# 7. Test set evaluation
+predictions <- predict(fit_model, test_data)
+test_data$predicted <- predictions$.pred
+
+# Evaluation metrics
+test_data %>%
+  rmse(strength, predicted)
+```
+
+### 4.3 Using mlr3 Backend
+
+If you prefer the mlr3 ecosystem:
+
+```{r mlr3-backend, eval = FALSE}
+library(mlr3)
+library(mlr3learners)
+
+# Define mlr3 config
+mlr3_config <- list(
+  learner = lrn("regr.ranger", num.trees = 500, importance = "permutation"),
+  resampling = rsmp("cv", folds = 5)
+)
+
+task <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  backend = "mlr3",
+  expert_config = mlr3_config
+)
+
+task$compute()
+```
+
+---
+
+## 5. Advanced Model Diagnostics and Interpretation
+
+### 5.1 Complete Diagnostic Plots
+
+```{r full-diagnostics, eval = FALSE}
+# Generate all diagnostic plots
+task$plot(type = "diagnosis")
+```
+
+### 5.2 SHAP Value Analysis
+
+```{r shap-analysis, eval = FALSE}
+# Enable SHAP values
+task_shap <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure", "time"),
+  explanation = list(
+    shap_values = TRUE
+  )
+)
+
+task_shap$compute()
+task_shap$plot(type = "explanation")
+```
+
+### 5.3 Partial Dependence Plots (PDP)
+
+```{r pdp-analysis, eval = FALSE}
+# Enable partial dependence analysis
+task_pdp <- regression_analysis(
+  data = solder_data,
+  target = "strength",
+  factors = c("temperature", "pressure", "time"),
+  explanation = list(
+    partial_dependence = TRUE
+  )
+)
+
+task_pdp$compute()
+task_pdp$plot(type = "explanation")
+```
+
+---
+
+## 6. Performance Optimization
+
+### 6.1 Large Data Processing
+
+```{r big-data, eval = FALSE}
+# For large datasets, recommended approaches:
+# 1. Reduce cross-validation folds
+# 2. Use more efficient algorithms
+# 3. Parallel computing
+
+# Use parallel computing
+library(future)
+plan(multisession, workers = 4)
+
+# Reduce tuning grid size
+small_grid <- grid_regular(
+  trees(range = c(100, 500)),
+  min_n(range = c(5, 15)),
+  levels = 3  # 3 values per parameter
+)
+```
+
+### 6.2 Memory Optimization
+
+```{r memory-optimization, eval = FALSE}
+# Reduce saved intermediate results
+task <- regression_analysis(
+  data = large_data,
+  target = "quality",
+  expert_config = list(
+    control = control_grid(
+      verbose = FALSE,
+      save_pred = FALSE,  # Do not save predictions
+      extract = NULL      # Do not extract intermediate objects
+    )
+  )
+)
+```
+
+---
+
+## 7. Best Practices
+
+### 7.1 Modeling Workflow Recommendations
+
+1. **Start Simple**: First run through the full workflow in business mode
+2. **Check Diagnostics**: Review model rating and diagnostic conclusions
+3. **Optimize Gradually**: If rating < four stars, try:
+   - Increase sample size
+   - Add missing factors
+   - Switch to more complex algorithms
+4. **Verify Robustness**: Use multi-fold cross-validation to confirm results
+5. **Interpret Results**: Use factor influence and SHAP values to understand the model
+
+### 7.2 Common Pitfalls
+
+| Pitfall | Symptoms | Solution |
+|---------|---------|---------|
+| **Overfitting** | High training R2, low test R2 | Use cross-validation, regularization |
+| **Collinearity** | VIF > 10, unstable coefficients | Use ridge regression, PCA |
+| **Insufficient Samples** | Unstable results | Collect more data |
+| **Data Leakage** | Abnormally high accuracy | Check if features contain future information |
+
+---
+
+## 8. Reference Resources
+
+### 8.1 tidymodels Ecosystem
+
+- [tidymodels.org](https://www.tidymodels.org/) - Official documentation
+- [Tidy Modeling with R](https://www.tmwr.org/) - Free e-book
+- [parsnip](https://parsnip.tidymodels.org/) - Model interface
+- [recipes](https://recipes.tidymodels.org/) - Feature engineering
+- [tune](https://tune.tidymodels.org/) - Parameter tuning
+
+### 8.2 mlr3 Ecosystem
+
+- [mlr3 book](https://mlr3book.mlr-org.com/) - Official documentation
+- [mlr3learners](https://mlr3learners.mlr-org.com/) - Algorithm list
+
+---
+
+*This vignette is written by the iQualityR Team | Version 0.1.0*

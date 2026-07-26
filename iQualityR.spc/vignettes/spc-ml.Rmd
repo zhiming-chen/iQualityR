@@ -1,0 +1,323 @@
+---
+title: "ML Enhancement Charts: LSTM, Autoencoder, Isolation Forest, BOCPD, SHAP"
+author: "iQualityR.spc"
+date: "2026-07-06"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ML Enhancement Charts: LSTM, Autoencoder, Isolation Forest, BOCPD, SHAP}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE,
+  error = TRUE
+)
+```
+
+```{r setup, echo = FALSE}
+library(iQualityR.spc)
+library(ggplot2)
+set.seed(2026)
+```
+
+## Overview
+
+This vignette covers the **AI/ML enhancement charts** introduced in
+`iQualityR.spc` v0.6. These charts extend the SPC toolkit with deep
+learning and Bayesian methods for anomaly detection and structural
+change detection:
+
+- **LSTM anomaly detection** -- recurrent neural network for univariate
+  time series with non-linear dynamics
+- **Autoencoder (AE)** -- deep neural network for multivariate
+  reconstruction-error anomaly detection
+- **Isolation Forest (IForest)** -- tree-based ensemble for multivariate
+  anomaly detection with no distributional assumptions
+- **BOCPD** -- Bayesian Online Change Point Detection for structural
+  breaks in a univariate stream
+- **SHAP attribution** -- post-hoc Shapley value explanation of the
+  anomaly score from any of the above charts
+
+All functions return an `IqrSpcTask` object with the standard
+`summary()`, `plot()`, and `results` accessors, so they integrate
+seamlessly with the rest of the iQualityR ecosystem.
+
+### Soft dependencies
+
+The ML charts are designed to work **with or without** their heavy ML
+backends. Each chart auto-detects the active backend and reports it in
+`task$results$diagnostics$backend`:
+
+| Chart | Primary backend | Fallback backend |
+|-------|-----------------|------------------|
+| LSTM | `keras` (TensorFlow) | `arima_ess` (ARIMA + EWMA) |
+| Autoencoder | `keras` (TensorFlow) | `pca` (SVD reconstruction) |
+| Isolation Forest | `isotree` (C++) | `native` (in-house R trees) |
+| BOCPD | (none required) | pure R |
+| SHAP | `fastshap` (KernelSHAP) | `ablation` (drop-column delta) |
+
+To enable the deep-learning backends, install the optional packages:
+
+```r
+# Not required; fallbacks work without them.
+install.packages(c("isotree", "fastshap"))
+# For keras/tensorflow, see https://keras.posit.co/ for setup.
+```
+
+CRAN submission does not require any of these packages; the Suggests
+field declares them as soft dependencies, and every call site uses
+`requireNamespace()` for graceful degradation.
+
+## 1. LSTM Anomaly Detection Chart
+
+The LSTM chart trains a recurrent neural network to predict the next
+observation from a sliding window of past values. After training, the
+prediction error (residual) is converted to an anomaly score on a
+z-scale; values exceeding `lstm_threshold` are flagged as anomalies.
+
+LSTM is well suited to **non-linear, autocorrelated** time series where
+classical ARIMA residuals may miss subtle regime changes.
+
+```{r}
+df <- data.frame(measurement = c(rnorm(60, 100, 1),
+                                   rnorm(15, 103, 1)))
+task <- run_spc_lstm(df, "measurement",
+                     lstm_window = 10, lstm_epochs = 5,
+                     lstm_threshold = 2.5)
+task$summary()
+```
+
+The points data table augments the standard SPC columns with model
+outputs:
+
+```{r}
+head(task$results$data_tables$points[, c("index", "value", "fit",
+                                          "reconstruction_error",
+                                          "anomaly_score", "is_anomaly")])
+```
+
+**Tuning guidance**:
+
+- `lstm_window`: lookback length. Shorter windows react faster but
+  lose long-range context. Typical: 5--20.
+- `lstm_units`: capacity of the recurrent layer. Larger units fit
+  more complex dynamics but require more data. Typical: 16--64.
+- `lstm_epochs`: more epochs reduce training loss but risk overfitting
+  on small datasets. Typical: 10--50.
+- `lstm_threshold`: z-scale cutoff. Lower for higher sensitivity.
+
+## 2. Autoencoder Anomaly Detection Chart
+
+The Autoencoder (AE) chart compresses multivariate input to a
+low-dimensional latent representation and reconstructs it. Observations
+with large reconstruction error are flagged as anomalies. AE is
+particularly effective at capturing **correlation structure** between
+variables -- a single variable can be in-control marginally yet
+anomalous jointly.
+
+```{r}
+df <- data.frame(
+  x1 = c(rnorm(40, 50, 1), rnorm(10, 55, 1)),
+  x2 = c(rnorm(40, 30, 0.8), rnorm(10, 33, 0.8)),
+  x3 = c(rnorm(40, 12, 0.5), rnorm(10, 14, 0.5))
+)
+task <- run_spc_autoencoder(df, ae_encoding_dim = 1, ae_epochs = 10)
+task$summary()
+```
+
+Per-feature reconstruction errors are stored in the
+`feature_contributions` data table and provide a first-look
+explanation of *which variable drove the anomaly*:
+
+```{r}
+head(task$results$data_tables$feature_contributions)
+```
+
+**Tuning guidance**:
+
+- `ae_encoding_dim`: bottleneck size. Smaller than the number of
+  variables, typically 1--3. A smaller bottleneck is more sensitive
+  but less able to capture normal correlation structure.
+- `ae_threshold_quantile`: quantile of the reconstruction error used as
+  the control limit. Default `0.99` flags the top 1% of training data
+  as anomalous.
+
+## 3. Isolation Forest Anomaly Detection Chart
+
+The Isolation Forest (IForest) chart isolates observations by random
+recursive partitioning. Anomalous points require fewer splits to
+isolate, so they have a shorter average path length. The anomaly score
+`s(x) = 2^(-E[h(x)]/c(n))` is in (0, 1), with higher values indicating
+more anomalous observations.
+
+IForest is **non-parametric** and works well on high-dimensional data
+with no distributional assumptions, making it a robust baseline for
+multivariate anomaly detection.
+
+```{r}
+df <- data.frame(
+  x1 = c(rnorm(50, 50, 1), rnorm(10, 58, 1)),
+  x2 = c(rnorm(50, 30, 0.8), rnorm(10, 35, 0.8))
+)
+task <- run_spc_iforest(df, iforest_ntree = 100,
+                         iforest_threshold = 0.6)
+task$summary()
+```
+
+**Tuning guidance**:
+
+- `iforest_ntree`: more trees reduce variance of the anomaly score.
+  Typical: 100--500.
+- `iforest_sample_size`: subsample size per tree. Smaller values
+  increase sensitivity to local anomalies. Default 256.
+- `iforest_threshold`: anomaly score cutoff in (0, 1). Higher for
+  fewer false positives.
+
+## 4. Bayesian Online Change Point Detection (BOCPD)
+
+BOCPD (Adams & MacKay, 2007) maintains a posterior distribution over
+the **run length** -- the number of observations since the last
+changepoint. At each step, it reports the probability that the current
+observation is a changepoint.
+
+The model assumes Gaussian observations with a Normal-Inverse-Gamma
+conjugate prior. The **hazard rate** controls the prior expected run
+length: a hazard of 1/250 means a changepoint is expected roughly
+every 250 observations.
+
+```{r}
+df <- data.frame(measurement = c(rnorm(40, 100, 1),
+                                   rnorm(40, 105, 1)))
+task <- run_spc_bocpd(df, "measurement", bocpd_hazard = 1 / 50)
+task$summary()
+```
+
+The points data table contains the run-length posterior summary:
+
+```{r}
+head(task$results$data_tables$points[, c("index", "value",
+                                           "changepoint_prob",
+                                           "run_length")])
+```
+
+Detected changepoints (where the posterior peaks) are also exposed as
+a dedicated data table:
+
+```{r}
+print(task$results$data_tables$changepoints)
+```
+
+**Tuning guidance**:
+
+- `bocpd_hazard`: in (0, 1). Lower values detect longer regimes;
+  higher values detect more frequent changepoints. Start with
+  `1 / expected_run_length`.
+- `bocpd_prior_mu`, `bocpd_prior_kappa`, `bocpd_prior_alpha`,
+  `bocpd_prior_beta`: conjugate prior parameters. For a process
+  centered at `mu0` with prior sample weight `kappa0`, set
+  `bocpd_prior_mu = mu0`, `bocpd_prior_kappa = kappa0`. Weakly
+  informative defaults (`kappa = alpha = beta = 1`) work for most
+  standardized data.
+
+## 5. SHAP Attribution
+
+`run_spc_shap()` provides post-hoc **Shapley value** attribution of
+the anomaly score for any multivariate ML chart. It explains *which
+variables contributed most* to each point's anomaly score, enabling
+root-cause analysis.
+
+```{r}
+set.seed(123)
+df <- data.frame(
+  x1 = c(rnorm(40, 50, 1), rnorm(10, 55, 1)),
+  x2 = c(rnorm(40, 30, 0.8), rnorm(10, 33, 0.8))
+)
+task <- run_spc_iforest(df, iforest_ntree = 100)
+shap_result <- run_spc_shap(task, nsample = 30)
+head(shap_result$shap_values)
+shap_result$backend
+```
+
+The returned list contains:
+
+- `shap_values`: a data frame with one column per feature and one row
+  per observation, giving the Shapley value contribution.
+- `backend`: `"fastshap"` (KernelSHAP) or `"ablation"` (drop-column
+  fallback).
+- `feature_names`: character vector of feature names.
+
+**Tuning guidance**:
+
+- `nsample`: number of Monte Carlo samples for KernelSHAP. Larger
+  values give more stable estimates at the cost of runtime. Typical:
+  30--100.
+
+## 6. AI Diagnostic Structure
+
+Every ML chart populates `task$results$diagnostics$ai_diagnostic`,
+a unified list for downstream tooling:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | character | `"lstm"`, `"autoencoder"`, `"iforest"`, or `"bocpd"` |
+| `anomaly_score` | numeric vector | Per-observation anomaly score |
+| `shap_values` | data.frame | SHAP-like feature contributions |
+| `rule_attribution` | character | Human-readable rule summary |
+| `confidence` | numeric in [0, 1] | Model confidence, scaled by data size |
+| `extras` | list | Backend-specific metadata (backend, threshold, etc.) |
+
+```{r}
+task <- run_spc_iforest(df, iforest_ntree = 100)
+ai <- task$results$diagnostics$ai_diagnostic
+names(ai)
+ai$method
+ai$confidence
+```
+
+## 7. Choosing an ML Chart
+
+| Data characteristic | Recommended chart |
+|---------------------|-------------------|
+| Univariate, non-linear, autocorrelated | LSTM |
+| Multivariate, correlated, joint anomalies | Autoencoder |
+| Multivariate, no distributional assumptions, high-dim | Isolation Forest |
+| Univariate, structural breaks, online | BOCPD |
+| Any chart, root-cause attribution needed | SHAP (post-hoc) |
+
+## 8. Combining ML Charts with Classical SPC
+
+A typical end-to-end workflow:
+
+1. Run `run_spc_changepoint` (v0.2) to identify historical regimes.
+2. Within each regime, run `run_spc_iforest` on multivariate data to
+   detect joint anomalies.
+3. For each detected anomaly, run `run_spc_shap` to attribute the
+   anomaly to specific variables.
+4. For univariate critical-to-quality (CTQ) variables, run
+   `run_spc_lstm` for high-sensitivity detection.
+5. For online monitoring of slow drifts, run `run_spc_bocpd` and
+   alert when the changepoint probability exceeds 0.5.
+
+## References
+
+- Adams, R. P., & MacKay, D. J. C. (2007). Bayesian online
+  changepoint detection. *arXiv preprint arXiv:0710.3742*.
+- Hochreiter, S., & Schmidhuber, J. (1997). Long short-term memory.
+  *Neural Computation*, 9(8), 1735-1780.
+- Hinton, G. E., & Salakhutdinov, R. R. (2006). Reducing the
+  dimensionality of data with neural networks. *Science*,
+  313(5786), 504-507.
+- Liu, F. T., Ting, K. M., & Zhou, Z. H. (2008). Isolation forest.
+  In *2008 Eighth IEEE International Conference on Data Mining*,
+  pp. 413-422.
+- Lundberg, S. M., & Lee, S. I. (2017). A unified approach to
+  interpreting model predictions. In *Advances in Neural Information
+  Processing Systems*, pp. 4765-4774.

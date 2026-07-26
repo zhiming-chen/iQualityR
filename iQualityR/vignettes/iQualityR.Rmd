@@ -1,0 +1,80 @@
+---
+title: "iQualityR: An Integrated Quality Engineering Framework"
+author: "Chen Zhiming"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{iQualityR: An Integrated Quality Engineering Framework}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+library(iQualityR)
+knitr::opts_chunk$set(fig.width = 6, fig.height = 4)
+```
+
+# Overview
+
+`iQualityR` is a meta-package that installs and loads a coordinated set of R
+packages for quality engineering. It follows the `tidyverse` convention: one
+call to `library(iQualityR)` attaches all member packages so their APIs are
+immediately available in the current session.
+
+The framework is organized in four dependency layers:
+
+| Layer | Package(s) | Responsibility |
+|:------|:-----------|:---------------|
+| Foundation | `iQualityR.core` | R6 abstract bases, themes, Excel export, i18n |
+| Generic | `iQualityR.plot`, `iQualityR.doe`, `iQualityR.sampling`, `iQualityR.predict` | Visualization, design of experiments, acceptance sampling, predictive modeling |
+| Statistical | `iQualityR.stat` | Distributions, SPC constants, hypothesis tests, normality, outliers |
+| Business | `iQualityR.msa`, `iQualityR.capa`, `iQualityR.reliability` | Measurement system analysis, process capability, reliability/survival |
+
+# Quick Start
+
+```{r}
+# Attach the entire framework
+library(iQualityR)
+
+# Inspect member packages
+iQualityR_packages()
+```
+
+Once attached, every member API is callable without a namespace prefix:
+
+```{r, eval=FALSE}
+# Statistical foundations
+iqr_prob$new(type = "norm", params = list(mean = 100, sd = 5))$calc(values = 108)
+
+# Process capability
+capability_normal(x = rnorm(100, 50, 1), lsl = 47, usl = 53)
+
+# Measurement system analysis
+iqr_msa(data = my_msa_data, part = "part", operator = "op", measurement = "y")
+
+# Design of experiments
+factorial_design(factors = list(A = c(-1, 1), B = c(-1, 1)))
+```
+
+# Member Packages
+
+Use `iQualityR_packages()` to enumerate the currently attached members:
+
+```{r}
+iQualityR_packages()
+```
+
+To detach a specific member package without unloading the framework, use
+`detach()` as usual.
+
+# Design Rationale
+
+The meta-package intentionally does **not** re-export member functions.
+Keeping the public API in each member package preserves clear ownership of
+documentation and behaviour, avoids name collisions, and ensures that
+`iQualityR.msa::iqr_msa` and `iQualityR::iqr_msa` (after attach) refer to the
+same object without duplication.
+
+*End of Vignette*
+```
+

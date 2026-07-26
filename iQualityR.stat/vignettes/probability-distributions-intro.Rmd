@@ -1,0 +1,187 @@
+---
+title: "iQualityR Probability and Statistics Module Complete Guide"
+author: "Chen Zhiming"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: cosmo
+vignette: >
+  %\VignetteIndexEntry{iQualityR Probability Statistics Complete Guide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# 1. Core Features and Characteristics Introduction
+
+The probability module (`iqr_prob`) of `iQualityR` is an advanced statistical analysis tool designed for quality management personnel, data scientists, and industrial engineers. Its core design philosophy is **"deep decoupling of computation and visualization"**.
+
+### Main Features:
+
+-   **Bidirectional Calculation Engine**: Supports "given observation value, find probability (Prob Mode)" and "given probability, find quantile (Quantile Mode)".
+-   **Minitab Logic Alignment**: Calculation constants and discrete distribution handling logic strictly follow industrial standards (such as interval endpoint inclusion determination).
+-   **Multi-Distribution Comparison (Overlay & Facet)**: Supports comparing different parameters and even different types of distributions in the same coordinate system or faceted plots.
+-   **Intelligent Visual Management**: Achieves full-chain style unification from `ggplot2` plotting to Excel export through `IqrTheme`.
+-   **Automated Annotation**: Automatically generates PDF probability density curve annotations and CDF cumulative distribution wires that comply with statistical reporting standards.
+
+------------------------------------------------------------------------
+
+# Complete List of Supported Distributions and Application Scenarios
+
+This module is driven by `ProbNode` at the bottom layer, providing 12 distribution supports for different data types in quality management.
+
+## Continuous Distributions
+
+| Distribution Type | Corresponding R Function | Core Parameters | Industrial/Quality Management Application Scenarios |
+|:-----------------|:-----------------|:-----------------|:-----------------|
+| **Normal Distribution** | `norm` | `mean, sd` | **Core of measurement data**. Used for CPK analysis, control chart limit setting. |
+| **T Distribution** | `t` | `df` | Small sample mean testing, confidence interval estimation. |
+| **F Distribution** | `f` | `df1, df2` | Analysis of variance (ANOVA), evaluating batch-to-batch fluctuation differences. |
+| **Chi-Square Distribution** | `chisq` | `df` | Used for variation evaluation in measurement system analysis (MSA). |
+| **Weibull** | `weibull` | `shape, scale` | **Life analysis**. Used for product reliability, fatigue strength evaluation. |
+| **Exponential Distribution** | `exp` | `rate` | Analyzing equipment mean time between failures (MTBF). |
+| **Lognormal Distribution** | `lnorm` | `meanlog, sdlog` | Describes asymmetric part life due to wear or corrosion. |
+| **Gamma Distribution** | `gamma` | `shape, rate` | Describes skewed process time distributions. |
+| **Extreme Value Distribution** | `gumbel` | `loc, scale` | Extreme loads, maximum fracture strength analysis. |
+
+## Discrete Distributions
+
+| Distribution Type | Corresponding R Function | Core Parameters | Industrial/Quality Management Application Scenarios |
+|:-----------------|:-----------------|:-----------------|:-----------------|
+| **Binomial Distribution** | `binom` | `size, prob` | **Counting sampling**. Calculating batch non-conforming rate risk (PQC/OQC). |
+| **Poisson Distribution** | `pois` | `lambda` | **Counting sampling**. Unit defect count (DPU) monitoring. |
+| **Hypergeometric Distribution** | `hyper` | `m, n, k` | Sampling inspection without replacement from finite populations, more precise than binomial distribution. |
+
+------------------------------------------------------------------------
+
+```{r include=FALSE}
+library(iQualityR.core)
+library(iQualityR.plot)
+library(iQualityR.stat)
+```
+
+
+
+# Function Feature Introduction: 8 Standard Stress Test Cases
+
+The following cases demonstrate the performance of `iqr_prob` in terms of calculation logic, faceting, wires, and robustness.
+
+
+
+```{r warning=FALSE}
+# Initialization
+iq <- iqr_prob$new()
+
+# 1. Basic Quantile (Quantile, Lower)
+iq$add_dist("Norm01", "norm", list(mean=0, sd=1))$calc(0.95, mode="quant")$plot(show_cdf=T)
+
+# 2. Two-Sided Quantile (95% Confidence Interval)
+iq$calc(c(0.025, 0.975), mode="quant", calc_type="between")$plot()
+
+# 3. Discrete Quantile Stress Test (Binomial Upper)
+iq$add_dist("B20", "binom", list(size=20, prob=0.5))$calc(0.1, mode="quant", calc_type="upper")$plot()
+
+# 4. Multi-Distribution Facet Comparison (Facet Mode)
+iq$add_dist("A", "norm", list(mean=0, sd=1))$add_dist("B", "t", list(df=5))$
+   calc(c(-2, 2), calc_type="outside")$plot(facet=T)
+
+# 5. Overlay Display (Overlay Mode, Verify Label Displacement)
+iq$nodes <- list() 
+iq$add_dist("D1", "norm", list(mean=10, sd=2))$add_dist("D2", "norm", list(mean=12, sd=2))$
+   calc(11, calc_type="lower")$plot(facet=F)
+
+# 6. Poisson Interval Probability (Discrete Between)
+iq$nodes <- list()
+iq$add_dist("P10", "pois", list(lambda=10))$calc(c(8, 12), calc_type="between")$plot()
+
+# 7. Automatic Parameter Correction (Input c(12, 8) Auto-Sorted)
+iq$calc(c(12, 8), calc_type="between")$plot()
+
+# 8. Forced CDF Puzzle Mode
+iq$calc(10)$plot(show_cdf=T)
+```
+
+------------------------------------------------------------------------
+
+# Theme System (IqrTheme) Usage Examples
+
+This section demonstrates how to inject visual styles at different lifecycle stages.
+
+## Scenario A: Set Built-in Style at Instantiation (Tech)
+
+Applicable for dashboards requiring modern, high-contrast UI displays.
+
+``` {r warning=FALSE}
+# Direct injection of preset at instantiation
+iq_a <- iqr_prob$new(theme = "tech")
+iq_a$add_dist("T1", "norm", list(mean=100, sd=10))$calc(115)$plot()
+```
+
+## Scenario B: Switch Mature Commercial Theme During Runtime (Economist)
+
+Applicable for generating business reports for management.
+
+```{r warning=FALSE}
+# Switch to Economist style
+iq_a$set_theme("economist")
+iq_a$plot()
+```
+
+## Scenario C: Apply Custom Function Theme
+
+Using the academic paper theme provided by the package.
+
+```{r warning=FALSE}
+iq_a$plot(theme_obj = "academic")
+```
+
+------------------------------------------------------------------------
+
+# Practical Application Case Analysis
+
+## Case 1: Manufacturing - Bearing Dimensional Out-of-Tolerance Risk Assessment
+
+A precision bearing inner diameter requirement is $20 \pm 0.02 mm$, the actual production process mean is $20.005$, and the standard deviation is $0.008$. Evaluate the single-sided upper limit out-of-tolerance risk.
+
+```{r warning=FALSE}
+bearing_iq <- iqr_prob$new()
+bearing_iq$add_dist("Bearing_ID", "norm", list(mean=20.005, sd=0.008))
+bearing_iq$calc(20.02, calc_type="upper")
+bearing_iq$plot()
+```
+
+## Case 2: Healthcare - Blood Sample Test Value Confidence Assessment
+
+A certain biomarker follows a Weibull distribution (shape=1.5, scale=50) in healthy populations. A doctor needs to determine the critical concentration where 99% of the population falls below.
+
+```{r warning=FALSE}
+med_iq <- iqr_prob$new(theme = "tech")
+med_iq$add_dist("Marker_Level", "weibull", list(shape=1.5, scale=50))
+med_iq$calc(0.99, mode="quant")
+med_iq$plot(show_cdf=T)
+```
+
+## Case 3: Service Industry - Call Center Peak Stress Test Analysis
+
+Call arrivals per minute at a call center follow a Poisson distribution with $\lambda=8$. Evaluate the steady-state probability that the number of calls per minute is between 5 and 12.
+
+```{r warning=FALSE}
+service_iq <- iqr_prob$new()
+service_iq$add_dist("Calls", "pois", list(lambda=8))
+service_iq$calc(c(5, 12), calc_type="between")
+service_iq$plot()
+```
+
+## Case 4: Old vs. New Process Comparison (F Distribution Variance Test)
+
+Compare the stability of two production lines A and B, and determine the significance interval through F statistic.
+
+```{r warning=FALSE}
+compare_iq <- iqr_prob$new(theme = "tech")
+compare_iq$add_dist("Process_Contrast", "f", list(df1=10, df2=10))
+# Find the critical value for the two-sided 5% significance level
+compare_iq$calc(c(0.025, 0.975), mode="quant")
+compare_iq$plot()
+```

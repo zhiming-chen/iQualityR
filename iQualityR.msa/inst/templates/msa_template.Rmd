@@ -1,0 +1,175 @@
+---
+title: "Gage R&R Measurement System Analysis Report"
+subtitle: "`r params$study_type %||% 'Gage R&R Study'`"
+date: "`r params$report_date %||% Sys.Date()`"
+output:
+  html_document:
+    theme: readable
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    number_sections: true
+params:
+  results: NULL
+  plan: NULL
+  theme_obj: NULL
+  timestamp: NULL
+  statistics: NULL
+  study_type: NULL
+  chart_paths: NULL
+  report_date: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6, fig.align = "center")
+`%||%` <- function(x, y) if (is.null(x)) y else x
+fmt_num <- function(x, digits = 4) ifelse(is.na(x), "NA", sprintf(paste0("%.", digits, "f"), x))
+fmt_pct100 <- function(x, digits = 2) ifelse(is.na(x), "NA", sprintf(paste0("%.", digits, "f%%"), x))
+round_df <- function(x, digits = 4) {
+  if (is.null(x) || !is.data.frame(x) || nrow(x) == 0) return(x)
+  for (nm in names(x)) if (is.numeric(x[[nm]])) x[[nm]] <- round(x[[nm]], digits)
+  x
+}
+results <- params$results
+chart_paths <- params$chart_paths %||% list()
+show_chart <- function(name) {
+  path <- chart_paths[[name]]
+  if (!is.null(path) && file.exists(path)) knitr::include_graphics(path) else cat("Chart is not available for this report.")
+}
+```
+
+# Study Overview
+
+| Item | Value |
+|---|---|
+| Study | `r params$study_type %||% 'Gage R&R Study'` |
+| Method | `r results$analysis_method` |
+| Operators | `r results$num_operators %||% length(unique(results$data$Operator))` |
+| Parts | `r results$num_parts %||% length(unique(results$data$Part))` |
+| Repeated measurements per operator-part cell | `r results$num_repeats %||% results$num_measurements` |
+| Total measurements | `r results$total_measurements %||% nrow(results$data)` |
+
+Gage R&R separates measurement variation into repeatability, reproducibility, and part-to-part variation. A useful system should contribute little variation relative to the process spread or tolerance and should have enough distinct categories to separate real part differences.
+
+# ANOVA and Variation Components
+
+## ANOVA Table
+
+```{r anova-table}
+if (!is.null(results$anova_table) && nrow(results$anova_table) > 0) {
+  anova_display <- round_df(results$anova_table, 4)
+  # 格式化 P 值为科学计数法或小数
+  if ("P" %in% names(anova_display)) {
+    anova_display$P <- sapply(anova_display$P, function(x) {
+      if (is.na(x)) return(" ")
+      if (x < 0.001) return("<0.001")
+      sprintf("%.4f", x)
+    })
+  }
+  knitr::kable(anova_display, caption = "ANOVA Table", align = c("l", "r", "r", "r", "r", "r"))
+}
+```
+
+## Variance Components
+
+```{r variance-table}
+vc <- results$variance_components
+if (!is.null(vc) && nrow(vc) > 0) {
+  vc_display <- vc
+  names(vc_display) <- gsub("Variance", "VarComp", names(vc_display), fixed = TRUE)
+  names(vc_display) <- gsub("PercentContribution", "%Contribution", names(vc_display), fixed = TRUE)
+  names(vc_display) <- gsub("PercentStudyVar", "%StudyVar", names(vc_display), fixed = TRUE)
+  names(vc_display) <- gsub("PercentTolerance", "%Tolerance", names(vc_display), fixed = TRUE)
+  # 清理 Source 列的前导空格
+  if ("Source" %in% names(vc_display)) {
+    vc_display$Source <- trimws(vc_display$Source)
+  }
+  knitr::kable(round_df(vc_display, 4), caption = "Variance Components", align = c("l", "r", "r", "r", "r", "r", "r"))
+}
+```
+
+## Gage Evaluation
+
+```{r gage-evaluation}
+ge <- results$gage_evaluation
+if (!is.null(ge) && nrow(ge) > 0) {
+  ge_display <- round_df(ge, 4)
+  # 清理 Source 列的前导空格
+  if ("Source" %in% names(ge_display)) {
+    ge_display$Source <- trimws(ge_display$Source)
+  }
+  knitr::kable(ge_display, caption = "Gage Evaluation Summary", align = c("l", "r", "r", "r", "r", "r"))
+}
+```
+
+```{r variation-plot}
+show_chart("variation")
+```
+
+# Key Statistics
+
+```{r key-stats}
+stat_tbl <- data.frame(
+  Metric = c("Total Gage R&R %Contribution", "Total Gage R&R %Tolerance", "Number of distinct categories"),
+  Value = c(
+    fmt_pct100(results$statistics$total_gage_rr_percent, 2),
+    fmt_pct100(results$statistics$tolerance_percent, 2),
+    as.character(results$statistics$ndc)
+  ),
+  Decision = c(
+    ifelse(results$statistics$total_gage_rr_percent < 10, "Accept", ifelse(results$statistics$total_gage_rr_percent < 30, "Marginal", "Reject")),
+    ifelse(is.na(results$statistics$tolerance_percent), "Not evaluated", ifelse(results$statistics$tolerance_percent < 10, "Accept", ifelse(results$statistics$tolerance_percent < 30, "Marginal", "Reject"))),
+    ifelse(results$statistics$ndc >= 5, "Accept", ifelse(results$statistics$ndc >= 4, "Marginal", "Reject"))
+  )
+)
+knitr::kable(stat_tbl, caption = "Decision statistics")
+```
+
+# Graphical Diagnostics
+
+## Measurements by Part
+
+```{r by-part}
+show_chart("by_part")
+```
+
+## Measurements by Operator
+
+```{r by-operator}
+show_chart("by_operator")
+```
+
+## Part by Operator Interaction
+
+```{r interaction}
+show_chart("interaction")
+```
+
+## Control Charts
+
+```{r xbar-chart}
+show_chart("xbar_chart")
+```
+
+```{r r-chart}
+show_chart("r_chart")
+```
+
+# Interpretation
+
+```{r conclusion}
+interpretation <- results$interpretation
+cat(sprintf("Overall decision: **%s**. %s\n\n", toupper(interpretation$status), interpretation$message))
+cat(sprintf("Total Gage R&R contributes %s of total variance contribution and the number of distinct categories is %d. ", fmt_pct100(interpretation$gage_rr_percent, 2), interpretation$ndc))
+if (interpretation$status == "accept") {
+  cat("The measurement system is suitable for the supplied study conditions.")
+} else if (interpretation$status == "marginal") {
+  cat("Use may be acceptable depending on application risk, but repeatability, reproducibility, and operator method should be reviewed.")
+} else {
+  cat("The measurement system should not be released for routine decisions without improvement and revalidation.")
+}
+```
+
+---
+
+Report generated by iQualityR.msa.

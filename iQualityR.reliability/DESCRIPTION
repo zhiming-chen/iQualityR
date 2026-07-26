@@ -1,0 +1,44 @@
+Package: iQualityR.reliability
+Title: Reliability and Survival Analysis for iQualityR
+Version: 0.1.0
+Description: Provides reliability and survival analysis tools, including
+  parametric lifetime distribution fitting (Weibull, exponential,
+  lognormal, logistic), Kaplan-Meier nonparametric survival estimation,
+  Cox proportional hazards regression, reliability metrics (MTTF, B10,
+  B50 life), and related visualizations and reporting, consistent with
+  the iQualityR ecosystem.
+Authors@R: c(
+    person("iQualityR", "Team", role = c("aut", "cre"),
+           email = "iQualityR@example.com")
+  )
+Depends:
+    R (>= 4.1.0)
+Imports:
+    R6,
+    iQualityR.core (>= 0.1.0),
+    iQualityR.stat (>= 0.1.0),
+    iQualityR.plot (>= 0.1.0),
+    ggplot2,
+    patchwork,
+    stats,
+    utils
+Remotes:
+    YOUR_GITHUB_USER/iQualityR-foundation
+Suggests:
+    testthat,
+    withr,
+    knitr,
+    rmarkdown,
+    MASS,
+    survival,
+    goftest,
+    scales,
+    gridExtra,
+    openxlsx
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+NeedsCompilation: no

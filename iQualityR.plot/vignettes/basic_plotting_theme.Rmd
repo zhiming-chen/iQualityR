@@ -1,0 +1,297 @@
+---
+title: "Basic Plotting and Theme System"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Basic Plotting and Theme System}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Basic Plotting and Theme System
+
+## Overview
+
+The `iQualityR.plot` sub-package provides a unified, extensible plotting infrastructure on which all graphical functions are built. This chapter introduces:
+
+- `as_iqr_theme()` - Theme conversion function
+- `base_plot()` - Base plotting function
+- The flexibility and extensibility of the theme system
+
+## Load Data and Packages
+
+```{r setup}
+library(ggplot2)
+library(iQualityR.core)
+library(iQualityR.plot)
+data("mtcars")
+```
+
+## Theme System: as_iqr_theme()
+
+`as_iqr_theme()` is the core function of the iQualityR plotting system, responsible for converting various theme specifications into ggplot2-recognizable theme objects.
+
+### Supported Input Types
+
+This function supports four input types:
+
+```{r theme_types, eval=FALSE}
+# 1. NULL - Use default theme
+as_iqr_theme(NULL)
+
+# 2. Character string - Use built-in theme name
+as_iqr_theme("academic")
+ 
+as_iqr_theme("tech")
+
+# 3. Function - Theme generation function
+as_iqr_theme(function() theme_minimal())
+
+# 4. IqrTheme object - Theme object instance
+theme_obj <- IqrTheme$new("academic")
+as_iqr_theme(theme_obj)
+```
+
+### Default Theme Behavior
+
+When no theme is specified, the system attempts to retrieve the default theme from global options:
+
+```{r default_theme}
+# Check current default theme setting
+getOption("iqr.default_theme", "Not set")
+
+# Set default theme to academic
+options(iqr.default_theme = "academic")
+```
+
+### Theme Fallback Mechanism
+
+If the specified theme is unavailable, the system automatically falls back to `theme_minimal()`:
+
+```{r fallback_demo, eval=FALSE}
+# If IqrTheme is unavailable, it will fall back to theme_minimal()
+p <- ggplot(mtcars, aes(x = hp, y = mpg)) +
+  geom_point() +
+  as_iqr_theme("nonexistent_theme")  # Will issue a warning and use theme_minimal()
+
+# throw out a error message,we need give a right style, can not fallback to theme_minimal()
+```
+
+## Base Plotting: base_plot()
+
+`base_plot()` is the entry function of the iQualityR plotting system, creating a base ggplot object with a unified theme.
+
+### Basic Usage
+
+```{r base_plot_basic}
+# Create a basic scatter plot using base_plot
+p <- base_plot(
+  data = mtcars,
+  mapping = aes(x = hp, y = mpg),
+  theme = NULL  # Use default theme
+) +
+  geom_point(color = "#1f77b4", alpha = 0.7) +
+  labs(
+    title = "Horsepower vs Fuel Efficiency",
+    x = "Horsepower (hp)",
+    y = "Miles per Gallon (mpg)"
+  )
+
+print(p)
+```
+
+### Custom Theme
+
+```{r base_plot_custom_theme}
+# Use a custom theme
+p_custom <- base_plot(
+  data = mtcars,
+  mapping = aes(x = wt, y = mpg),
+  theme = function() theme_bw() + theme(plot.title = element_text(face = "bold"))
+) +
+  geom_point(color = "#e74c3c", alpha = 0.6, size = 2) +
+  labs(
+    title = "Weight vs Fuel Efficiency",
+    x = "Weight (wt)",
+    y = "Miles per Gallon (mpg)"
+  )
+
+print(p_custom)
+```
+
+### Comparison with Native ggplot2 Syntax
+
+```{r comparison, eval=FALSE}
+# Traditional ggplot2 approach
+ggplot(mtcars, aes(hp, mpg)) +
+  geom_point() +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text = element_text(size = 11)
+  )
+
+# iQualityR approach - more concise, better theme consistency
+base_plot(mtcars, aes(hp, mpg), theme = "academic") +
+  geom_point()
+```
+
+## Theme Consistency Example
+
+The following example demonstrates how to maintain theme consistency across different plots:
+
+```{r theme_consistency}
+# Set a unified theme
+my_theme <- "academic"
+
+# Plot 1: Scatter plot
+p1 <- base_plot(mtcars, aes(hp, mpg), theme = my_theme) +
+  geom_point(color = "#2ecc71", alpha = 0.6) +
+  labs(title = "Scatter Plot")
+
+# Plot 2: Histogram
+p2 <- base_plot(mtcars, aes(mpg), theme = my_theme) +
+  geom_histogram(fill = "#3498db", color = "white", bins = 20) +
+  labs(title = "Histogram")
+
+# Plot 3: Box plot
+p3 <- base_plot(mtcars, aes(factor(cyl), mpg), theme = my_theme) +
+  geom_boxplot(fill = "#e67e22", alpha = 0.7) +
+  labs(title = "Box Plot")
+
+# Print plots
+print(p1)
+```
+
+## Advanced Theme Customization
+
+### Creating a Custom Theme Function
+
+```{r custom_theme_function}
+# Create a corporate-style theme
+corporate_theme <- function() {
+  theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold", color = "#2c3e50"),
+      plot.subtitle = element_text(hjust = 0.5, size = 11, color = "#7f8c8d"),
+      axis.title = element_text(size = 11, face = "bold"),
+      axis.text = element_text(size = 10),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(color = "#ecf0f1", linewidth = 0.5),
+      plot.background = element_rect(fill = "#fafafa", color = NA),
+      panel.background = element_rect(fill = "#fafafa", color = NA)
+    )
+}
+
+# Apply custom theme
+p_corp <- base_plot(
+  data = mtcars,
+  mapping = aes(x = disp, y = mpg),
+  theme = corporate_theme
+) +
+  geom_point(color = "#8e44ad", alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", alpha = 0.1) +
+  labs(
+    title = "Engine Displacement vs Fuel Efficiency",
+    x = "Displacement (disp)",
+    y = "Miles per Gallon (mpg)"
+  )
+
+print(p_corp)
+```
+
+## Best Practices
+
+### 1. Unified Theme Management
+
+```{r best_practice_1, eval=FALSE}
+# Recommended: Set default theme at the start of the project
+options(iqr.default_theme = "academic")
+
+# All subsequent plots automatically use this theme
+p1 <- base_plot(data, aes(x, y)) + geom_point()
+p2 <- base_plot(data, aes(x, z)) + geom_line()
+```
+
+### 2. Separate Theme from Plot
+
+```{r best_practice_2, eval=FALSE}
+# Recommended: Separate theme definition from plot creation
+my_theme <- function() theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+
+# Reuse across different plots
+plot1 <- base_plot(data1, aes(x, y), theme = my_theme) + geom_point()
+plot2 <- base_plot(data2, aes(a, b), theme = my_theme) + geom_bar()
+```
+
+### 3. Theme Inheritance
+
+```{r best_practice_3, eval=FALSE}
+# Recommended: Fine-tune on top of a base theme
+base_theme <- as_iqr_theme("academic")
+
+# Override specific elements in a particular plot
+p <- base_plot(data, aes(x, y), theme = "academic") +
+  geom_point() +
+  theme(
+    plot.title = element_text(size = 16, color = "darkblue"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+## FAQ
+
+### Q: Why is my theme not taking effect?
+
+Make sure the theme object is correctly passed to `base_plot()`:
+
+```{r faq_1, eval=FALSE}
+# Wrong: Theme not passed to base_plot
+ggplot(data, aes(x, y)) +
+  geom_point() +
+  as_iqr_theme("academic")  # This will not take effect
+
+# Correct: Pass through base_plot
+base_plot(data, aes(x, y), theme = "academic") +
+  geom_point()
+```
+
+### Q: How to maintain consistent style across all plots in a report?
+
+```{r faq_2, eval=FALSE}
+# Method 1: Set global default theme
+options(iqr.default_theme = "academic")
+
+# Method 2: Create a theme variable and use it in all plots
+report_theme <- "academic"
+p1 <- base_plot(data1, aes(x, y), theme = report_theme) + ...
+p2 <- base_plot(data2, aes(a, b), theme = report_theme) + ...
+```
+
+## Summary
+
+- `as_iqr_theme()` provides a flexible theme conversion mechanism, supporting multiple input types
+- `base_plot()` is the unified entry point of the iQualityR plotting system, ensuring theme consistency
+- Through theme functions and objects, you can easily create and reuse custom themes
+- It is recommended to set a default theme at the start of a project to ensure consistent style across all plots
+
+## Further Reading
+
+- [Scatter Plots](scatter_plots.html) - Learn how to create scatter plots using the base plotting system
+- [Pareto Charts](pareto_charts.html) - Learn about Pareto chart plotting methods
+- [Layer Builders](layer_builders.html) - Dive deeper into layer function usage

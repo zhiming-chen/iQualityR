@@ -1,0 +1,26 @@
+Package: iQualityR.core
+Title: Core Components for the iQualityR Quality Engineering Framework
+Version: 0.1.0
+Authors@R: person(given = "Zhiming", family = "Chen", email = "zhimingc383@gmail.com", role = c("aut", "cre"))
+Description: Foundational infrastructure for the iQualityR quality engineering framework. Provides R6 abstract base classes for plans, tasks, analyzers, plotters, and reporters; a unified ggplot2 theme system with built-in palettes; Excel export utilities; metadata management following a 4M1E convention (Man, Machine, Material, Method, Environment); simple internationalization (en-US, zh-CN); and utility functions for validation, formatting, and configuration.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.0.0)
+Imports:
+    R6,
+    ggplot2,
+    openxlsx,
+    rmarkdown,
+    utils,
+    stats
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    systemfonts,
+    sysfonts,
+    showtext
+Config/testthat/edition: 3
+VignetteBuilder: knitr

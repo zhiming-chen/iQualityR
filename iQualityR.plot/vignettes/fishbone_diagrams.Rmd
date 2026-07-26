@@ -1,0 +1,490 @@
+---
+title: "Fishbone Diagrams"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Fishbone Diagrams}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.height = 8,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Fishbone Diagrams
+
+## Overview
+
+The Fishbone Diagram, also known as the Ishikawa Diagram or Cause-and-Effect Diagram, is an essential tool in quality management for root cause analysis. `iQualityR.plot` provides three fishbone diagram functions:
+
+- `plot_fishbone_basic()` - Basic fishbone diagram (without weight and importance)
+- `plot_fishbone_weighted()` - Weighted fishbone diagram (line thickness indicates weight, color indicates importance)
+- `plot_fishbone_faceted()` - Faceted fishbone diagram (multi-group comparison)
+
+## Fishbone Diagram Structure
+
+A standard fishbone diagram contains the following hierarchical structure:
+
+- **Spine**: Central horizontal line, with an arrow pointing to the problem statement
+- **Primary categories (main bones)**: At a 45-degree angle to the spine, alternating above and below (e.g., 5M1E)
+- **Secondary categories (sub-bones)**: Horizontal lines, parallel to the spine
+- **Tertiary categories (small bones)**: Parallel to the main bones (at a 45-degree angle)
+
+## Load Package
+
+```{r setup}
+library(ggplot2)
+ 
+library(iQualityR.plot)
+library(iQualityR.core)
+
+ 
+```
+
+## 1. Basic Fishbone Diagram: plot_fishbone_basic()
+
+The basic fishbone diagram is suitable for simple root cause analysis scenarios, without weight and importance encoding.
+
+### Manufacturing 5M1E Template
+
+```{r basic_manufacturing, warning=FALSE}
+# Define cause categories
+categories <- list(
+  Manpower = c("Lack of training", "Insufficient skills", "Low motivation"),
+  Machine = c("Improper maintenance", "Equipment aging", "Missing calibration"),
+  Material = c("Raw material defects", "Supplier changes"),
+  Method = c("Unclear SOP", "Unreasonable process"),
+  Measurement = c("Measurement error", "Inconsistent standards"),
+  Environment = c("Temperature fluctuation", "Excessive humidity")
+)
+
+plot_fishbone_basic(
+  problem = "Product dimension deviation",
+  categories = categories,
+  industry = "manufacturing",
+  title = "Product Dimension Deviation Fishbone Diagram",
+  subtitle = "Manufacturing 5M1E Analysis"
+)
+```
+
+### Service 5P Template
+
+```{r basic_service,warning=FALSE}
+# Service categories
+service_categories <- list(
+  People = c("Poor service attitude", "Insufficient expertise", "Poor communication"),
+  Process = c("Complex process", "Long approval time", "Lack of standardization"),
+  Place = c("Inconvenient location", "Noisy environment", "Outdated facilities"),
+  Product = c("Incomplete features", "Unstable quality", "Slow updates"),
+  Promotion = c("Inadequate promotion", "Non-transparent pricing", "Few promotions")
+)
+
+plot_fishbone_basic(
+  problem = "Low customer satisfaction",
+  categories = service_categories,
+  industry = "service",
+  title = "Low Customer Satisfaction Fishbone Diagram",
+  subtitle = "Service 5P Analysis"
+)
+```
+
+### Custom Categories
+
+```{r basic_custom,warning=FALSE}
+# Custom categories (not relying on industry templates)
+custom_categories <- list(
+  Manpower = c("Lack of experience", "Weak responsibility", "Insufficient training"),
+  Machine = c("Insufficient precision", "Delayed maintenance", "Severe aging"),
+  Material = c("Batch variation", "Supplier changes", "Improper storage"),
+  Method = c("Unreasonable process", "Incorrect parameter settings", "Unclear standards")
+)
+
+plot_fishbone_basic(
+  problem = "Welding quality defects",
+  categories = custom_categories,
+  title = "Welding Quality Defect Analysis",
+  subtitle = "Custom Categories"
+)
+```
+
+## 2. Weighted Fishbone Diagram: plot_fishbone_weighted()
+
+The weighted fishbone diagram uses line thickness to indicate the weight of causes and color to indicate importance level.
+
+### Basic Usage
+
+```{r weighted_basic,warning=FALSE}
+# Define categories with weight and importance
+weighted_categories <- list(
+  Manpower = list(
+    list(name = "Lack of training", weight = 8, importance = "critical"),
+    list(name = "Insufficient skills", weight = 6, importance = "important"),
+    list(name = "Low motivation", weight = 3, importance = "normal")
+  ),
+  Machine = list(
+    list(name = "Improper maintenance", weight = 7, importance = "important"),
+    list(name = "Equipment aging", weight = 9, importance = "critical"),
+    list(name = "Missing calibration", weight = 4, importance = "normal")
+  ),
+  Material = list(
+    list(name = "Raw material defects", weight = 8, importance = "critical"),
+    list(name = "Supplier changes", weight = 5, importance = "important")
+  ),
+  Method = list(
+    list(name = "Unclear SOP", weight = 6, importance = "important"),
+    list(name = "Unreasonable process", weight = 7, importance = "important")
+  ),
+  Measurement = list(
+    list(name = "Measurement error", weight = 5, importance = "important"),
+    list(name = "Inconsistent standards", weight = 4, importance = "normal")
+  ),
+  Environment = list(
+    list(name = "Temperature fluctuation", weight = 3, importance = "normal"),
+    list(name = "Excessive humidity", weight = 4, importance = "normal")
+  )
+)
+
+plot_fishbone_weighted(
+  problem = "Product quality issues",
+  categories = weighted_categories,
+  industry = "manufacturing",
+  title = "Product Quality Issues Fishbone Diagram",
+  subtitle = "With Weight and Importance Encoding"
+)
+```
+
+### Custom Importance Colors
+
+```{r weighted_colors,warning=FALSE}
+# Custom importance colors
+custom_colors <- c(
+  "critical" = "#8e44ad",  # Purple for critical
+  "important" = "#e67e22", # Orange for important
+  "normal" = "#95a5a6"     # Gray for normal
+)
+
+plot_fishbone_weighted(
+  problem = "Delivery delay",
+  categories = weighted_categories,
+  importance_colors = custom_colors,
+  title = "Custom Importance Colors"
+)
+```
+
+### Control Display Elements
+
+```{r weighted_display, eval=FALSE}
+# Show weights only, hide importance labels
+plot_fishbone_weighted(
+  problem = "Problem",
+  categories = weighted_categories,
+  show_weights = TRUE,
+  show_importance = FALSE
+)
+
+# Show importance only, hide weight values
+plot_fishbone_weighted(
+  problem = "Problem",
+  categories = weighted_categories,
+  show_weights = FALSE,
+  show_importance = TRUE
+)
+```
+
+### Tertiary Category Support
+
+```{r weighted_tertiary,warning=FALSE}
+# Complete structure with tertiary categories
+tertiary_categories <- list(
+  Manpower = list(
+    list(
+      name = "Lack of training",
+      weight = 8,
+      importance = "critical",
+      sub_categories = list(
+        list(name = "Insufficient new employee training", weight = 7, importance = "important"),
+        list(name = "Missing on-the-job training", weight = 6, importance = "important"),
+        list(name = "Training effectiveness not evaluated", weight = 5, importance = "normal")
+      )
+    ),
+    list(
+      name = "Insufficient skills",
+      weight = 6,
+      importance = "important",
+      sub_categories = list(
+        list(name = "Poor operational skills", weight = 5, importance = "important"),
+        list(name = "Weak problem-solving ability", weight = 6, importance = "important")
+      )
+    )
+  ),
+  Machine = list(
+    list(name = "Improper maintenance", weight = 7, importance = "important"),
+    list(name = "Equipment aging", weight = 9, importance = "critical")
+  )
+)
+
+plot_fishbone_weighted(
+  problem = "High product defect rate",
+  categories = tertiary_categories,
+  title = "Tertiary Category Fishbone Diagram",
+  subtitle = "Including main bones, sub-bones, and small bones"
+)
+```
+
+## 3. Faceted Fishbone Diagram: plot_fishbone_faceted()
+
+The faceted fishbone diagram is used to compare root cause analysis results across different strata (e.g., shifts, departments, time periods).
+
+### Basic Usage
+
+```{r faceted_basic,warning=FALSE}
+# Prepare stratified data
+strata_data <- data.frame(
+  stratum = rep(c("Day shift", "Night shift"), each = 12),
+  category = rep(c("Manpower", "Machine", "Material", "Method", "Measurement", "Environment"), 2),
+  sub_category = c(
+    "Lack of training", "Improper maintenance", "Raw material defects", "Unclear SOP", "Measurement error", "Temperature fluctuation",
+    "Insufficient skills", "Equipment aging", "Supplier changes", "Unreasonable process", "Inconsistent standards", "Excessive humidity",
+    "Lack of training", "Improper maintenance", "Raw material defects", "Unclear SOP", "Measurement error", "Temperature fluctuation",
+    "Insufficient skills", "Equipment aging", "Supplier changes", "Unreasonable process", "Inconsistent standards", "Excessive humidity"
+  ),
+  weight = c(8, 7, 8, 6, 5, 3, 6, 9, 5, 7, 4, 4,
+             7, 6, 7, 5, 4, 2, 5, 8, 4, 6, 3, 3),
+  importance = c("critical", "important", "critical", "important", "important", "normal",
+                 "important", "critical", "important", "important", "normal", "normal",
+                 "important", "important", "important", "important", "normal", "normal",
+                 "important", "critical", "important", "important", "normal", "normal")
+)
+
+plot_fishbone_faceted(
+  problem = "Product quality issues",
+  strata_data = strata_data,
+  title = "Day Shift vs Night Shift Comparison Fishbone Diagram"
+)
+```
+
+## Parameter Details
+
+### plot_fishbone_basic() Parameters
+
+| Parameter | Type | Description | Default |
+|------|------|------|--------|
+| `problem` | character | Problem statement | Required |
+| `categories` | list | Cause categories | NULL |
+| `industry` | character | Industry template | "manufacturing" |
+| `font_size` | numeric | Base font size | 10 |
+| `title` | character | Chart title | NULL |
+| `subtitle` | character | Subtitle | NULL |
+
+### plot_fishbone_weighted() Parameters
+
+| Parameter | Type | Description | Default |
+|------|------|------|--------|
+| `problem` | character | Problem statement | Required |
+| `categories` | list | Weighted cause categories | NULL |
+| `industry` | character | Industry template | "manufacturing" |
+| `weight_range` | numeric | Line thickness range | c(0.8, 3.5) |
+| `importance_colors` | named vector | Importance colors | c(critical="red", ...) |
+| `show_weights` | logical | Whether to show weights | TRUE |
+| `show_importance` | logical | Whether to show importance | TRUE |
+| `font_size` | numeric | Base font size | 12 |
+
+### Data Structure Description
+
+**Basic fishbone diagram category format:**
+```r
+list(
+  Category1 = c("Cause1", "Cause2", "Cause3"),
+  Category2 = c("Cause1", "Cause2")
+)
+```
+
+**Weighted category format:**
+```r
+list(
+  Category1 = list(
+    list(name = "Cause1", weight = 8, importance = "critical"),
+    list(name = "Cause2", weight = 6, importance = "important")
+  ),
+  Category2 = list(...)
+)
+```
+
+**Tertiary category format:**
+```r
+list(
+  Category1 = list(
+    list(
+      name = "Cause1",
+      weight = 8,
+      importance = "critical",
+      sub_categories = list(
+        list(name = "Sub-cause1", weight = 7, importance = "important"),
+        list(name = "Sub-cause2", weight = 6, importance = "normal")
+      )
+    )
+  )
+)
+```
+
+## Practical Case Studies
+
+### Case 1: Manufacturing Product Quality Issues
+
+```{r case_manufacturing,warning=FALSE}
+# Product quality issues at an auto parts factory
+auto_parts_categories <- list(
+  Manpower = list(
+    list(name = "Insufficient operational skills", weight = 7, importance = "important"),
+    list(name = "Weak quality awareness", weight = 6, importance = "important"),
+    list(name = "High proportion of new employees", weight = 5, importance = "normal")
+  ),
+  Machine = list(
+    list(name = "Declined machine precision", weight = 9, importance = "critical"),
+    list(name = "Fixture wear", weight = 7, importance = "important"),
+    list(name = "Improper tool life management", weight = 6, importance = "important")
+  ),
+  Material = list(
+    list(name = "Uneven raw material hardness", weight = 8, importance = "critical"),
+    list(name = "Large batch variation", weight = 5, importance = "important")
+  ),
+  Method = list(
+    list(name = "Unreasonable cutting parameters", weight = 7, importance = "important"),
+    list(name = "Insufficient inspection frequency", weight = 6, importance = "important")
+  ),
+  Measurement = list(
+    list(name = "Expired gauge calibration", weight = 5, importance = "important"),
+    list(name = "Inconsistent measurement methods", weight = 4, importance = "normal")
+  ),
+  Environment = list(
+    list(name = "Workshop temperature fluctuation", weight = 3, importance = "normal"),
+    list(name = "Delayed chip cleaning", weight = 4, importance = "normal")
+  )
+)
+
+plot_fishbone_weighted(
+  problem = "Parts dimension out of tolerance",
+  categories = auto_parts_categories,
+  title = "Auto Parts Dimension Out of Tolerance Fishbone Diagram",
+  subtitle = "Root Cause Analysis at a Manufacturing Plant"
+)
+```
+
+### Case 2: Software Project Delay Analysis
+
+```{r case_software,warning=FALSE}
+# Root cause analysis for software project delays
+software_delay <- list(
+  Manpower = list(
+    list(name = "Requirements misunderstanding", weight = 8, importance = "critical"),
+    list(name = "Insufficient technical capability", weight = 6, importance = "important"),
+    list(name = "Poor team collaboration", weight = 5, importance = "important")
+  ),
+  Process = list(
+    list(name = "Frequent requirement changes", weight = 9, importance = "critical"),
+    list(name = "Insufficient reviews", weight = 7, importance = "important"),
+    list(name = "Missing progress tracking", weight = 6, importance = "important")
+  ),
+  Technology = list(
+    list(name = "Inappropriate technology selection", weight = 7, importance = "important"),
+    list(name = "Architecture design flaws", weight = 8, importance = "critical"),
+    list(name = "Insufficient test coverage", weight = 6, importance = "important")
+  ),
+  Tools = list(
+    list(name = "Unstable development environment", weight = 4, importance = "normal"),
+    list(name = "Chaotic version management", weight = 5, importance = "important")
+  )
+)
+
+plot_fishbone_weighted(
+  problem = "Project delivery delay",
+  categories = software_delay,
+  title = "Software Project Delay Fishbone Diagram",
+  subtitle = "IT Project Root Cause Analysis"
+)
+```
+
+## Best Practices
+
+### 1. Choose the Appropriate Number of Categories
+
+```{r best_practice_categories, eval=FALSE}
+# Manufacturing: Use 5M1E (6 categories)
+industry = "manufacturing"
+
+# Service: Use 5P (5 categories)
+industry = "service"
+
+# Custom: Recommend 4-8 categories; too many will make the chart crowded
+```
+
+### 2. Weight Setting Recommendations
+
+```{r best_practice_weights, eval=FALSE}
+# Weight range: 1-10
+# 1-3: Minor impact
+# 4-6: Moderate impact
+# 7-8: Significant impact
+# 9-10: Critical impact
+
+# Importance levels:
+# "critical": Must be resolved immediately
+# "important": Requires focused attention
+# "normal": General attention
+```
+
+### 3. Team Collaboration
+
+```{r best_practice_team, eval=FALSE}
+# Recommend using brainstorming to determine causes and weights
+# 1. Collect team member opinions
+# 2. Vote to determine weights
+# 3. Reach consensus on importance levels
+# 4. Use fishbone diagram to visualize results
+```
+
+## FAQ
+
+### Q: How to adjust font size?
+
+```{r faq_font, eval=FALSE}
+plot_fishbone_basic(problem, categories, font_size = 12)  # Increase font size
+plot_fishbone_basic(problem, categories, font_size = 8)   # Decrease font size
+```
+
+### Q: How to customize the problem box color?
+
+The problem box color is fixed to red (#E74C3C). For customization, you can modify the source code or use `plot_fishbone_weighted()` and adjust the theme.
+
+### Q: How many levels of categories does the fishbone diagram support?
+
+Three levels of categories are supported:
+- Primary: Main bones (at a 45-degree angle to the spine)
+- Secondary: Sub-bones (parallel to the spine, horizontal lines)
+- Tertiary: Small bones (parallel to the main bones, at a 45-degree angle)
+
+## Summary
+
+- `plot_fishbone_basic()` is suitable for simple root cause analysis
+- `plot_fishbone_weighted()` intuitively displays cause weight and importance through line thickness and color encoding
+- `plot_fishbone_faceted()` supports multi-group comparison analysis
+- Supports three-level category structure to meet complex analysis needs
+- Provides manufacturing 5M1E and service 5P industry templates
+
+## Further Reading
+
+- [Pareto Charts](pareto_charts.html) - Learn about Pareto chart plotting
+- [Hypothesis Testing Visualization](hypothesis_visualization.html) - Learn about statistical test visualization
+- [Quality Tools Charts](quality_tools.html) - Learn about PP/QQ/Turtle diagrams

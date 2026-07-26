@@ -1,0 +1,529 @@
+---
+title: "Response Surface Methodology & Optimization with iQualityR.doe"
+author: "iQualityR Team"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Response Surface Methodology & Optimization with iQualityR.doe}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4,
+  fig.align = "center"
+)
+```
+
+## 1. Introduction
+
+Response Surface Methodology (RSM) is a collection of mathematical and
+statistical techniques for empirical model building and optimization.
+When screening experiments have identified the vital few factors, RSM
+fits a second-order model to map the response surface, locate the
+stationary point, and find optimal operating conditions.
+
+`iQualityR.doe` provides a complete RSM workflow that mirrors and extends
+Minitab's capabilities:
+
+* **Path of steepest ascent** to move toward the optimum region
+* **Central Composite Designs (CCD)** and **Box-Behnken** for second-order fitting
+* **Stationary point** and **canonical analysis** to characterize the surface
+* **Surface, contour, wireframe, and cube** visualizations
+* **Ridge analysis** for stationary points outside the experimental region
+* **Uncoded equation** export for engineering use
+* **Desirability optimization** for multi-response problems
+* **Pareto frontier** and **overlaid contour plots** for trade-off analysis
+
+This vignette follows a realistic chemical-reactor case study through all
+phases of RSM.
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+set.seed(42)
+```
+
+## 2. API Overview
+
+### 2.1 RSM workflow stages
+
+| Stage | Method | Purpose |
+|---|---|---|
+| Phase 1 | `compute_steepest_ascent()` | Move toward optimum region |
+| Phase 2 | `rsm_design(design_type = "ccd")` | Build second-order design |
+| Fit | `task$compute()` | Fit full quadratic model |
+| Analyze | `compute_stationary_point()` | Locate & characterize optimum |
+| Explore | `task$plot(type = "surface")` | Visualize response surface |
+| Robust | `ridge_analysis()` | Constrained optimization |
+| Export | `get_uncoded_equation()` | Engineering-units equation |
+| Optimize | `optimize_desirability()` | Multi-response optimization |
+
+### 2.2 Plot types for RSM
+
+| `type` argument | Description |
+|---|---|
+| `"surface"` | Filled 3D-style surface (2D tile + contour) |
+| `"contour"` | 2D contour plot with iso-lines |
+| `"wireframe"` | 3D wireframe projection (geom_path grid) |
+| `"cube"` | 3-factor cube corner display |
+| `"overlaid_contour"` | Multi-response overlaid contour with constraints |
+| `"response_surface"` | Both surface + contour side by side |
+
+---
+
+## 3. Case Study: Chemical Reactor Yield
+
+### Problem
+
+A chemical engineer is optimizing a batch reactor to maximize **Yield (%)**.
+Screening identified three vital factors: **Temperature**, **Pressure**, and
+**Catalyst concentration**. The current operating point gives ~70% yield.
+
+### True (unknown) process model
+
+For reproducibility we simulate the true process with known second-order
+behavior, but in practice the response is measured experimentally.
+
+---
+
+## 4. Phase 1: Path of Steepest Ascent
+
+Before investing in a second-order design, we run a first-order factorial
+near the current operating point and follow the steepest ascent path toward
+higher yield.
+
+```{r phase1-design}
+factors <- list(
+  list(name = "Temp",     type = "continuous", levels = c(120, 180)),
+  list(name = "Pressure", type = "continuous", levels = c(2, 6)),
+  list(name = "Catalyst", type = "continuous", levels = c(0.5, 2.5))
+)
+
+plan <- IqrDoePlan$new(
+  task_tag      = "reactor_phase1",
+  design_type   = "factorial",
+  factors       = factors,
+  center_points = 4,
+  randomize     = FALSE,
+  response_vars = "Yield"
+)
+task <- IqrDoeTask$new(plan = plan, theme = "academic")
+task$compute()
+
+design <- task$results$design_info
+# True first-order model (plus small curvature in reality):
+#   Yield = 70 + 8*Temp_c + 5*Press_c + 3*Cat_c
+design$Yield <- 70 + 8 * design$Temp + 5 * design$Pressure +
+  3 * design$Catalyst + rnorm(nrow(design), 0, 1.5)
+
+# Re-fit the model with the simulated response data.
+task1 <- IqrDoeTask$new(plan = plan, data = design, theme = "academic")
+task1$compute()
+```
+
+```{r phase1-model}
+model1 <- task1$results$model
+summary(model1)$coefficients
+```
+
+Now compute the steepest ascent path. The `factors` list is passed
+directly --- `compute_steepest_ascent()` matches factor names to the
+model's main-effect coefficients internally.
+
+```{r steepest}
+ascent <- DoeAnalyzer$new()$compute_steepest_ascent(
+  model     = model1,
+  factors   = factors,
+  step_size = 1.0,
+  n_steps   = 5,
+  maximize  = TRUE
+)
+ascent
+```
+
+### Decision
+
+The steepest ascent path suggests increasing all three factors
+(Temperature shows the largest coefficient, so each coded step translates
+to the largest physical move). The team runs confirmatory trials along
+this path. When yield peaks and begins to decline, the optimum region has
+been reached --- this is where Phase 2 (CCD) is centered.
+
+---
+
+## 5. Phase 2: Central Composite Design
+
+After Phase 1 relocates the operating region to ~88% yield, a CCD is
+built around the new center to fit a full second-order model.
+
+```{r ccd-design}
+# New factors centered on the improved operating region
+factors2 <- list(
+  list(name = "Temp",     type = "continuous", levels = c(150, 170)),
+  list(name = "Pressure", type = "continuous", levels = c(4, 5)),
+  list(name = "Catalyst", type = "continuous", levels = c(1.0, 2.0))
+)
+
+plan2 <- IqrDoePlan$new(
+  task_tag      = "reactor_phase2",
+  design_type   = "ccd",
+  factors       = factors2,
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = FALSE,
+  response_vars = "Yield"
+)
+task2 <- IqrDoeTask$new(plan = plan2, theme = "academic")
+task2$compute()
+
+design2 <- task2$results$design_info
+# True second-order model around the new center (coded x1,x2,x3 in [-1.4, 1.4])
+design2$Yield <- 90 +
+  3.0 * design2$Temp + 2.0 * design2$Pressure + 1.5 * design2$Catalyst -
+  4.0 * design2$Temp^2 - 3.0 * design2$Pressure^2 - 2.0 * design2$Catalyst^2 +
+  1.5 * design2$Temp * design2$Pressure +
+  rnorm(nrow(design2), 0, 1.0)
+
+task2 <- IqrDoeTask$new(plan = plan2, data = design2, theme = "academic")
+task2$compute()
+```
+
+```{r ccd-anova}
+print(task2$plot(type = "design"))
+```
+
+### Decision
+
+A rotatable CCD with 6 center points provides 20 runs capable of
+estimating the full quadratic model (3 linear + 3 quadratic + 3
+interactions + intercept). The design is ready for data collection.
+
+---
+
+## 6. Stationary Point & Canonical Analysis
+
+The stationary point tells us where the gradient of the fitted surface is
+zero --- a maximum, minimum, or saddle point.
+
+```{r stationary-point}
+model2 <- task2$results$model
+factor_names <- vapply(factors2, function(f) f$name, character(1))
+
+sp <- DoeAnalyzer$new()$compute_stationary_point(
+  model        = model2,
+  factor_names = factor_names
+)
+sp$stationary_point
+sp$nature
+```
+
+### Decision
+
+The stationary point nature (`sp$nature`) classifies the surface as a
+**maximum**, **minimum**, or **saddle point**. If it is a maximum within
+the design region, the team can proceed to validation runs at the
+predicted optimum.
+
+---
+
+## 7. Surface & Contour Plots
+
+### 7.1 Filled surface plot
+
+```{r surface}
+print(task2$plot(type = "surface", response_name = "Yield",
+                 x_var = "Temp", y_var = "Pressure"))
+```
+
+### 7.2 Contour plot
+
+```{r contour}
+print(task2$plot(type = "contour", response_name = "Yield",
+                 x_var = "Temp", y_var = "Pressure"))
+```
+
+### 7.3 Response surface (both side by side)
+
+```{r response-surface}
+print(task2$plot(type = "response_surface", response_name = "Yield",
+                 x_var = "Temp", y_var = "Pressure"))
+```
+
+### Decision
+
+The surface plot shows a clear ridge of high yield in the
+Temperature-Pressure plane. The contour plot's iso-lines reveal the
+sensitivity of yield to factor changes --- tighter contours mean the
+process is more sensitive to variation in that direction.
+
+---
+
+## 8. Wireframe Plot
+
+A wireframe provides a 3D-style line projection without tile fill, making
+the surface shape easier to read at a glance.
+
+```{r wireframe}
+print(task2$plot(type = "wireframe", response_name = "Yield",
+                 x_var = "Temp", y_var = "Pressure"))
+```
+
+---
+
+## 9. Cube Plot
+
+A cube plot displays the predicted (or mean) response at all 8 corner
+combinations of a **2-level factorial** design. It is most informative
+for Phase-1 screening designs rather than CCD (which uses axial points
+beyond +/-1).
+
+```{r cube}
+# Cube plots apply to 2-level factorials with coded levels (+/-1).
+factors_coded <- lapply(c("Temp", "Pressure", "Catalyst"), function(nm) {
+  list(name = nm, type = "continuous", levels = c(-1, 1))
+})
+plan_cube <- IqrDoePlan$new(
+  task_tag = "cube_demo", design_type = "factorial",
+  factors = factors_coded, randomize = FALSE,
+  response_vars = "Yield"
+)
+task_cube <- IqrDoeTask$new(plan = plan_cube, theme = "academic")
+task_cube$compute()
+design_cube <- task_cube$results$design_info
+design_cube$Yield <- 70 + 8 * design_cube$Temp + 5 * design_cube$Pressure +
+  3 * design_cube$Catalyst + rnorm(nrow(design_cube), 0, 1.5)
+task_cube <- IqrDoeTask$new(plan = plan_cube, data = design_cube, theme = "academic")
+task_cube$compute()
+print(task_cube$plot(type = "cube", response_name = "Yield"))
+```
+
+### Decision
+
+The cube plot quickly shows which corner of the Phase-1 design space
+yields the highest response, guiding the engineering team toward the
+productive region for Phase-2 centering.
+
+---
+
+## 10. Ridge Analysis
+
+When the stationary point falls **outside** the experimental region (or
+the surface is a saddle), ridge analysis finds the path of steepest
+ascent **within** a radius constraint, producing a series of constrained
+optima.
+
+```{r ridge}
+ridge <- DoeAnalyzer$new()$ridge_analysis(
+  model        = model2,
+  factor_names = factor_names,
+  maximize     = TRUE,
+  max_radius   = sqrt(3),
+  n_radii      = 10
+)
+head(ridge$path, 4)
+```
+
+### Decision
+
+The ridge path shows the best achievable yield at each radius from the
+design center. When the radius at which yield is maximized lies inside
+the feasible operating window, that point becomes the recommended setpoint.
+
+---
+
+## 11. Uncoded Equation
+
+For engineering handoff, the regression equation in **actual engineering
+units** (not coded) is essential.
+
+```{r uncoded-equation}
+eq <- DoeAnalyzer$new()$get_uncoded_equation(
+  model   = model2,
+  factors = factors2
+)
+cat(eq$equation, "\n")
+```
+
+### Decision
+
+The uncoded equation lets process engineers predict yield directly from
+Temperature, Pressure, and Catalyst values without converting to coded
+units. It can be pasted into a spreadsheet or SOP document.
+
+---
+
+## 12. Multi-Response Desirability Optimization
+
+In practice, multiple responses must be balanced. Suppose alongside
+**Yield** (maximize) we also track **Purity** (target 98%) and **Waste**
+(minimize).
+
+```{r multi-response-data}
+design3 <- design2
+# Simulate two more responses on the same CCD runs
+design3$Purity <- 98 - 0.5 * design3$Temp^2 - 0.3 * design3$Pressure^2 +
+  rnorm(nrow(design3), 0, 0.3)
+design3$Waste <- 2.0 + 0.8 * design3$Temp + 0.5 * design3$Pressure +
+  0.3 * design3$Catalyst + rnorm(nrow(design3), 0, 0.2)
+
+# Fit a separate second-order model for each response (for desirability).
+model_yield  <- lm(Yield ~ (Temp + Pressure + Catalyst)^2 +
+                    I(Temp^2) + I(Pressure^2) + I(Catalyst^2), data = design3)
+model_purity <- lm(Purity ~ (Temp + Pressure + Catalyst)^2 +
+                     I(Temp^2) + I(Pressure^2) + I(Catalyst^2), data = design3)
+model_waste  <- lm(Waste ~ (Temp + Pressure + Catalyst)^2 +
+                     I(Temp^2) + I(Pressure^2) + I(Catalyst^2), data = design3)
+
+# Build a task with multi-response data for overlaid contour plotting.
+plan3 <- IqrDoePlan$new(
+  task_tag      = "reactor_multi",
+  design_type   = "ccd",
+  factors       = factors2,
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = FALSE,
+  response_vars = c("Yield", "Purity", "Waste")
+)
+task3 <- IqrDoeTask$new(plan = plan3, data = design3, theme = "academic")
+task3$compute()
+```
+
+```{r desirability}
+opt <- MultiResponseOptimizer$new()
+
+specs <- list(
+  list(name = "Yield",  type = "max",    lower = 80, upper = 95),
+  list(name = "Purity", type = "target", lower = 95, upper = 99, target = 98),
+  list(name = "Waste",  type = "min",    lower = 1,  upper = 5)
+)
+
+# Named-list bounds (vignette style): each entry is c(min, max).
+bounds <- list(
+  Temp     = c(-1.0, 1.0),
+  Pressure = c(-1.0, 1.0),
+  Catalyst = c(-1.0, 1.0)
+)
+
+result <- opt$optimize_desirability(
+  models = list(model_yield, model_purity, model_waste),
+  specs  = specs,
+  bounds = bounds,
+  method = "grid",
+  grid_resolution = 15
+)
+result$best_point
+result$best_desirability
+```
+
+### Decision
+
+The desirability optimizer finds the factor settings that best balance
+all three responses according to their individual desirability functions
+(maximize yield, hit purity target, minimize waste).
+
+---
+
+## 13. Pareto Frontier & TOPSIS Ranking
+
+When a single desirability aggregate is too restrictive, the **Pareto
+frontier** identifies all non-dominated solutions, and **TOPSIS** ranks
+them by closeness to the ideal.
+
+```{r pareto}
+# Build a grid of candidate solutions and predict responses
+grid <- expand.grid(
+  Temp = seq(-1, 1, 0.5),
+  Pressure = seq(-1, 1, 0.5),
+  Catalyst = seq(-1, 1, 0.5)
+)
+pred_yield <- predict(model_yield, newdata = grid)
+
+# Simple proxy responses for demonstration
+candidates <- data.frame(
+  Yield  = pred_yield,
+  Purity = 98 - 0.5 * grid$Temp^2,
+  Waste  = 2.0 + 0.8 * grid$Temp
+)
+
+pareto <- opt$find_pareto_frontier(
+  responses  = candidates,
+  directions = c("max", "max", "min")
+)
+nrow(pareto$pareto_set)
+head(pareto$pareto_set, 3)
+```
+
+```{r topsis}
+ranked <- opt$rank_with_topsis(
+  candidates = candidates,
+  weights    = c(0.5, 0.3, 0.2),
+  directions = c("max", "max", "min")
+)
+head(ranked$ranked, 3)
+```
+
+### Decision
+
+The Pareto frontier shows the trade-off space: solutions where improving
+one response requires sacrificing another. TOPSIS then selects the
+solution closest to the ideal point, weighted by engineering priorities.
+
+---
+
+## 14. Overlaid Contour Plot
+
+For two-factor slices of the multi-response problem, an overlaid contour
+plot visualizes the **feasible region** where all responses meet their
+constraints simultaneously.
+
+```{r overlaid-contour}
+response_specs <- list(
+  Yield  = list(model = model_yield,  lower = 85,   upper = Inf),
+  Purity = list(model = model_purity, lower = 97,   upper = Inf),
+  Waste  = list(model = model_waste,  lower = -Inf, upper = 4)
+)
+
+print(task3$plot(
+  type           = "overlaid_contour",
+  response_specs = response_specs,
+  x_var          = "Temp",
+  y_var          = "Pressure"
+))
+```
+
+### Decision
+
+The white (unshaded) region in the overlaid contour plot marks the
+operating window where Yield >= 85%, Purity >= 97%, and Waste <= 4%.
+Any point inside this region is a feasible setpoint satisfying all
+three quality requirements.
+
+---
+
+## 15. Conclusion
+
+This vignette demonstrated the complete RSM workflow in `iQualityR.doe`:
+
+* **Phase 1** — `compute_steepest_ascent()` moves the operating region
+  toward higher yield before committing to a second-order design.
+* **Phase 2** — `rsm_design(design_type = "ccd")` builds a rotatable CCD
+  capable of fitting the full quadratic model.
+* **Analysis** — `compute_stationary_point()` classifies the surface
+  (maximum, minimum, or saddle).
+* **Visualization** — `surface`, `contour`, `wireframe`, and `cube` plots
+  reveal the shape and sensitivity of the response surface.
+* **Robustness** — `ridge_analysis()` handles stationary points outside
+  the design region via constrained optimization.
+* **Engineering export** — `get_uncoded_equation()` provides the
+  regression equation in actual engineering units.
+* **Multi-response** — `optimize_desirability()`, `find_pareto_frontier()`,
+  `rank_with_topsis()`, and `overlaid_contour` plots support trade-off
+  analysis across competing quality requirements.
+
+Together, these tools bring `iQualityR.doe` to feature parity with
+Minitab's RSM capabilities while adding modern multi-criteria
+optimization (Pareto + TOPSIS) that Minitab lacks natively.

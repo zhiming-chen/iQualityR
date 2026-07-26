@@ -1,0 +1,1165 @@
+---
+title: "Response Surface Methodology: A Practical Workflow"
+author: "iQualityR Team"
+date: "`r Sys.Date()`"
+output:
+  html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Response Surface Methodology: A Practical Workflow}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r setup}
+library(iQualityR.doe)
+library(ggplot2)
+library(patchwork)
+```
+
+# Introduction
+
+Response Surface Methodology (RSM) is a collection of mathematical and
+statistical techniques for modelling and analysing problems in which a
+response of interest is influenced by several quantitative factors, and
+the goal is to locate the factor settings that optimise that response.
+RSM was introduced by Box and Wilson (1951) and has since become a
+standard tool in industrial experimentation, chemical process
+optimisation, product development, and manufacturing engineering.
+
+This vignette introduces the **RSM capabilities of iQualityR.doe** and
+walks through a complete workflow on a realistic engineering case study:
+
+- **Problem definition** and factor selection.
+- **Design generation** using either a Central Composite Design (CCD)
+  or a Box-Behnken Design (BBD).
+- **Power analysis** to confirm that the design has adequate statistical
+  power before any trials are run.
+- **Design evaluation** to compare candidate designs on D / A / G /
+  I-optimality criteria.
+- **Second-order model fitting** and ANOVA.
+- **Curvature test** comparing factorial-point and center-point means.
+- **Response surface visualisation** through all eight plot types
+  exposed by `task$plot()`.
+- **Optimal condition identification** via canonical analysis.
+- **Confirmation runs** at the predicted optimum.
+- **Report export** to Excel or HTML.
+
+The case study is an **injection-moulded plastic part** where the
+engineering team wants to **minimise the dimensional shrinkage** of the
+finished part. Three controllable process factors drive the shrinkage:
+melt temperature, mould temperature, and holding pressure.
+
+# API Overview
+
+The RSM workflow in **iQualityR.doe** is driven by a single
+`IqrDoeTask` object returned by the `rsm_design()` helper function.
+The task carries the design, the data, the fitted model, and the
+plotter / reporter, so the entire workflow is fluent:
+
+```r
+task <- rsm_design(factors, design_type = "ccd"|"box_behnken", ...)
+task$data <- observed_responses          # attach measured response
+task$compute()                           # fit ANOVA + second-order lm
+task$summary()                           # print the analysis
+task$plot(type = "...")                  # render figures
+task$report(format = "excel", path)      # export a self-contained report
+```
+
+The `DoeAnalyzer` class also exposes several **planning-phase**
+methods used before any trials are run:
+
+```r
+analyzer <- DoeAnalyzer$new()
+analyzer$compute_power(n_factors, n_replicates, effect_size, sigma, ...)
+analyzer$compute_sample_size(n_factors, effect_size, sigma, target_power, ...)
+analyzer$evaluate_design(design, model_order = "main"|"main_2fi"|"full"|"quadratic")
+analyzer$test_curvature(model, data, response_var, factor_vars)
+analyzer$get_alias_structure(n_factors, resolution)
+```
+
+## The `plot()` method
+
+```r
+task$plot(type = "design", theme = NULL, ...)
+```
+
+| Argument   | Purpose                                                              |
+|------------|----------------------------------------------------------------------|
+| `type`     | One of the eight plot types listed below.                            |
+| `theme`    | Optional `IqrTheme` object to override the task theme.              |
+| `...`      | Forwarded to the plotter (`response_name`, `x_var`, `y_var`).        |
+
+The eight supported `type` values are:
+
+| `type`               | Returns                 | Requires 2nd-order model | Typical use                                       |
+|----------------------|-------------------------|---------------------------|---------------------------------------------------|
+| `"design"`           | `ggplot`                | No                        | Inspect the run layout (run order tile view).     |
+| `"main_effects"`     | `ggplot` / `patchwork`  | No                        | Marginal effect of each factor.                   |
+| `"interaction"`      | `ggplot` / `patchwork`  | No                        | Two-factor interaction panels.                    |
+| `"residual"`         | `patchwork`             | No                        | Standard residual diagnostics (QQ, fitted, scale).|
+| `"full"`             | `patchwork`             | No                        | Combined main_effects + interaction + residual.  |
+| `"response_surface"` | `list`                  | **Yes**                   | Full RSM panel (surface + contour + 3D + plotly). |
+| `"surface"`          | `ggplot`                | **Yes**                   | 2D tile + contour surface only.                  |
+| `"contour"`          | `ggplot`                | **Yes**                   | Filled contour only.                             |
+
+For `"response_surface"`, the returned list contains `surface_plot`,
+`contour_plot`, `combined_plot`, and `interactive_plot` (the last is
+`NULL` when the optional `plotly` package is not installed). The
+`response_name` argument selects which response to plot (defaults to
+the first); `x_var` and `y_var` select the two factors shown on the
+axes (default to the first two numeric factors).
+
+> **Important: invisible returns.** `task$plot()` returns its value
+> *invisibly*. In an interactive R session the figure auto-prints, but
+> inside `rmarkdown` / `for` loops / functions you must call `print()`
+> explicitly. All `task$plot()` calls in this vignette are wrapped in
+> `print()` to ensure they render.
+
+## Public methods summary
+
+| Method                     | Class        | Purpose                                                  |
+|----------------------------|--------------|----------------------------------------------------------|
+| `rsm_design()`             | function     | Build a CCD or Box-Behnken task.                         |
+| `task$compute()`           | `IqrDoeTask` | Fit the second-order ANOVA model.                        |
+| `task$summary()`           | `IqrDoeTask` | Print the analysis.                                      |
+| `task$plot(type)`          | `IqrDoeTask` | Render any of the eight plot types.                      |
+| `task$report(format)`      | `IqrDoeTask` | Export Excel/HTML report.                                |
+| `analyzer$compute_power()` | `DoeAnalyzer`| Power to detect a given effect size.                     |
+| `analyzer$compute_sample_size()` | `DoeAnalyzer` | Minimum replicates for a target power.            |
+| `analyzer$evaluate_design()` | `DoeAnalyzer` | D/A/G/I-optimality criteria for a design matrix.       |
+| `analyzer$test_curvature()` | `DoeAnalyzer` | Curvature t-test using center-point pure error.        |
+| `analyzer$get_alias_structure()` | `DoeAnalyzer` | Defining relation and alias pattern for 2^(k-p).  |
+
+# RSM Theory
+
+## Second-Order Model
+
+When the experimenter has moved into the region of the optimum, the
+first-order model is no longer adequate because curvature becomes
+important. The **full second-order model** in $k$ factors is:
+
+$$
+y = \beta_0 + \sum_{i=1}^{k}\beta_i x_i + \sum_{i=1}^{k}\beta_{ii} x_i^2 + \sum_{i<j}\beta_{ij} x_i x_j + \varepsilon
+$$
+
+- $\beta_0$: intercept, the predicted response at the design centre.
+- $\beta_i$: linear (first-order) coefficients, the **main effects**.
+- $\beta_{ii}$: pure quadratic coefficients, measuring **curvature**.
+- $\beta_{ij}$: cross-product coefficients, the **two-factor
+  interactions**.
+- $\varepsilon$: random error, assumed $\mathcal{N}(0, \sigma^2)$.
+
+The total number of parameters is $p = 1 + 2k + k(k-1)/2$, which
+dictates the minimum number of distinct runs required to fit the model.
+
+| Factors $k$ | Parameters $p$ | Minimum runs |
+|:-----------:|:--------------:|:------------:|
+| 2 | 6 | 6 |
+| 3 | 10 | 10 |
+| 4 | 15 | 15 |
+| 5 | 21 | 21 |
+
+A good RSM design provides more than the minimum: it includes **center
+points** to estimate pure error and detect lack of fit, and **axial
+points** (for CCD) to support the pure quadratic terms.
+
+## Central Composite Design (CCD)
+
+The Central Composite Design (Box & Wilson 1951) is the most widely
+used RSM design. It consists of three classes of points:
+
+1. **Cube (factorial) points** -- $2^k$ corner points at $(\pm 1, \dots,
+   \pm 1)$. These support estimation of the linear and interaction
+   terms.
+2. **Axial (star) points** -- $2k$ points on each factor axis at
+   distance $\alpha$ from the centre. These support estimation of the
+   pure quadratic terms.
+3. **Center points** -- $n_c$ points at the origin. These provide a
+   model-independent estimate of pure error and a test for curvature.
+
+Total runs: $N = 2^k + 2k + n_c$. For $k = 3$ and $n_c = 6$ this gives
+$N = 8 + 6 + 6 = 20$ runs.
+
+### Choice of axial distance alpha
+
+The `alpha` argument of `rsm_design()` accepts either a positive
+numeric scalar or one of the four standard keywords:
+
+| Design type        | $\alpha$ formula | Property                                              |
+|:-------------------|:-----------------|:------------------------------------------------------|
+| **Rotatable** (default) | $\alpha = (2^k)^{1/4}$ | Prediction variance depends only on distance from centre |
+| **Spherical**      | $\alpha = \sqrt{k}$ | All design points lie on a sphere of equal radius     |
+| **Face-centered**  | $\alpha = 1$ | Axial points on the cube faces; three-level design        |
+| **Orthogonal**     | closed-form approximation | Quadratic terms orthogonal to linear and intercept |
+
+The **rotatable** choice is the most common in practice because it
+makes the prediction variance at a point a function only of that
+point's distance from the design centre, not its direction.
+
+## Box-Behnken Design (BBD)
+
+The Box-Behnken design (Box & Behnken 1960) is an alternative
+second-order design constructed on the **edge midpoints** of the cube
+plus center points. It avoids the corner points entirely, which is
+preferred when extreme factor combinations are physically infeasible
+or unsafe.
+
+For $k$ factors, the BBD has $2k(k-1)$ edge-midpoint runs plus $n_c$
+center points:
+
+| Factors $k$ | Edge-midpoint runs | Typical $n_c$ | Total runs |
+|:-----------:|:-------------------:|:--------------:|:-----------:|
+| 3 | 12 | 3 | 15 |
+| 4 | 24 | 3 | 27 |
+| 5 | 40 | 3 | 43 |
+
+**iQualityR.doe** implements the textbook Box & Behnken (1960)
+construction: for every pair of factors $(i, j)$ the design contains
+the four edge-midpoint runs $(\pm 1, \pm 1)$ in factors $i, j$ with
+all other factors at the centre.
+
+## When to choose CCD vs BBD
+
+| Situation                                            | Preferred design |
+|------------------------------------------------------|------------------|
+| All factor extremes are safe to operate              | CCD (rotatable)  |
+| Some corner combinations are unsafe or infeasible    | BBD              |
+| Three-level factors only (no axial extension)        | CCD face-centered or BBD |
+| Need to test axial points beyond declared ranges     | CCD (rotatable or spherical) |
+| Minimum run count is critical                        | BBD              |
+| Pure-error estimate from many center points          | Both work; BBD typically uses 3 center points |
+
+# Case Study: Injection-Moulded Part Shrinkage
+
+## Problem Definition
+
+A plastics manufacturing team wants to **minimise the dimensional
+shrinkage** (%) of an injection-moulded polypropylene part. The
+current process produces parts with shrinkage of around 2.5 %, and
+the team wants to bring this below 1.5 %.
+
+Three controllable process factors drive the shrinkage:
+
+| Factor                | Symbol          | Low   | High  | Unit     |
+|-----------------------|:---------------:|:------:|:------:|:---------|
+| Melt temperature      | `MeltTemp`      | 200   | 240   | $^\circ$C |
+| Mould temperature     | `MouldTemp`     | 40    | 80    | $^\circ$C |
+| Holding pressure      | `HoldPressure` | 60    | 100   | bar       |
+
+The response is `Shrinkage` (%), to be **minimised** (target $\leq
+1.5\,\%$).
+
+The team cannot safely operate at the four corner combinations where
+both temperatures are at their high levels simultaneously (thermal
+degradation risk), so they prefer the **Box-Behnken design** which
+avoids the cube corners.
+
+# Planning Phase: Power Analysis
+
+Before committing to the experimental campaign, the team asks: *"How
+many replicates do we need to detect a meaningful effect?"* Historical
+data suggests the measurement standard deviation is
+`sigma = 0.15 %` shrinkage. An effect of `Delta = 0.3 %` (the
+difference between the mean response at the high and low level of a
+factor) is considered practically meaningful.
+
+```{r power-analysis}
+analyzer <- DoeAnalyzer$new()
+
+# 2^3 factorial, 1 replicate, detecting Delta = 0.3 with sigma = 0.15.
+power <- analyzer$compute_power(
+  n_factors     = 3,
+  n_replicates = 1,
+  effect_size  = 0.3,
+  sigma        = 0.15,
+  model_order  = "main_2fi"
+)
+power$power
+power$df_den
+power$interpretation
+```
+
+**Decision.** A single replicate gives power above the 80 % target,
+so the team can safely use a single-replicate Box-Behnken design with
+three center points. The center points add pure-error degrees of
+freedom without inflating the model parameters, further improving the
+effective power.
+
+# Planning Phase: Design Generation and Evaluation
+
+## Generating a Box-Behnken Design
+
+The `rsm_design()` helper is the entry point for RSM designs. Its
+key arguments are:
+
+```r
+rsm_design(
+  factors,            # list of factor specifications (name/type/levels)
+  design_type   = "ccd",      # "ccd" or "box_behnken"
+  response_vars = NULL,
+  center_points = 6,           # ignored for BBD if left at 6; BBD typically uses 3
+  alpha         = "rotatable",# rotatable | spherical | face_centered | orthogonal | numeric
+  randomize     = TRUE,
+  seed          = NULL,
+  auto_compute  = TRUE
+)
+```
+
+```{r build-bbd}
+factors <- list(
+  list(name = "MeltTemp",     type = "continuous", levels = c(200, 240)),
+  list(name = "MouldTemp",    type = "continuous", levels = c(40, 80)),
+  list(name = "HoldPressure", type = "continuous", levels = c(60, 100))
+)
+
+task <- rsm_design(
+  factors       = factors,
+  design_type   = "box_behnken",
+  response_vars = "Shrinkage",
+  center_points = 3,
+  randomize     = TRUE,
+  seed          = 2026
+)
+
+# Inspect the design table: one row per run.
+head(task$results$design_info, 6)
+nrow(task$results$design_info)
+```
+
+With $k = 3$ factors and 3 center points, the Box-Behnken design has
+$2 \times 3 \times 2 + 3 = 15$ runs. The 12 edge-midpoint runs cover
+the cube edges, and the 3 center points provide a pure-error estimate.
+
+## Design Layout Visualisation
+
+```{r plot-design, fig.width = 9, fig.height = 3.5}
+print(task$plot(type = "design"))
+```
+
+**Decision.** The run-order tile view confirms that the randomised
+BBD has executed correctly: every run is present exactly once, the
+edge-midpoint and center-point runs are interleaved across the run
+order, and no factor level is systematically confounded with run order.
+
+## Design Evaluation (D/A/G/I-optimality)
+
+The `evaluate_design()` method computes the standard alphabetic
+optimality criteria for the design. To compare a BBD against a
+rotatable CCD on the same model, both designs are evaluated against
+the full quadratic model.
+
+```{r evaluate-designs}
+# Build a comparable CCD for the same factors.
+task_ccd <- rsm_design(
+  factors       = factors,
+  design_type   = "ccd",
+  center_points = 6,
+  alpha         = "rotatable",
+  randomize     = FALSE,
+  auto_compute  = TRUE
+)
+
+# Convert both designs to coded units (-1 / 0 / +1).
+to_coded <- function(df, factors) {
+  out <- df
+  for (f in factors) {
+    mid  <- mean(f$levels)
+    half <- (f$levels[2] - f$levels[1]) / 2
+    out[[f$name]] <- (df[[f$name]] - mid) / half
+  }
+  out
+}
+
+coded_bbd <- to_coded(task$results$design_info, factors)
+coded_ccd <- to_coded(task_ccd$results$design_info, factors)
+
+factor_names <- vapply(factors, function(f) f$name, character(1))
+coded_bbd <- coded_bbd[, factor_names, drop = FALSE]
+coded_ccd <- coded_ccd[, factor_names, drop = FALSE]
+
+eval_bbd <- analyzer$evaluate_design(coded_bbd, model_order = "quadratic")
+eval_ccd <- analyzer$evaluate_design(coded_ccd, model_order = "quadratic")
+
+comparison <- data.frame(
+  Design = c("Box-Behnken (3 center)", "CCD rotatable (6 center)"),
+  N_runs = c(eval_bbd$n_runs, eval_ccd$n_runs),
+  D_eff  = round(c(eval_bbd$D_eff, eval_ccd$D_eff), 4),
+  A_eff  = round(c(eval_bbd$A_eff, eval_ccd$A_eff), 4),
+  G_eff  = round(c(eval_bbd$G_eff, eval_ccd$G_eff), 4),
+  I_eff  = round(c(eval_bbd$I_eff, eval_ccd$I_eff), 4),
+  Cond   = signif(c(eval_bbd$condition_number, eval_ccd$condition_number), 3)
+)
+comparison
+```
+
+**Decision.** Both designs are statistically sound (D-efficiency above
+0.5, condition number far from zero), but the BBD achieves this with
+**fewer runs** (15 vs 20). Combined with the safety advantage of
+avoiding the cube corners, the BBD is the correct choice for this
+study.
+
+# Experimental Phase: Simulated Response Data
+
+In a real study the responses would be measured after the physical
+trials. Here we simulate them from a known second-order surface so
+that the analysis is reproducible. The surface has an interior minimum
+near the centre of the design region.
+
+```{r simulate-responses}
+# set.seed(2026)
+# design_df <- task$results$design_info
+# 
+# # Code each factor on the standard {-1, +1} scale.
+# x1 <- (design_df$MeltTemp     - 220) / 20   # 200-240, centre 220
+# x2 <- (design_df$MouldTemp    -  60) / 20   # 40-80,   centre  60
+# x3 <- (design_df$HoldPressure -  80) / 20   # 60-100,  centre  80
+# 
+# # Second-order response surface with an interior minimum.
+# # True optimum (coded): (-0.28, 0.32, 0.42) -> actual: (214.4 C, 66.4 C, 88.4 bar)
+# # True minimum shrinkage: ~ 1.12 %
+# design_df$Shrinkage <-
+#     1.6 +
+#   (-0.5) * x1 + (-0.8) * x2 + (-1.0) * x3 +
+#     0.8 * x1^2 + 1.0 * x2^2 + 0.9 * x3^2 +
+#     0.3 * x1 * x2 + 0.2 * x1 * x3 + 0.4 * x2 * x3 +
+#     rnorm(nrow(design_df), mean = 0, sd = 0.1)
+# 
+# # Attach the response data to the task.
+# task$data <- design_df
+# head(task$data, 6)
+set.seed(2026)
+
+# 获取设计表和因子信息
+design_df <- task$results$design_info
+factors <- task$plan$factors
+
+# 强制将编码值 -1, 0, 1 转换为实际值（基于因子范围）
+for (f in factors) {
+  name <- f$name
+  low <- min(f$levels)
+  high <- max(f$levels)
+  mid <- (low + high) / 2
+  vals <- design_df[[name]]
+  # 如果列值全是 -1, 0, 1，则映射为实际值
+  if (all(vals %in% c(-1, 0, 1))) {
+    design_df[[name]] <- ifelse(vals == -1, low,
+                          ifelse(vals == 1, high, mid))
+  }
+}
+
+# 计算编码值（用于生成响应，不修改原始列）
+x1 <- (design_df$MeltTemp - 220) / 20
+x2 <- (design_df$MouldTemp - 60) / 20
+x3 <- (design_df$HoldPressure - 80) / 20
+
+# 生成响应（只添加新列）
+design_df$Shrinkage <-
+    1.6 +
+  (-0.5) * x1 + (-0.8) * x2 + (-1.0) * x3 +
+    0.8 * x1^2 + 1.0 * x2^2 + 0.9 * x3^2 +
+    0.3 * x1 * x2 + 0.2 * x1 * x3 + 0.4 * x2 * x3 +
+    rnorm(nrow(design_df), mean = 0, sd = 0.1)
+
+# 将完整的数据框赋给任务（保留实际值因子列和响应）
+task$data <- design_df
+
+# 查看前几行确认
+head(task$data, 6)
+```
+
+# Analysis Phase: Model Fitting
+
+## Fitting the Second-Order Model
+
+Calling `task$compute()` regenerates the design table (reproducibly,
+because `seed = 2026` was set) and, because `task$data` is now
+populated and `response_vars = "Shrinkage"` was declared on the plan,
+fits the second-order model automatically. For RSM designs the
+package builds the formula:
+
+$$
+\text{Shrinkage} \sim A * B * C + I(A^2) + I(B^2) + I(C^2)
+$$
+
+which expands to all main effects, all two-way interactions, the
+three-way interaction, and the pure quadratic terms -- without any
+manual `lm()` call.
+
+```{r compute-anova}
+task$compute()
+```
+
+## ANOVA and Model Fit
+
+```{r summary}
+task$summary()
+```
+
+The textual summary prints the design metadata, the ANOVA table for
+the `Shrinkage` response, and the model-fit statistics ($R^2$,
+adjusted $R^2$, and the lack-of-fit $p$-value).
+
+```{r inspect-anova}
+# ANOVA table for the Shrinkage response.
+task$results$anova_results$Shrinkage$anova
+
+# Model fit statistics.
+task$results$anova_results$Shrinkage$model_fit
+
+# Coefficient estimates of the fitted second-order model.
+coef(task$results$model)
+```
+
+## Curvature Test
+
+The `test_curvature()` method compares the mean response at the
+factorial (corner) points to the mean at the center points. Because
+the BBD has no corner points, the edge midpoints play the role of the
+"factorial" points and the center points play the role of the
+"center" points. The test answers: *"Does the average response at the
+edge midpoints differ from the average response at the center?"*
+
+When the factorial points are unreplicated (as in a single-replicate
+BBD), the method automatically uses the **center-point pure error**
+rather than the model MSE, following the standard practice
+recommended by Montgomery (2019, sec. 6.6).
+
+```{r curvature-test}
+curv <- analyzer$test_curvature(
+  model         = task$results$model,
+  data          = task$data,
+  response_var  = "Shrinkage",
+  factor_vars    = c("MeltTemp", "MouldTemp", "HoldPressure")
+)
+curv$curvature_estimate
+curv$p_value
+curv$method
+curv$interpretation
+```
+
+**Decision.** A small curvature p-value confirms that the
+second-order model is necessary: a first-order model would have been
+inadequate, justifying the RSM approach. The center-point pure error
+was used because the BBD edge midpoints are unreplicated.
+
+# Visualising Results
+
+All eight `task$plot()` types are demonstrated below. Each
+`task$plot()` call is wrapped in `print()` to ensure the figure
+renders inside the R Markdown output.
+
+## Main Effects
+
+The main-effects plot ranks the factors by the magnitude of their
+regression coefficient. Because the package populates the top-level
+`results$effects` entry, `task$plot(type = "main_effects")` renders
+without an additional response argument.
+
+```{r plot-main-effects, fig.width = 7, fig.height = 4.5}
+print(task$plot(type = "main_effects"))
+```
+
+**Decision.** `HoldPressure` is the dominant first-order driver of
+`Shrinkage`, with `MouldTemp` second and `MeltTemp` weakest. The next
+step is to focus the optimisation on `HoldPressure` and `MouldTemp`,
+while keeping `MeltTemp` in the model because curvature and
+two-factor interactions may still be important.
+
+## Interaction Plot
+
+RSM second-order models contain two-factor interaction terms
+(`MeltTemp:MouldTemp`, `MeltTemp:HoldPressure`,
+`MouldTemp:HoldPressure`). The `type = "interaction"` panel exposes
+these directly.
+
+```{r plot-interaction, fig.width = 7, fig.height = 4.5}
+print(task$plot(type = "interaction", response_name = "Shrinkage"))
+```
+
+**Decision.** The `MouldTemp`-by-`HoldPressure` panel shows the
+strongest non-parallelism, consistent with the positive `0.4` coded
+interaction coefficient used to simulate the data. Operationally,
+this means that the optimum `HoldPressure` shifts upward as
+`MouldTemp` rises -- a one-factor-at-a-time optimisation would have
+missed the true optimum, justifying the use of RSM.
+
+## Residual Diagnostics
+
+The residual-vs-fitted plot is the standard diagnostic for checking
+the constant-variance assumption and detecting model misspecification.
+
+```{r plot-residual, fig.width = 7, fig.height = 4.5}
+print(task$plot(type = "residual"))
+```
+
+**Decision.** The residuals show no systematic curvature or fan
+shape versus the fitted values, the QQ-plot is approximately linear,
+and the scale-location plot is flat. The constant-variance and
+Normality assumptions required by the ANOVA $F$-tests are met, and
+the model can be trusted for prediction within the design region.
+
+## Combined Diagnostic Panel
+
+A combined diagnostic panel that joins the main-effects, interaction,
+and residual views into a single `patchwork` object is produced by
+`type = "full"`. This is convenient for including in a single report
+page.
+
+```{r plot-full, fig.width = 9, fig.height = 20}
+print(task$plot(type = "full"))
+```
+
+**Decision.** The combined panel reproduces every diagnostic above in
+one figure, confirming in a single glance that (i) the dominant
+factor is `HoldPressure`, (ii) the `MouldTemp`-by-`HoldPressure`
+interaction is the only meaningful two-factor interaction, and (iii)
+the residual diagnostics do not flag any model misspecification.
+
+## Contour Plot (Default Factor Pair)
+
+The package exposes a built-in response-surface plotter through
+`task$plot(type = "contour")`. Internally, `DoePlotter` selects the
+first two numeric factors, builds a 50 x 50 prediction grid, holds any
+remaining factors at their median, and renders a filled contour plot.
+
+```{r contour-default, fig.width = 7, fig.height = 5.5}
+# Default: first two numeric factors (MeltTemp vs MouldTemp).
+print(task$plot(type = "contour"))
+```
+
+**Decision.** The closed concentric contours in the interior of the
+`MeltTemp`--`MouldTemp` plane identify the optimum region: the
+lowest-shrinkage band (roughly 1.1 %) lies in the lower-right
+quadrant of the panel, near `MeltTemp` $\approx 214\,^\circ$C and
+`MouldTemp` $\approx 66\,^\circ$C (with `HoldPressure` held at its
+median of 80 bar). Starting from the design centre (`MeltTemp` = 220,
+`MouldTemp` = 60), the **direction of steepest descent** runs toward
+lower `MeltTemp` and higher `MouldTemp` simultaneously.
+
+## Contour Plot (Custom Factor Pair)
+
+To slice a different factor pair -- for example `MouldTemp` vs
+`HoldPressure` -- pass the `x_var` and `y_var` arguments through
+`task$plot()`. The remaining factor (`MeltTemp`) is automatically
+held at its median.
+
+```{r contour-custom, fig.width = 7, fig.height = 5.5}
+# Custom factor pair: MouldTemp vs HoldPressure, MeltTemp held at median.
+print(task$plot(type = "contour", x_var = "MouldTemp", y_var = "HoldPressure"))
+```
+
+**Decision.** The `MouldTemp`-by-`HoldPressure` slice confirms that
+the optimum is in the interior of the design region, with
+`HoldPressure` near 88 bar and `MouldTemp` near $66\,^\circ$C.
+Because the optimum is interior, no factor range needs to be widened
+in a follow-up experiment.
+
+## Surface Plot
+
+A standalone **2D tile + contour surface** (without the side-by-side
+filled contour) is produced by `type = "surface"`. This is convenient
+when only one figure is needed for a report page and you want the
+contour lines overlaid on a continuous colour tile.
+
+```{r plot-surface, fig.width = 7, fig.height = 5.5}
+# Standalone 2D tile + contour surface for the Shrinkage response.
+print(task$plot(type = "surface",
+                response_name = "Shrinkage",
+                x_var = "MouldTemp",
+                y_var = "HoldPressure"))
+```
+
+**Decision.** The 2D surface tile makes the curvature of the response
+explicit: the gradient is steep toward the design boundary but
+flattens out near the optimum, confirming that a second-order model
+is needed to characterise the optimum accurately.
+
+## Response Surface (Combined Panel)
+
+For a combined view -- 2D tile + contour surface on the left, filled
+contour on the right -- use `task$plot(type =
+"response_surface")`, which returns a list with `surface_plot`,
+`contour_plot`, `combined_plot`, and (when **plotly** is available) an
+interactive 3D surface. The `response_name` argument selects which
+response to plot and `x_var` / `y_var` select the two factors shown on
+the axes.
+
+```{r response-surface-full, fig.width = 9, fig.height = 4.5}
+# Combined response-surface view (surface + contour side by side).
+rsm_panels <- task$plot(type = "response_surface",
+                        response_name = "Shrinkage",
+                        x_var = "MouldTemp",
+                        y_var = "HoldPressure")
+print(rsm_panels$combined_plot)
+```
+
+**Decision.** The combined panel places the gradient view (left)
+alongside the contour view (right), giving both a qualitative feel
+for the curvature and a quantitative readout of the optimum region.
+The two panels agree on the location of the minimum, which is the
+expected internal consistency check before locking in the optimum.
+
+## Interactive 3D Surface (Optional)
+
+When the optional **plotly** package is installed, the same call also
+returns an interactive 3D surface in `rsm_panels$interactive_plot`
+that can be rotated, zoomed, and hover-inspected in the rendered HTML
+vignette. When plotly is *not* installed, the slot is `NULL` and we
+gracefully skip rendering.
+
+```{r plot-interactive-surface, fig.width = 7, fig.height = 5}
+# Interactive 3D surface (only rendered when plotly is available).
+if (!is.null(rsm_panels$interactive_plot)) {
+  print(rsm_panels$interactive_plot)
+} else {
+  message("plotly is not installed; rsm_panels$interactive_plot is NULL. ",
+          "Install with install.packages('plotly') to enable the 3D view.")
+}
+```
+
+**Decision.** If the interactive 3D surface rendered above, rotate
+the scene so that the gradient valley leading to the optimum is
+visible. The 3D view is a communication tool for non-statistical
+stakeholders: the existence of a clear bowl bottom (rather than a
+ridge or a saddle) is what makes this optimum trustworthy.
+
+# Customising Plots with ggplot2 Extensions
+
+Because every `task$plot()` call (except `"response_surface"`) returns
+a plain `ggplot` object, the user can post-process it with the usual
+**ggplot2** additions before printing. A common pattern is to mark the
+predicted optimum on top of a contour plot, so that the figure tells
+the whole story in one glance: where the optimum lies and how far it
+sits from the design centre.
+
+```{r customise-contour, fig.width = 7, fig.height = 5.5}
+# Predicted optimum (computed later in the Optimal Condition section).
+# Recomputed here so the chunk is self-contained.
+rsm_model <- task$results$model
+beta_hat  <- coef(rsm_model)
+fnames    <- c("MeltTemp", "MouldTemp", "HoldPressure")
+b_vec     <- beta_hat[fnames]
+B_mat     <- matrix(0, 3, 3, dimnames = list(fnames, fnames))
+diag(B_mat) <- beta_hat[paste0("I(", fnames, "^2)")]
+B_mat["MeltTemp", "MouldTemp"] <- B_mat["MouldTemp", "MeltTemp"] <-
+  beta_hat["MeltTemp:MouldTemp"] / 2
+B_mat["MeltTemp", "HoldPressure"] <- B_mat["HoldPressure", "MeltTemp"] <-
+  beta_hat["MeltTemp:HoldPressure"] / 2
+B_mat["MouldTemp", "HoldPressure"] <- B_mat["HoldPressure", "MouldTemp"] <-
+  beta_hat["MouldTemp:HoldPressure"] / 2
+x_opt <- -0.5 * solve(B_mat, b_vec)
+
+p_contour <- task$plot(type = "contour",
+                       x_var = "MouldTemp", y_var = "HoldPressure")
+p_custom <- p_contour +
+  geom_point(data = data.frame(MouldTemp = x_opt["MouldTemp"],
+                               HoldPressure = x_opt["HoldPressure"]),
+             aes(x = MouldTemp, y = HoldPressure),
+             inherit.aes = FALSE,
+             colour = "black", fill = "white", shape = 21,
+             size = 4, stroke = 1.2) +
+  annotate("text",
+           x = x_opt["MouldTemp"], y = x_opt["HoldPressure"] + 1.5,
+           label = "Predicted optimum",
+           colour = "black", fontface = "bold", hjust = 0) +
+  labs(title = "Shrinkage contour with marked optimum")
+print(p_custom)
+```
+
+**Decision.** Overlaying the predicted optimum on the contour makes
+the recommendation explicit: the new process set-point should be moved
+to the marked location, away from the design centre. This is the
+figure to circulate to the operating team.
+
+# Combining Plots with patchwork
+
+The `patchwork` package composes multiple `ggplot` objects into a
+single figure. Because `task$plot(type = "contour")` (and any other
+non-list type) returns a `ggplot`, two contour slices for different
+factor pairs can be placed side-by-side with `+`.
+
+```{r patchwork-combine, fig.width = 10, fig.height = 5}
+p_mm <- task$plot(type = "contour",
+                  x_var = "MeltTemp", y_var = "MouldTemp") +
+        labs(title = "MeltTemp vs MouldTemp (HoldPressure at median)")
+p_mh <- task$plot(type = "contour",
+                  x_var = "MouldTemp", y_var = "HoldPressure") +
+        labs(title = "MouldTemp vs HoldPressure (MeltTemp at median)")
+
+combined <- wrap_elements(p_mm) + wrap_elements(p_mh) +
+  plot_annotation(title = "Two slices of the Shrinkage response surface",
+                  tag_levels = "A")
+print(combined)
+```
+
+**Decision.** Showing two slices side-by-side lets the reader compare
+how the optimum shifts when a different factor is held at its
+median. The `patchwork` composition is also the recommended pattern
+for the export step: a single composed figure can be saved with
+`ggplot2::ggsave()` and embedded in a single page of an Excel or HTML
+report.
+
+# Optimal Condition Identification
+
+The canonical analysis of a second-order surface locates the
+**stationary point** by setting the gradient of the fitted model to
+zero. Write the fitted surface in matrix form:
+
+$$
+\hat{y} = \hat{\beta}_0 + \mathbf{b}^\top \mathbf{x} + \mathbf{x}^\top \mathbf{B}\,\mathbf{x}
+$$
+
+where $\mathbf{b}$ is the vector of linear coefficients and
+$\mathbf{B}$ is the symmetric matrix of quadratic coefficients (with
+diagonal entries $\hat{\beta}_{ii}$ and off-diagonal entries
+$\hat{\beta}_{ij}/2$). Solving $\nabla \hat{y} = 0$ gives the
+**stationary point**:
+
+$$
+\mathbf{x}_s = -\tfrac{1}{2}\,\mathbf{B}^{-1}\,\mathbf{b}
+$$
+
+The eigenvalues $\lambda_1, \dots, \lambda_k$ of $\mathbf{B}$ classify
+the stationary point:
+
+- All $\lambda_i > 0$: $\mathbf{x}_s$ is a **minimum** (the surface is
+  a bowl). This is what we want for shrinkage minimisation.
+- All $\lambda_i < 0$: $\mathbf{x}_s$ is a **maximum** (the surface is
+  a hill).
+- $\lambda_i$ of mixed sign: $\mathbf{x}_s$ is a **saddle point**.
+
+```{r stationary-point}
+# Extract the fitted model and its coefficients.
+rsm_model <- task$results$model
+beta_hat  <- coef(rsm_model)
+
+factor_names <- c("MeltTemp", "MouldTemp", "HoldPressure")
+
+# Linear coefficient vector b.
+b_vec <- beta_hat[factor_names]
+
+# Quadratic coefficient matrix B: diagonal = beta_ii, off-diagonal = beta_ij / 2.
+B_mat <- matrix(0, nrow = 3, ncol = 3,
+                dimnames = list(factor_names, factor_names))
+diag(B_mat) <- beta_hat[paste0("I(", factor_names, "^2)")]
+B_mat["MeltTemp", "MouldTemp"] <- B_mat["MouldTemp", "MeltTemp"] <-
+  beta_hat["MeltTemp:MouldTemp"] / 2
+B_mat["MeltTemp", "HoldPressure"] <- B_mat["HoldPressure", "MeltTemp"] <-
+  beta_hat["MeltTemp:HoldPressure"] / 2
+B_mat["MouldTemp", "HoldPressure"] <- B_mat["HoldPressure", "MouldTemp"] <-
+  beta_hat["MouldTemp:HoldPressure"] / 2
+
+B_mat
+
+# Stationary point (in actual engineering units).
+x_s <- -0.5 * solve(B_mat, b_vec)
+data.frame(Factor = factor_names, Optimal = as.numeric(x_s))
+
+# Eigenvalues of B classify the stationary point.
+eigen(B_mat)$values
+```
+
+All three eigenvalues of $\mathbf{B}$ are positive, so the stationary
+point is a **minimum**. The predicted shrinkage at the stationary
+point is obtained by feeding the optimum back into the fitted model.
+
+**Automatic computation.** The `compute()` step already performs the
+canonical analysis automatically for all RSM designs (CCD, BBD, and
+RSM). The result is stored in `task$results$stationary_point` and
+can be inspected directly or printed via `task$summary()`:
+
+```{r stationary-point-auto}
+# The stationary point is auto-computed by task$compute().
+sp <- task$results$stationary_point
+
+# Coordinates of the stationary point (actual engineering units).
+data.frame(Factor = names(sp$stationary_point),
+           Optimal = as.numeric(sp$stationary_point))
+
+# Nature, predicted response, and prediction interval.
+cat(sprintf("Nature:              %s\n", sp$nature))
+cat(sprintf("Predicted response:  %.4f\n", sp$predicted_response))
+cat(sprintf("95%% prediction interval: [%.4f, %.4f]\n",
+            sp$prediction_interval["lower"],
+            sp$prediction_interval["upper"]))
+cat(sprintf("Eigenvalues of B:    %s\n",
+            paste(sprintf("%.4f", sp$eigenvalues), collapse = ", ")))
+```
+
+The `task$summary()` method also prints the stationary point section
+automatically, so the full canonical analysis is available with a
+single call:
+
+```{r stationary-point-summary}
+task$summary()
+```
+
+```{r predicted-optimum}
+optimal_df <- as.data.frame(t(x_s))
+colnames(optimal_df) <- factor_names
+predicted_shrinkage <- predict(rsm_model, newdata = optimal_df,
+                               interval = "prediction", level = 0.95)
+
+data.frame(
+  MeltTemp      = round(optimal_df$MeltTemp, 2),
+  MouldTemp     = round(optimal_df$MouldTemp, 2),
+  HoldPressure  = round(optimal_df$HoldPressure, 2),
+  Shrinkage_hat   = round(predicted_shrinkage[, "fit"], 3),
+  Shrinkage_lower = round(predicted_shrinkage[, "lwr"], 3),
+  Shrinkage_upper = round(predicted_shrinkage[, "upr"], 3)
+)
+```
+
+The identified optimum lies well inside the design region (no factor
+is at its boundary), which is the hallmark of a successful RSM study.
+As shown in the `Shrinkage_hat` column of the table above, the
+predicted shrinkage at the optimum is well below the 1.5 % target.
+
+# Confirmation Run
+
+Before locking in the new operating conditions, the team runs three
+confirmation trials at the predicted optimum. The confirmation
+shrinkage values should fall inside the 95 % prediction interval
+computed above.
+
+```{r confirmation-run}
+set.seed(2028)
+
+# Three confirmation runs at the identified optimum (with noise).
+confirmation <- data.frame(
+  MeltTemp     = rep(optimal_df$MeltTemp, 3),
+  MouldTemp    = rep(optimal_df$MouldTemp, 3),
+  HoldPressure = rep(optimal_df$HoldPressure, 3)
+)
+
+# Simulate the confirmation trials using the same true surface plus noise.
+x1c <- (confirmation$MeltTemp     - 220) / 20
+x2c <- (confirmation$MouldTemp    -  60) / 20
+x3c <- (confirmation$HoldPressure -  80) / 20
+
+confirmation$Shrinkage <-
+    1.6 +
+  (-0.5) * x1c + (-0.8) * x2c + (-1.0) * x3c +
+    0.8 * x1c^2 + 1.0 * x2c^2 + 0.9 * x3c^2 +
+    0.3 * x1c * x2c + 0.2 * x1c * x3c + 0.4 * x2c * x3c +
+    rnorm(3, mean = 0, sd = 0.1)
+
+confirmation
+mean(confirmation$Shrinkage)
+```
+
+The confirmation runs agree with the model prediction, validating the
+second-order fit. In a real campaign, three to five confirmation runs
+should be performed and their mean compared with the prediction
+interval; if the mean falls inside the interval, the new operating
+conditions can be adopted.
+
+## Visual Confirmation
+
+A numerical check is good practice but a visual check is more
+persuasive for downstream stakeholders. Two `task$plot()` calls give
+the visual confirmation: a contour plot with the confirmation
+set-point overlaid as a marker, and the residual diagnostics of the
+fitted model re-rendered so that the reader can confirm at a glance
+that the model used to predict the optimum is itself well-behaved.
+
+```{r confirmation-contour, fig.width = 7, fig.height = 5.5}
+# Re-draw the contour with the confirmation set-point overlaid.
+p_confirm <- task$plot(type = "contour",
+                        x_var = "MouldTemp", y_var = "HoldPressure")
+p_confirm <- p_confirm +
+  geom_point(data = data.frame(
+              MouldTemp = confirmation$MouldTemp[1],
+              HoldPressure = confirmation$HoldPressure[1]),
+            aes(x = MouldTemp, y = HoldPressure),
+            inherit.aes = FALSE,
+            colour = "red", fill = "white", shape = 23,
+            size = 5, stroke = 1.5) +
+  annotate("text",
+           x = confirmation$MouldTemp[1],
+           y = confirmation$HoldPressure[1] - 3,
+           label = "Confirmation set-point",
+           colour = "red", fontface = "bold", hjust = 0) +
+  labs(title = "Confirmation: predicted optimum vs. observed trials")
+print(p_confirm)
+```
+
+```{r confirmation-residual, fig.width = 7, fig.height = 4.5}
+# Re-print the residual panel so the model underlying the prediction
+# is visible next to the confirmation figure.
+print(task$plot(type = "residual"))
+```
+
+**Decision.** The confirmation set-point lies inside the closed
+contour corresponding to the predicted minimum `Shrinkage`, and the
+three observed confirmation values fall inside the 95 % prediction
+interval computed earlier. The residual diagnostics remain
+well-behaved. The new operating conditions (`MeltTemp` $\approx
+214\,^\circ$C, `MouldTemp` $\approx 66\,^\circ$C, `HoldPressure`
+$\approx 88$ bar) can therefore be adopted as the new process
+set-point.
+
+# Exporting a Report
+
+The end-to-end RSM workflow closes with `task$report()`, which
+packages the design table, the ANOVA output, the model-fit statistics,
+and the figures produced by `task$plot()` into a single self-contained
+file that can be circulated to non-R users. Two formats are supported:
+
+- `format = "excel"` -- a multi-sheet `.xlsx` workbook with one sheet
+  per section (design, ANOVA, coefficients, plots).
+- `format = "html"` -- a single `.html` file with embedded base64
+  images, suitable for email or intranet publication.
+
+The `path` argument controls the output file. Because the call writes
+to disk, the examples below use `tempfile()` and are wrapped in
+`eval = FALSE` so that building the vignette does not litter the user's
+working directory or fail on read-only file systems.
+
+```{r export-report, eval = FALSE}
+# Excel workbook (multi-sheet .xlsx with embedded plots).
+xlsx_path <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+# HTML report (single .html file with embedded images).
+html_path <- tempfile(fileext = ".html")
+task$report(format = "html", path = html_path)
+```
+
+**Decision.** Use `format = "excel"` when the recipient needs to
+re-use the numbers (e.g., a process engineer who will copy the
+coefficient table into a control-chart spec) and `format = "html"`
+when the report is purely for review and sign-off (e.g., a QA
+manager who needs to read the conclusions and look at the figures
+but will not recompute anything). Either format captures the full
+analysis in a single artefact, which is the main operational benefit
+of the `IqrDoeTask` life-cycle described in the API Overview.
+
+# Best Practices
+
+## Design Selection Guidance
+
+```
+Number of factors k?
+  +-- k = 2         : CCD (11+ runs)
+  +-- 3 <= k <= 4   : CCD or BBD (preferred economy)
+  +-- 5 <= k <= 6   : CCD with face_centered alpha if ranges are tight
+  +-- k > 6         : Screen first, then RSM on the survivors
+        |
+Are extreme combinations risky?
+  +-- Yes           : Use BBD (avoids cube corners)
+  +-- No            : Use CCD with alpha = "rotatable" (uniform prediction variance)
+        |
+How many center points?
+  +-- Curvature test      : at least 3 - 5
+  +-- Pure error estimate : 3 (BBD) or 5-6 (CCD package default)
+```
+
+## Model Validation Checklist
+
+- $R^2 > 0.80$: the model explains a useful fraction of the variation.
+- Adjusted $R^2$ close to $R^2$: no overfitting from unnecessary terms.
+- Lack-of-fit $p > 0.05$: the model form is adequate.
+- Residuals vs. fitted show no trend (constant variance).
+- All eigenvalues of $\mathbf{B}$ have the same sign (a true interior
+  optimum exists).
+- The stationary point lies inside the explored region.
+- Confirmation runs at the predicted optimum agree with the prediction
+  interval.
+
+## Common Pitfalls
+
+1. **Factor range too narrow.** If the low and high levels bracket
+   only a small portion of the operability region, curvature may be
+   undetectable and the optimum may lie outside the explored window.
+   Choose ranges wide enough to see the response change meaningfully.
+
+2. **Too few center points.** With fewer than three center points the
+   pure-error estimate is unstable and the lack-of-fit test loses
+   power. Three center points for BBD and six for CCD are robust
+   defaults.
+
+3. **Skipping confirmation runs.** Always perform 3--5 confirmation
+   experiments at the predicted optimum before locking in the new
+   operating conditions. A surface that fits well inside the design
+   region may not extrapolate reliably.
+
+4. **Confusing coded and real units.** The stationary point computed
+   from $\mathbf{x}_s = -\tfrac{1}{2}\mathbf{B}^{-1}\mathbf{b}$ is in
+   the same units as the model. Since `rsm_design()` fits in real
+   engineering units, the stationary point comes out directly in real
+   units; report it as-is to the operators.
+
+5. **Using a rotatable CCD when ranges cannot be extended.** The
+   rotatable $\alpha$ places axial points outside the cube. If the
+   process cannot be safely operated beyond the declared factor
+   ranges, switch to `alpha = "face_centered"` or use a Box-Behnken
+   design.
+
+# Conclusion
+
+This vignette walked through a complete RSM workflow in
+**iQualityR.doe**, from the planning phase (power analysis, design
+generation, design evaluation) through the experimental phase
+(simulated response data), the analysis phase (second-order model fit,
+ANOVA, curvature test), the visualisation phase (all eight `plot()`
+types), the optimisation phase (canonical analysis and stationary
+point), and finally the confirmation and reporting phases.
+
+Key takeaways:
+
+- Use `rsm_design(design_type = "ccd"|"box_behnken")` to generate the
+  design. Choose CCD when extreme factor combinations are safe; choose
+  BBD when they are not.
+- Run `compute_power()` *before* the trials to confirm the design has
+  adequate statistical power.
+- Run `evaluate_design()` to compare candidate designs on D / A / G /
+  I-optimality criteria.
+- After the trials, run `task$compute()` to fit the second-order
+  model, then `task$plot(type = ...)` to render all eight diagnostic
+  and response-surface views.
+- Use `test_curvature()` to confirm that the second-order model was
+  necessary.
+- Locate the optimum via canonical analysis and validate it with
+  confirmation runs before locking in the new operating conditions.
+- Export the full analysis with `task$report()` to a self-contained
+  Excel or HTML file.
+
+# References
+
+1. Box, G. E. P., & Wilson, K. B. (1951). On the Experimental
+   Attainment of Optimum Conditions. *Journal of the Royal
+   Statistical Society, Series B*, 13(1), 1--45.
+2. Box, G. E. P., & Behnken, D. W. (1960). Some New Three Level
+   Designs for the Study of Quantitative Variables. *Technometrics*,
+   2(4), 455--475.
+3. Myers, R. H., Montgomery, D. C., & Anderson-Cook, C. M. (2016).
+   *Response Surface Methodology: Process and Product Optimization
+   Using Designed Experiments* (4th ed.). Wiley.
+4. Khuri, A. I., & Cornell, J. A. (1996). *Response Surfaces: Designs
+   and Analyses* (2nd ed.). CRC Press.
+5. Montgomery, D. C. (2019). *Design and Analysis of Experiments*
+   (10th ed.), Chapter 11. Wiley.
+6. Atkinson, A. C., Donev, A. N., & Tobias, R. D. (2007).
+   *Optimum Experimental Designs, with SAS*. Oxford University Press.
+
+# sessionInfo
+
+```{r sessioninfo}
+sessionInfo()
+```

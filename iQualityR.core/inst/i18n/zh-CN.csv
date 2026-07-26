@@ -1,0 +1,28 @@
+key,text
+common.success,成功。
+common.analysis_failed,分析失败。
+common.invalid_input,输入校验失败。
+common.missing_required_column,未找到必需列 '{column}'。
+common.unsupported_format,不支持的格式：{format}。
+common.output_dir_required,必须提供输出目录。
+common.file_saved,文件已保存至：{path}。
+term.quality_engineering,质量工程
+term.measurement_system_analysis,测量系统分析
+term.type1_gage_study,Type 1 量具研究
+term.attribute_agreement,属性一致性
+term.process_capability,过程能力
+term.control_chart,控制图
+term.confidence_level,置信水平
+term.lower_spec_limit,规格下限
+term.upper_spec_limit,规格上限
+term.measurement,测量
+term.value,数值
+plot.theme.workbench,工作台
+plot.theme.academic,报告
+prob.param.missing,分布 '{dist}' 缺少必需参数 '{param}'。
+prob.param.type,分布 '{dist}' 的参数 '{param}' 必须是 {rule}。
+prob.param.range,分布 '{dist}' 的参数 '{param}' 必须满足 {rule}。
+prob.dist.unknown,未知分布 '{dist}'。可用分布：{available}。
+msa.type1.name,Type 1 量具研究
+msa.type1.reference_value.required,Type 1 偏倚研究必须提供参考值。
+msa.type1.bias_plot.title,Type 1 偏倚图
