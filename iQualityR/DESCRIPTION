@@ -6,15 +6,15 @@ Authors@R: person(given = "Zhiming", family = "Chen", email = "zhimingc383@gmail
 Author: Zhiming Chen [aut, cre]
 Maintainer: Zhiming Chen <zhimingc383@gmail.com>
 Description: A meta-package that installs and loads the complete iQualityR
-    quality engineering framework. It brings together nine cooperating packages
+    quality engineering framework. It brings together ten cooperating packages
     covering core infrastructure (iQualityR.core), statistical foundations
     (iQualityR.stat), visualization (iQualityR.plot), measurement system
     analysis (iQualityR.msa), process capability (iQualityR.capa), design of
     experiments (iQualityR.doe), sampling plans (iQualityR.sampling),
-    reliability analysis (iQualityR.reliability), and predictive quality
-    modeling (iQualityR.predict). Loading iQualityR attaches all member
-    packages so their APIs are immediately available, mirroring the tidyverse
-    convention.
+    reliability analysis (iQualityR.reliability), predictive quality
+    modeling (iQualityR.predict), and statistical process control
+    (iQualityR.spc). Loading iQualityR attaches all member packages so their
+    APIs are immediately available, mirroring the tidyverse convention.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -31,9 +31,19 @@ Imports:
     iQualityR.sampling (>= 0.1.0),
     iQualityR.reliability (>= 0.1.0),
     iQualityR.predict (>= 0.1.0),
+    iQualityR.spc (>= 0.1.0),
     utils
 Remotes:
-    YOUR_GITHUB_USER/iQualityR-foundation
+    zhiming-chen/iQualityR/iQualityR.core,
+    zhiming-chen/iQualityR/iQualityR.plot,
+    zhiming-chen/iQualityR/iQualityR.stat,
+    zhiming-chen/iQualityR/iQualityR.msa,
+    zhiming-chen/iQualityR/iQualityR.capa,
+    zhiming-chen/iQualityR/iQualityR.doe,
+    zhiming-chen/iQualityR/iQualityR.sampling,
+    zhiming-chen/iQualityR/iQualityR.reliability,
+    zhiming-chen/iQualityR/iQualityR.predict,
+    zhiming-chen/iQualityR/iQualityR.spc
 Suggests:
     testthat (>= 3.0.0),
     knitr,

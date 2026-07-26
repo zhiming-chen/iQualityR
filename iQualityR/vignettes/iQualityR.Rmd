@@ -28,7 +28,7 @@ The framework is organized in four dependency layers:
 | Foundation | `iQualityR.core` | R6 abstract bases, themes, Excel export, i18n |
 | Generic | `iQualityR.plot`, `iQualityR.doe`, `iQualityR.sampling`, `iQualityR.predict` | Visualization, design of experiments, acceptance sampling, predictive modeling |
 | Statistical | `iQualityR.stat` | Distributions, SPC constants, hypothesis tests, normality, outliers |
-| Business | `iQualityR.msa`, `iQualityR.capa`, `iQualityR.reliability` | Measurement system analysis, process capability, reliability/survival |
+| Business | `iQualityR.msa`, `iQualityR.capa`, `iQualityR.reliability`, `iQualityR.spc` | Measurement system analysis, process capability, reliability/survival, statistical process control |
 
 # Quick Start
 

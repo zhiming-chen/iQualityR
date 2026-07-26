@@ -6,9 +6,9 @@ test_that("iQualityR_packages returns a data.frame with expected columns", {
   expect_named(df, c("package", "title", "version"))
 })
 
-test_that("iQualityR_packages lists exactly nine member packages", {
+test_that("iQualityR_packages lists exactly ten member packages", {
   df <- iQualityR_packages()
-  expect_equal(nrow(df), 9L)
+  expect_equal(nrow(df), 10L)
 })
 
 test_that("iQualityR_packages covers all expected members", {
@@ -16,7 +16,8 @@ test_that("iQualityR_packages covers all expected members", {
   expected <- c(
     "iQualityR.core", "iQualityR.plot", "iQualityR.stat",
     "iQualityR.msa", "iQualityR.capa", "iQualityR.doe",
-    "iQualityR.sampling", "iQualityR.reliability", "iQualityR.predict"
+    "iQualityR.sampling", "iQualityR.reliability", "iQualityR.predict",
+    "iQualityR.spc"
   )
   expect_setequal(df$package, expected)
 })

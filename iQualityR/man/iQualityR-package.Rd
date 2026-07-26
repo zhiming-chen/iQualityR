@@ -6,7 +6,7 @@
 \alias{iQualityR-package}
 \title{iQualityR: Integrated Quality Engineering Framework}
 \description{
-A meta-package that installs and loads the complete iQualityR quality engineering framework. It brings together nine cooperating packages covering core infrastructure (iQualityR.core), statistical foundations (iQualityR.stat), visualization (iQualityR.plot), measurement system analysis (iQualityR.msa), process capability (iQualityR.capa), design of experiments (iQualityR.doe), sampling plans (iQualityR.sampling), reliability analysis (iQualityR.reliability), and predictive quality modeling (iQualityR.predict). Loading iQualityR attaches all member packages so their APIs are immediately available, mirroring the tidyverse convention.
+A meta-package that installs and loads the complete iQualityR quality engineering framework. It brings together ten cooperating packages covering core infrastructure (iQualityR.core), statistical foundations (iQualityR.stat), visualization (iQualityR.plot), measurement system analysis (iQualityR.msa), process capability (iQualityR.capa), design of experiments (iQualityR.doe), sampling plans (iQualityR.sampling), reliability analysis (iQualityR.reliability), predictive quality modeling (iQualityR.predict), and statistical process control (iQualityR.spc). Loading iQualityR attaches all member packages so their APIs are immediately available, mirroring the tidyverse convention.
 }
 \author{
 \strong{Maintainer}: Zhiming Chen \email{zhimingc383@gmail.com}

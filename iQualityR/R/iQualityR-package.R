@@ -7,7 +7,7 @@
 #' @importFrom utils packageDescription packageVersion
 #' @import iQualityR.core iQualityR.plot iQualityR.stat iQualityR.msa
 #' @import iQualityR.capa iQualityR.doe iQualityR.sampling iQualityR.reliability
-#' @import iQualityR.predict
+#' @import iQualityR.predict iQualityR.spc
 "_PACKAGE"
 
 # The ordered list of member packages. The order respects the dependency
@@ -22,7 +22,8 @@
   "iQualityR.doe",
   "iQualityR.sampling",
   "iQualityR.reliability",
-  "iQualityR.predict"
+  "iQualityR.predict",
+  "iQualityR.spc"
 )
 
 # Attach member packages to the search path. Called from .onAttach so that
