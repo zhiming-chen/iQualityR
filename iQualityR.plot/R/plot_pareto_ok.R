@@ -332,25 +332,31 @@ create_pareto_plot <- function(data,
   # Calculate max value for secondary axis
   max_value <- max(data$value, na.rm = TRUE)
 
-  # Create base plot
+  # Resolve theme-derived colors once.
+  # - col fill uses the primary discrete palette color
+  # - cumulative line/points/text use the 3rd discrete color for contrast
+  c <- .iqr_aes(iqr_theme)
+  cum_color <- .iqr_plotter$.pal_discrete(c$theme_obj)[3]
+
+  # Create base plot. We do NOT map fill/color to a column (the bar fill is a
+  # single fixed color), so base_plot() will not auto-inject any scale; we
+  # simply use the theme via as_iqr_theme() and apply colors manually.
   p <- ggplot2::ggplot(data, ggplot2::aes(x = category, y = value)) +
-    ggplot2::geom_col(fill = .iqr_plotter$.pal_discrete(iqr_theme)[1], ...) +
-    .iqr_plotter$.scale_fill_discrete(iqr_theme) +
-    iqr_theme$theme_iqr()
+    ggplot2::geom_col(fill = c$data, ...) +
+    as_iqr_theme(iqr_theme)
 
   # Add cumulative line and points
   p <- p +
     ggplot2::geom_line(
       ggplot2::aes(y = cum_pct / 100 * max_value, group = 1),
       linewidth = 1,
-      color = .iqr_plotter$.pal_discrete(iqr_theme)[3]
+      color = cum_color
     ) +
     ggplot2::geom_point(
       ggplot2::aes(y = cum_pct / 100 * max_value),
       size = 3,
-      color = .iqr_plotter$.pal_discrete(iqr_theme)[3]
-    ) +
-    .iqr_plotter$.scale_color_discrete(iqr_theme)
+      color = cum_color
+    )
 
   # Add data labels to points
   p <- p +
@@ -358,7 +364,7 @@ create_pareto_plot <- function(data,
       ggplot2::aes(y = cum_pct / 100 * max_value, label = scales::percent(cum_pct / 100)),
       vjust = -1,
       size = 3.5,
-      color = .iqr_plotter$.pal_discrete(iqr_theme)[3]
+      color = cum_color
     )
 
   # Add secondary y-axis
@@ -457,10 +463,15 @@ create_pareto_table <- function(data, category_col = NULL, count_col = NULL, gro
   stat_data$stat_order <- as.integer(stat_data$stat_name)
 
   # Create table plot
+  # Resolve theme-derived colors for tile border, text, and zebra striping.
+  # The "surface" slot gives the tile border / stripe base color (matches the
+  # plot background), "surface_soft" gives the alternate stripe, and "text"
+  # gives the cell text color — so the table follows the active theme.
+  c <- .iqr_aes(iqr_theme)
   p <- ggplot2::ggplot(stat_data, ggplot2::aes(x = category, y = stat_name)) +
     ggplot2::geom_tile(
       ggplot2::aes(fill = factor(stat_order %% 2)),
-      color = "white",
+      color = c$surface,
       linewidth = 0.5,
       height = 0.9,
       width = 0.9
@@ -468,7 +479,7 @@ create_pareto_table <- function(data, category_col = NULL, count_col = NULL, gro
     ggplot2::geom_text(
       ggplot2::aes(label = format_stat_value(value, stat_name)),
       size = 3.5,
-      color = "black"
+      color = c$text
     )
 
   # Add facet if group is provided
@@ -479,9 +490,10 @@ create_pareto_table <- function(data, category_col = NULL, count_col = NULL, gro
 
   # Apply theme
   p <- p +
-    ggplot2::scale_fill_manual(values = c("white",
-                                          .iqr_plotter$.pal_discrete(iqr_theme)[10]),
-                               guide = "none") +
+    ggplot2::scale_fill_manual(
+      values = c(c$surface, c$surface_soft),
+      guide = "none"
+    ) +
     iqr_theme$theme_iqr() +
     ggplot2::theme(
       axis.title.y = ggplot2::element_blank(),
@@ -610,6 +622,7 @@ plot_pareto_image_labels <- function(data,
   }
   theme_obj <- as_iqr_theme_object(theme)
   iqr_theme <- theme_obj$theme_iqr()
+  c <- .iqr_aes(theme_obj)
   # Sort data
   df <- data[order(data[[count_col]], decreasing = TRUE), ]
   categories <- df[[category_col]]
@@ -626,13 +639,13 @@ plot_pareto_image_labels <- function(data,
     ggplot2::geom_line(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y, group = 1),
       linewidth = 1,
-      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
+      color = c$danger
     ) +
     ggplot2::geom_point(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y),
       shape = 19,
       size = 2,
-      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
+      color = c$danger
     )
   # Apply theme and styling
   p <- p +
@@ -729,6 +742,7 @@ plot_pareto_emoji_labels <- function(data,
 
   theme_obj <- as_iqr_theme_object(theme)
   iqr_theme <- theme_obj$theme_iqr()
+  c <- .iqr_aes(theme_obj)
 
   # Sort data
   df <- data[order(data[[count_col]], decreasing = TRUE), ]
@@ -754,13 +768,13 @@ plot_pareto_emoji_labels <- function(data,
     ggplot2::geom_line(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y, group = 1),
       linewidth = 1,
-      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
+      color = c$danger
     ) +
     ggplot2::geom_point(
       ggplot2::aes(x = .data[[category_col]], y = .data$.cum_y),
       shape = 19,
       size = 2,
-      color = .iqr_plotter$.pal_ui(theme_obj, "danger")
+      color = c$danger
     )
 
   # Apply theme and styling

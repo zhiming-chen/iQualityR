@@ -36,6 +36,49 @@ NULL
 # (.pal_*, .scale_*, .contrast_text). The instance is created at load time.
 .iqr_plotter <- IqrPlotterBase$new()
 
+# Internal aesthetic toolbox: resolves a theme spec (NULL / string / IqrTheme)
+# once and returns a named list of all commonly-used semantic role colors.
+# Use this instead of calling .iqr_plotter$.pal_ui(...) / .pal_semantic(...)
+# repeatedly at the top of every plot_* function. Centralizing the role
+# mapping here guarantees that "muted"/"fail"/"data"/... always resolve to
+# the same slot across the whole .plot subpackage.
+#
+# Usage:
+#   c <- .iqr_aes(theme)
+#   geom_line(color = c$muted)
+#   geom_ribbon(fill = c$fail, alpha = 0.25)
+#   c$theme_obj$plot$scale_fill_iqr(style = "paired")   # for advanced scales
+.iqr_aes <- function(theme = NULL) {
+  theme_obj <- as_iqr_theme_object(theme)
+  list(
+    # Primary data color (first discrete palette entry)
+    data         = .iqr_plotter$.pal_discrete(theme_obj)[1],
+    # UI semantic slots (with safe defaults for external themes missing slots)
+    muted        = .iqr_plotter$.pal_ui(theme_obj, "muted",        default = "#666666"),
+    text         = .iqr_plotter$.pal_ui(theme_obj, "text",         default = "#000000"),
+    primary      = .iqr_plotter$.pal_ui(theme_obj, "primary",      default = "#2563EB"),
+    success      = .iqr_plotter$.pal_ui(theme_obj, "success",      default = "#0F766E"),
+    warning      = .iqr_plotter$.pal_ui(theme_obj, "warning",      default = "#B45309"),
+    danger       = .iqr_plotter$.pal_ui(theme_obj, "danger",       default = "#B42318"),
+    # Surface colors (for tiles, inner boxplot fill, point centers, etc.)
+    surface      = .iqr_plotter$.pal_ui(theme_obj, "surface",      default = "#FFFFFF"),
+    surface_soft = .iqr_plotter$.pal_ui(theme_obj, "surface_soft", default = "#F7F9FC"),
+    bg           = .iqr_plotter$.pal_ui(theme_obj, "bg",           default = "#FFFFFF"),
+    grid         = .iqr_plotter$.pal_ui(theme_obj, "grid",         default = "#D8DEE8"),
+    border       = .iqr_plotter$.pal_ui(theme_obj, "border",       default = "#D8DEE8"),
+    # Semantic palette (pass / fail / watch / neutral / ...)
+    pass         = .iqr_plotter$.pal_semantic(theme_obj, "pass"),
+    fail         = .iqr_plotter$.pal_semantic(theme_obj, "fail"),
+    watch        = .iqr_plotter$.pal_semantic(theme_obj, "watch"),
+    neutral      = .iqr_plotter$.pal_semantic(theme_obj, "neutral"),
+    good         = .iqr_plotter$.pal_semantic(theme_obj, "good"),
+    bad          = .iqr_plotter$.pal_semantic(theme_obj, "bad"),
+    # Expose theme_obj so callers can access advanced APIs
+    # (e.g. c$theme_obj$plot$scale_fill_iqr(style = "paired"))
+    theme_obj    = theme_obj
+  )
+}
+
 # Declare ggplot2 aes() column names used via non-standard evaluation.
 # These variables are never assigned in R code; they are evaluated inside
 # aes() against a data frame at plot-build time.
@@ -90,13 +133,41 @@ as_iqr_theme_object <- function(theme = NULL) {
 
 #' Create a Base ggplot Object with iQualityR Theme
 #'
-#' Creates the base ggplot object with the iQualityR theme applied.
+#' Creates the base ggplot object with the iQualityR theme applied and
+#' automatically injects theme-aware scales for any \code{fill} / \code{color}
+#' (or \code{colour}) aesthetic present in \code{mapping}. This means that
+#' whenever the user maps a fill or color to a variable, the resulting plot
+#' follows the active theme palette without any extra code.
+#'
+#' \strong{Auto-injected scales} (based on column type):
+#' \itemize{
+#'   \item discrete column  -> \code{theme_obj$plot$scale_fill_iqr(discrete=TRUE)}
+#'   \item continuous column -> \code{theme_obj$plot$scale_fill_sequential()}
+#' }
+#'
+#' \strong{Scales that cannot be auto-inferred} (attach explicitly using the
+#' IqrTheme object retrieved via \code{attr(p, "iqr_theme")}):
+#' \itemize{
+#'   \item paired mode (fill + darkened color, for boxplots/bars) ->
+#'         \code{theme_obj$plot$scale_fill_iqr(discrete=TRUE, style="paired")}
+#'         + \code{theme_obj$plot$scale_color_iqr(discrete=TRUE, style="paired")}
+#'   \item diverging gradient (for residuals, correlations) ->
+#'         \code{theme_obj$plot$scale_fill_diverging(midpoint=0)}
+#'   \item semantic palette (pass / fail / watch) ->
+#'         \code{theme_obj$plot$scale_fill_semantic(labels=c("pass","fail","watch"))}
+#' }
+#'
+#' The resolved \code{IqrTheme} object is stashed as attribute
+#' \code{"iqr_theme"} on the returned ggplot object so downstream code can
+#' retrieve it via \code{attr(p, "iqr_theme")} and use the full
+#' \code{theme_obj$plot$*} / \code{theme_obj$config$*} API directly.
 #'
 #' @param data A data.frame for plotting.
 #' @param mapping An aesthetic mapping created by \code{aes()}.
 #' @param theme Theme to use: NULL (global default), character string
 #'   (e.g. "prism"), theme function, or IqrTheme object.
-#' @return A \code{ggplot} object.
+#' @return A \code{ggplot} object with theme and (if applicable) fill/color
+#'   scales already attached.
 #' @export
 base_plot <- function(data, mapping, theme = NULL) {
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
@@ -105,8 +176,88 @@ base_plot <- function(data, mapping, theme = NULL) {
 
   stopifnot(is.data.frame(data))
 
-  iqr_theme <- as_iqr_theme(theme)
-  ggplot2::ggplot(data, mapping) + iqr_theme
+  # Resolve to a full IqrTheme object (handles NULL / string / function / IqrTheme)
+  theme_obj <- as_iqr_theme_object(theme)
+
+  # Build the base ggplot with the theme applied. We do the `+` FIRST, then
+  # attach the theme object as an attribute, because ggplot2's `+` operator
+  # rebuilds the object and would drop attributes added before the `+`.
+  p <- ggplot2::ggplot(data, mapping) + theme_obj$plot$theme_iqr()
+
+  # Stash the IqrTheme object so downstream code can retrieve it via
+  # `attr(p, "iqr_theme")` and use theme_obj$plot$* / theme_obj$config$*
+  # directly (paired, diverging, semantic scales, palette accessors, etc.).
+  # Verified to survive subsequent `+ geom_*()` additions on ggplot2 4.5+ (S7).
+  attr(p, "iqr_theme") <- theme_obj
+
+  # --- Auto-inject BASIC scales for mapped fill / color aesthetics ---
+  #
+  # We only auto-inject the scales that can be unambiguously inferred from
+  # the column type:
+  #   - discrete column  -> discrete scale
+  #   - continuous column -> sequential gradient
+  #
+  # Scales that require user intent (paired, diverging, semantic) are NOT
+  # auto-injected. The caller retrieves the IqrTheme object via
+  # `attr(p, "iqr_theme")` and attaches them explicitly using the .core API
+  # (theme_obj$plot$scale_*), exactly as shown in the .core vignettes.
+  #
+  # If the mapped value is a computed variable (e.g. after_stat(count)) it
+  # will not be a column name in `data`; we treat such cases as continuous.
+
+  mapped <- names(mapping)
+
+  if ("fill" %in% mapped) {
+    p <- p + .build_auto_scale(theme_obj, mapping$fill, data, "fill")
+  }
+
+  if ("color" %in% mapped) {
+    p <- p + .build_auto_scale(theme_obj, mapping$color, data, "color")
+  } else if ("colour" %in% mapped) {
+    p <- p + .build_auto_scale(theme_obj, mapping$colour, data, "color")
+  }
+
+  p
+}
+
+#' Pick a theme-aware scale based on the mapped aesthetic
+#'
+#' Internal helper. Given a quosure-style aesthetic value (from
+#' \code{mapping$fill} / \code{mapping$color}), determine whether it refers
+#' to a discrete or continuous column in \code{data} and return the
+#' appropriate ggplot2 scale object.
+#'
+#' @param theme_obj IqrTheme object.
+#' @param quo An aesthetic quosure (e.g. \code{mapping$fill}).
+#' @param data The data frame passed to \code{base_plot()}.
+#' @param aes_type Character: "fill" or "color".
+#' @return A ggplot2 scale object.
+#' @noRd
+.build_auto_scale <- function(theme_obj, quo, data, aes_type) {
+  col_name <- rlang::quo_name(quo)
+
+  # If the mapped value is a column in data, use its type to pick the scale.
+  # Otherwise (computed aesthetics like after_stat(count), expressions, etc.)
+  # default to sequential/continuous.
+  is_discrete <- if (col_name %in% names(data)) {
+    !is.numeric(data[[col_name]])
+  } else {
+    FALSE
+  }
+
+  if (aes_type == "fill") {
+    if (is_discrete) {
+      .iqr_plotter$.scale_fill_discrete(theme_obj)
+    } else {
+      .iqr_plotter$.scale_fill_sequential(theme_obj)
+    }
+  } else {
+    if (is_discrete) {
+      .iqr_plotter$.scale_color_discrete(theme_obj)
+    } else {
+      .iqr_plotter$.scale_color_sequential(theme_obj)
+    }
+  }
 }
 
 
@@ -203,12 +354,10 @@ plot_pp <- function(data, sample_col, theme = NULL,
   }
 
   # ----- 6. Plot (add test annotation) -----
-  theme_obj <- as_iqr_theme_object(theme)
-  line_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
-  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
+  c <- .iqr_aes(theme)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = theoretical, y = empirical)) +
     ggplot2::geom_point(alpha = 0.6) +
-    ggplot2::geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = line_color) +
+    ggplot2::geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = c$fail) +
     ggplot2::coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
     ggplot2::labs(
       x = "Theoretical Cumulative Probability",
@@ -222,7 +371,7 @@ plot_pp <- function(data, sample_col, theme = NULL,
       y = 0.95, x = 0.02,
       label = test_label,
       hjust = 0, vjust = 0.5,
-      size = 4, color = muted_color
+      size = 4, color = c$muted
     )
   }
 
@@ -410,14 +559,12 @@ plot_qq <- function(data, sample_col, theme = NULL,
   }
 
   # ----- 7. Build plot (add step by step to avoid conflicts) -----
-  theme_obj <- as_iqr_theme_object(theme)
-  line_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
-  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
+  c <- .iqr_aes(theme)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = theoretical, y = sample)) +
     ggplot2::geom_point(alpha = 0.6) +
     ggplot2::geom_abline(
       intercept = line_intercept, slope = line_slope,
-      linetype = "dashed", color = line_color
+      linetype = "dashed", color = c$fail
     ) +
     ggplot2::labs(x = "Theoretical Quantiles", y = "Sample Quantiles", ...)
 
@@ -426,7 +573,7 @@ plot_qq <- function(data, sample_col, theme = NULL,
     p <- p + ggplot2::geom_ribbon(
       data = band_df,
       ggplot2::aes(x = theoretical, ymin = lower, ymax = upper),
-      alpha = 0.2, fill = muted_color,
+      alpha = 0.2, fill = c$muted,
       inherit.aes = FALSE
     )
   }
@@ -439,7 +586,7 @@ plot_qq <- function(data, sample_col, theme = NULL,
       x = x_range[1] + 0.01 * diff(x_range),
       y = y_range[2] - 0.01 * diff(y_range),
       label = test_label,
-      hjust = 0, vjust = 1, size = 4, color = muted_color
+      hjust = 0, vjust = 1, size = 4, color = c$muted
     )
   }
 
@@ -502,11 +649,9 @@ plot_interaction_line <- function(data, x_var, y_var, group_var,
       .groups = "drop"
     )
 
-  # # iqr_theme <- as_iqr_theme(theme)
-  # theme <- IqrTheme$new(theme)
-  # theme$scale_color_iqr() +
-  #     theme$theme_iqr()
-  p <- base_plot(summary_data,
+  # base_plot already auto-injects the discrete color scale for the mapped
+  # group_var, so no explicit scale_*_iqr() is needed here.
+  base_plot(summary_data,
     ggplot2::aes(
       x = .data[[x_var]], y = response,
       color = .data[[group_var]], group = .data[[group_var]]
@@ -516,10 +661,6 @@ plot_interaction_line <- function(data, x_var, y_var, group_var,
     ggplot2::geom_line(linewidth = 1.2) +
     ggplot2::geom_point(size = 3) +
     ggplot2::labs(y = paste(fun, "of", y_var))
-
-  # Use the theme's discrete color scale via the shared toolbox.
-  theme_obj <- as_iqr_theme_object(theme)
-  p + .iqr_plotter$.scale_color_discrete(theme_obj)
 }
 
 #' Create a Correlation Heatmap
@@ -556,18 +697,20 @@ plot_correlation_heatmap <- function(data, theme = NULL,
   names(melted_cormat) <- c("Var1", "Var2", "value")
   melted_cormat <- stats::na.omit(melted_cormat)
 
-  # iqr_theme <- as_iqr_theme(theme)
-  theme_obj <- as_iqr_theme_object(theme)
+  c <- .iqr_aes(theme)
+  # base_plot auto-injects a sequential fill scale for the continuous `value`
+  # column. Correlations are signed in [-1, 1], so we deliberately override
+  # with the diverging scale (midpoint = 0) below.
   p <- base_plot(melted_cormat,
     ggplot2::aes(x = Var1, y = Var2, fill = value),
     theme = theme
   ) +
-    ggplot2::geom_tile(color = "white") +
-    ggplot2::geom_text(ggplot2::aes(label = value), color = "black", size = 3) +
+    ggplot2::geom_tile(color = c$surface) +
+    ggplot2::geom_text(ggplot2::aes(label = value), color = c$text, size = 3) +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, hjust = 1)) +
     ggplot2::coord_fixed() +
     ggplot2::labs(fill = "Correlation") +
-    .iqr_plotter$.scale_fill_diverging(theme_obj)
+    c$theme_obj$plot$scale_fill_diverging(midpoint = 0)
   p
 }
 
@@ -606,11 +749,7 @@ plot_acf <- function(data_vec,
 
   ci_val <- qnorm((1 + ci) / 2) / sqrt(n)
 
-  # iqr_theme <- as_iqr_theme(theme)
-  theme_obj <- as_iqr_theme_object(theme)
-  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
-  sig_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
-  text_color <- .iqr_plotter$.pal_ui(theme_obj, "text")
+  c <- .iqr_aes(theme)
   p <- base_plot(acf_df,
     ggplot2::aes(
       x = lag,
@@ -621,12 +760,12 @@ plot_acf <- function(data_vec,
     ggplot2::geom_hline(
       yintercept = 0,
       linetype = "solid",
-      color = muted_color
+      color = c$muted
     ) +
     ggplot2::geom_hline(
       yintercept = c(ci_val, -ci_val),
       linetype = "dashed",
-      color = sig_color
+      color = c$fail
     )
 
   if (highlight_sig) {
@@ -634,8 +773,8 @@ plot_acf <- function(data_vec,
       ggplot2::aes(xend = lag, yend = 0, color = abs(acf) > ci_val)
     ) + ggplot2::scale_color_manual(
       values = c(
-        "FALSE" = text_color,
-        "TRUE" = sig_color
+        "FALSE" = c$text,
+        "TRUE" = c$fail
       ),
       guide = "none"
     )
@@ -684,11 +823,7 @@ plot_pacf <- function(data_vec,
 
   ci_val <- qnorm((1 + ci) / 2) / sqrt(n)
 
-  # iqr_theme <- as_iqr_theme(theme)
-  theme_obj <- as_iqr_theme_object(theme)
-  muted_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
-  sig_color <- .iqr_plotter$.pal_semantic(theme_obj, "fail")
-  text_color <- .iqr_plotter$.pal_ui(theme_obj, "text")
+  c <- .iqr_aes(theme)
   p <- base_plot(pacf_df,
     ggplot2::aes(
       x = lag,
@@ -699,12 +834,12 @@ plot_pacf <- function(data_vec,
     ggplot2::geom_hline(
       yintercept = 0,
       linetype = "solid",
-      color = muted_color
+      color = c$muted
     ) +
     ggplot2::geom_hline(
       yintercept = c(ci_val, -ci_val),
       linetype = "dashed",
-      color = sig_color
+      color = c$fail
     )
 
   if (highlight_sig) {
@@ -716,8 +851,8 @@ plot_pacf <- function(data_vec,
       )
     ) + ggplot2::scale_color_manual(
       values = c(
-        "FALSE" = text_color,
-        "TRUE" = sig_color
+        "FALSE" = c$text,
+        "TRUE" = c$fail
       ),
       guide = "none"
     )
@@ -772,10 +907,7 @@ plot_roc_curve <- function(data, labels_var, predictions_var,
     tpr = roc_obj$sensitivities
   )
 
-  # iqr_theme <- as_iqr_theme(theme)
-  theme_obj <- as_iqr_theme_object(theme)
-  curve_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
-  ref_color <- .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
+  c <- .iqr_aes(theme)
   p <- base_plot(roc_df,
     ggplot2::aes(
       x = fpr,
@@ -784,14 +916,14 @@ plot_roc_curve <- function(data, labels_var, predictions_var,
     theme = theme
   ) +
     ggplot2::geom_line(
-      color = curve_color,
+      color = c$data,
       linewidth = 1.2
     ) +
     ggplot2::geom_abline(
       intercept = 0,
       slope = 1,
       linetype = "dashed",
-      color = ref_color
+      color = c$muted
     ) +
     ggplot2::coord_fixed() +
     ggplot2::labs(
@@ -852,8 +984,10 @@ plot_variance_components <- function(data,
   data <- data %>%
     dplyr::mutate(label_pos = cumsum(variance_percent) - 0.5 * variance_percent)
 
-  # iqr_theme <- as_iqr_theme(theme)
-  p <- base_plot(data, ggplot2::aes(
+  c <- .iqr_aes(theme)
+  # base_plot auto-injects the discrete fill scale for the mapped `source`
+  # column, so no explicit .scale_fill_discrete() is needed here.
+  base_plot(data, ggplot2::aes(
     x = 1,
     y = variance_percent,
     fill = source
@@ -869,7 +1003,7 @@ plot_variance_components <- function(data,
         y = label_pos,
         label = paste0(round(variance_percent, 1), "%")
       ),
-      color = "white",
+      color = .iqr_plotter$.contrast_text(c$data),
       size = 4,
       fontface = "bold"
     ) +
@@ -884,9 +1018,6 @@ plot_variance_components <- function(data,
     ) +
     ggplot2::labs(fill = "Variance Source") +
     ggplot2::labs(title = "Variance Components", x = NULL, y = NULL)
-
-  theme_obj <- as_iqr_theme_object(theme)
-  p + .iqr_plotter$.scale_fill_discrete(theme_obj)
 }
 
 # Keep old name for backward compatibility, but new name is recommended
@@ -963,12 +1094,16 @@ set_default_theme <- function(theme = "academic") {
 #' Create Layers for Histogram and Density
 #'
 #' @param bins Number of bins for the histogram. If NULL, uses default.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Currently
+#'   not used for color resolution (histogram/density colors are usually
+#'   mapped via \code{base_plot()}'s auto-injection); accepted for API
+#'   consistency with the other \code{layers_*} functions.
 #' @param ... Common arguments passed to both geoms (e.g., mapping, data, na.rm).
 #' @param hist_args List of arguments passed to geom_histogram.
 #' @param density_args List of arguments passed to geom_density.
 #' @return A list of ggplot2 layers.
 #' @export
-layers_histogram_density <- function(bins = NULL, ...,
+layers_histogram_density <- function(bins = NULL, theme = NULL, ...,
                                      hist_args = list(),
                                      density_args = list()) {
   common <- list(...)
@@ -996,12 +1131,15 @@ layers_histogram_density <- function(bins = NULL, ...,
 #'
 #' @param distribution Distribution function name (e.g. "norm").
 #' @param dparams Parameters for the distribution function as a list.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Currently
+#'   not used for color resolution; accepted for API consistency with the
+#'   other \code{layers_*} functions.
 #' @param ... Common arguments passed to stat_qq and stat_qq_line.
 #' @param qq_args List of arguments passed to stat_qq.
 #' @param line_args List of arguments passed to stat_qq_line.
 #' @return A list of ggplot2 layers.
 #' @export
-layers_qq <- function(distribution = "norm", dparams = list(), ...,
+layers_qq <- function(distribution = "norm", dparams = list(), theme = NULL, ...,
                       qq_args = list(),
                       line_args = list()) {
   common <- list(...)
@@ -1029,12 +1167,16 @@ layers_qq <- function(distribution = "norm", dparams = list(), ...,
 #' Create Layers for Boxplot
 #'
 #' @param add_jitter If TRUE, adds jittered points.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Currently
+#'   not used for color resolution (boxplot fill is usually mapped via
+#'   \code{base_plot()}'s auto-injection); accepted for API consistency with
+#'   the other \code{layers_*} functions.
 #' @param ... Common arguments passed to both geoms.
 #' @param boxplot_args List of arguments passed to geom_boxplot.
 #' @param jitter_args List of arguments passed to geom_jitter (if used).
 #' @return A list of ggplot2 layers.
 #' @export
-layers_boxplot <- function(add_jitter = TRUE, ...,
+layers_boxplot <- function(add_jitter = TRUE, theme = NULL, ...,
                            boxplot_args = list(),
                            jitter_args = list()) {
   common <- list(...)
@@ -1066,6 +1208,9 @@ layers_boxplot <- function(add_jitter = TRUE, ...,
 #' @param data A data frame.
 #' @param add_points If TRUE, adds points to the line.
 #' @param smoothing Smoothing method (e.g. "lm", "loess"). If NULL, no smoothing.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Currently
+#'   not used for color resolution; accepted for API consistency with the
+#'   other \code{layers_*} functions.
 #' @param line_args List of arguments passed to geom_line.
 #' @param point_args List of arguments passed to geom_point (if used).
 #' @param smooth_args List of arguments passed to geom_smooth (if used).
@@ -1074,6 +1219,7 @@ layers_boxplot <- function(add_jitter = TRUE, ...,
 layers_trend_line <- function(mapping = NULL, data = NULL,
                               add_points = TRUE,
                               smoothing = NULL,
+                              theme = NULL,
                               line_args = list(),
                               point_args = list(),
                               smooth_args = list()) {
@@ -1105,15 +1251,19 @@ layers_trend_line <- function(mapping = NULL, data = NULL,
 
 #' Create Layers for Percentile Band (Forest Plot)
 #'
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Used to
+#'   resolve the default point \code{fill} from the theme's \code{"surface"}
+#'   UI slot so the point center follows the active theme background.
 #' @param ... Common arguments passed to geom_errorbar and geom_point.
 #' @param errorbar_args List of arguments passed to geom_errorbar.
 #' @param point_args List of arguments passed to geom_point.
 #' @return A list of ggplot2 layers.
 #' @export
-layers_percentile_band <- function(...,
+layers_percentile_band <- function(theme = NULL, ...,
                                    errorbar_args = list(),
                                    point_args = list()) {
   common <- list(...)
+  c <- .iqr_aes(theme)
 
   errorbar_default <- list(orientation = "y")
   final_errorbar <- utils::modifyList(
@@ -1121,7 +1271,7 @@ layers_percentile_band <- function(...,
     errorbar_args
   )
 
-  point_default <- list(shape = 21, fill = "white", stroke = 1.5)
+  point_default <- list(shape = 21, fill = c$surface, stroke = 1.5)
   final_point <- utils::modifyList(
     utils::modifyList(point_default, common),
     point_args
@@ -1137,15 +1287,19 @@ layers_percentile_band <- function(...,
 #' Create Layers for Violin Plot
 #'
 #' @param add_boxplot If TRUE, adds a small boxplot inside.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Used to
+#'   resolve the inner boxplot \code{fill} from the theme's \code{"surface"}
+#'   UI slot so the inner boxplot contrasts with the violin fill.
 #' @param ... Common arguments passed to geom_violin and (optionally) geom_boxplot.
 #' @param violin_args List of arguments passed to geom_violin.
 #' @param boxplot_args List of arguments passed to geom_boxplot (if used).
 #' @return A list of ggplot2 layers.
 #' @export
-layers_violin <- function(add_boxplot = TRUE, ...,
+layers_violin <- function(add_boxplot = TRUE, theme = NULL, ...,
                           violin_args = list(),
                           boxplot_args = list()) {
   common <- list(...)
+  c <- .iqr_aes(theme)
 
   violin_default <- list()
   final_violin <- utils::modifyList(
@@ -1156,7 +1310,9 @@ layers_violin <- function(add_boxplot = TRUE, ...,
   layers <- list(do.call(ggplot2::geom_violin, final_violin))
 
   if (add_boxplot) {
-    boxplot_default <- list(width = 0.1, fill = "white", alpha = 0.7)
+    # Inner boxplot uses the theme's surface color so it contrasts with the
+    # violin fill regardless of which theme is active.
+    boxplot_default <- list(width = 0.1, fill = c$surface, alpha = 0.7)
     final_boxplot <- utils::modifyList(
       utils::modifyList(boxplot_default, common),
       boxplot_args
@@ -1171,7 +1327,13 @@ layers_violin <- function(add_boxplot = TRUE, ...,
 #'
 #' @param lsl Lower specification limit. If NULL, not drawn.
 #' @param usl Upper specification limit. If NULL, not drawn.
-#' @param spec_color Color for specification lines and labels.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Used to
+#'   resolve \code{spec_color} when it is NULL. The color is taken from the
+#'   theme's semantic palette slot \code{"fail"}.
+#' @param spec_color Color for specification lines and labels. If NULL
+#'   (default), the color is resolved from \code{theme} via
+#'   \code{theme_obj$get_pal("semantic", name="fail")}, so the lines follow
+#'   the active theme automatically. Pass an explicit color to override.
 #' @param lsl_label Label for LSL.
 #' @param usl_label Label for USL.
 #' @param vline_args List of arguments passed to geom_vline.
@@ -1179,11 +1341,20 @@ layers_violin <- function(add_boxplot = TRUE, ...,
 #' @return A list of ggplot2 layers.
 #' @export
 layers_spec_limits <- function(lsl = NULL, usl = NULL,
-                               spec_color = "red",
+                               theme = NULL,
+                               spec_color = NULL,
                                lsl_label = paste("LSL =", lsl),
                                usl_label = paste("USL =", usl),
                                vline_args = list(),
                                annotate_args = list()) {
+  # Resolve spec_color from theme's semantic "fail" slot when not supplied.
+  # This keeps the spec lines consistent with the active theme without
+  # requiring the caller to pass a color. Explicit spec_color overrides.
+  if (is.null(spec_color)) {
+    theme_obj <- as_iqr_theme_object(theme)
+    spec_color <- theme_obj$get_pal("semantic", name = "fail")
+  }
+
   result <- list()
 
   if (!is.null(lsl)) {
@@ -1229,25 +1400,50 @@ layers_spec_limits <- function(lsl = NULL, usl = NULL,
 #' Returns layers for a base control chart.
 #'
 #' @param data A data.frame with columns x, y, cl, lcl, ucl.
-#' @param ucl_color Color for UCL/LCL lines.
-#' @param cl_color Color for center line.
-#' @param data_color Color for data points and line.
+#' @param theme Theme spec (NULL / string / function / IqrTheme). Used to
+#'   resolve any of \code{ucl_color}, \code{cl_color}, \code{data_color}
+#'   that are NULL. Colors are taken from the theme's semantic and discrete
+#'   palettes:
+#'   \itemize{
+#'     \item \code{ucl_color} / \code{lcl_color} <- semantic "fail"
+#'     \item \code{cl_color} <- semantic "neutral"
+#'     \item \code{data_color} <- discrete palette, first color
+#'   }
+#' @param ucl_color Color for UCL/LCL lines. If NULL (default), resolved
+#'   from \code{theme}. Pass an explicit color to override.
+#' @param cl_color Color for center line. If NULL (default), resolved from
+#'   \code{theme}.
+#' @param data_color Color for data points and line. If NULL (default),
+#'   resolved from \code{theme}.
 #' @return A list of ggplot2 layers.
 #' @export
 layers_control_chart <- function(data,
-                                 ucl_color = "red",
-                                 cl_color = "blue",
-                                 data_color = "black") {
+                                 theme = NULL,
+                                 ucl_color = NULL,
+                                 cl_color = NULL,
+                                 data_color = NULL) {
+  # Resolve colors from theme when not supplied explicitly.
+  # - ucl/lcl lines use semantic "fail" (red-ish) to signal control limits
+  # - cl line uses semantic "neutral" (grey-ish) as a reference baseline
+  # - data line/points use the first discrete palette color
+  # Explicit color arguments override the theme-derived defaults.
+  if (is.null(ucl_color) || is.null(cl_color) || is.null(data_color)) {
+    theme_obj <- as_iqr_theme_object(theme)
+    if (is.null(ucl_color))  ucl_color  <- theme_obj$get_pal("semantic", name = "fail")
+    if (is.null(cl_color))   cl_color   <- theme_obj$get_pal("semantic", name = "neutral")
+    if (is.null(data_color)) data_color <- theme_obj$get_pal("discrete")[1]
+  }
+
   y_range <- range(c(data$y, data$lcl, data$ucl), na.rm = TRUE)
   y_buffer <- (y_range[2] - y_range[1]) * 0.1
   y_lim <- c(y_range[1] - y_buffer, y_range[2] + y_buffer)
 
   list(
-    ggplot2::geom_line(ggplot2::aes(y = ucl), color = ucl_color, linetype = "dashed", linewidth = 1),
-    ggplot2::geom_line(ggplot2::aes(y = lcl), color = ucl_color, linetype = "dashed", linewidth = 1),
-    ggplot2::geom_line(ggplot2::aes(y = cl), color = cl_color, linewidth = 1),
-    ggplot2::geom_line(color = data_color, linewidth = 0.5),
-    ggplot2::geom_point(color = data_color, size = 2),
+    ggplot2::geom_line(data = data, ggplot2::aes(y = .data$ucl), color = ucl_color, linetype = "dashed", linewidth = 1),
+    ggplot2::geom_line(data = data, ggplot2::aes(y = .data$lcl), color = ucl_color, linetype = "dashed", linewidth = 1),
+    ggplot2::geom_line(data = data, ggplot2::aes(y = .data$cl), color = cl_color, linewidth = 1),
+    ggplot2::geom_line(data = data, color = data_color, linewidth = 0.5),
+    ggplot2::geom_point(data = data, color = data_color, size = 2),
     ggplot2::annotate("text",
       x = max(data$x, na.rm = TRUE), y = data$ucl[1],
       label = "UCL", hjust = -0.2, vjust = -0.5, size = 3

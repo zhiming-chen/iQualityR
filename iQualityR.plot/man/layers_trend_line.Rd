@@ -9,6 +9,7 @@ layers_trend_line(
   data = NULL,
   add_points = TRUE,
   smoothing = NULL,
+  theme = NULL,
   line_args = list(),
   point_args = list(),
   smooth_args = list()
@@ -22,6 +23,10 @@ layers_trend_line(
 \item{add_points}{If TRUE, adds points to the line.}
 
 \item{smoothing}{Smoothing method (e.g. "lm", "loess"). If NULL, no smoothing.}
+
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Currently
+not used for color resolution; accepted for API consistency with the
+other \code{layers_*} functions.}
 
 \item{line_args}{List of arguments passed to geom_line.}
 

@@ -1,0 +1,563 @@
+---
+title: "Hypothesis Testing Visualization"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Hypothesis Testing Visualization}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Hypothesis testing is the backbone of statistical decision making in quality
+engineering. Whether you are verifying a supplier's mean fill weight, auditing a
+process center against a specification, or validating a measurement target, you
+ultimately translate sample evidence into one of two decisions: **reject** or
+**fail to reject** the null hypothesis ($H_0$).
+
+Numbers alone are easy to misread. A test statistic of $z = 2.13$ tells a story,
+but seeing where that statistic sits relative to the rejection region makes the
+conclusion immediate and defensible to non-statisticians on the shop floor. The
+`iQualityR.plot` package provides three visualization helpers that turn a
+hypothesis test into a clear graphical verdict:
+
+- `plot_hypothesis_curve()` — draws the sampling distribution and shades the
+  rejection region, with the test statistic marked as a vertical line.
+- `plot_hypothesis_box()` — draws the sample data as a boxplot with the
+  hypothesized mean, sample mean, and confidence interval annotated.
+- `plot_hypothesis_combined()` — stacks the two views in a single patchwork
+  composition so the distribution logic and the raw data evidence can be read
+  together.
+
+This vignette walks through the theory behind each plot, demonstrates the
+function signatures on a real fill-weight verification scenario, and finishes
+with a decision guide and parameter reference. Every function accepts a
+`theme` argument (a theme name such as `"academic"` or an `IqrTheme`
+object) and resolves its colors — rejection ribbon, statistic line,
+critical-value dashes, boxplot fill — from the active theme through
+`.iqr_aes()`, so users rarely need to specify colors explicitly.
+
+## 2. Theory: Visualizing the Logic of Hypothesis Testing
+
+A hypothesis test partitions the sample space of a test statistic into two
+regions: a region that is consistent with $H_0$ (the *non-rejection region*) and
+a region that is so unlikely under $H_0$ that observing the statistic there
+forces us to reject $H_0$ (the *rejection region*). Visualization makes that
+partition tangible.
+
+### 2.1 The rejection region
+
+Let $T$ be a test statistic whose distribution under $H_0$ is known. The
+rejection region $\mathcal{R}$ is the set of statistic values for which we
+reject $H_0$:
+
+$$
+\mathcal{R} = \{ t : P_{H_0}(T \geq |t|) \leq \alpha \}
+$$
+
+For a two-sided z-test at significance level $\alpha = 0.05$, the rejection
+region is
+
+$$
+\mathcal{R} = \{ z : |z| > 1.96 \}.
+$$
+
+On a plot of the standard normal density, this region is the red-shaded area in
+both tails, whose combined area equals $\alpha$. The blue vertical line marking
+the observed statistic tells you at a glance whether you are inside or outside
+the red zone.
+
+### 2.2 Critical values vs test statistics
+
+The **critical value** $c_\alpha$ is the boundary of the rejection region. The
+**test statistic** $t_{\text{obs}}$ is the value computed from the sample. The
+decision rule is simply
+
+$$
+\text{Reject } H_0 \iff |t_{\text{obs}}| > |c_\alpha|.
+$$
+
+Visually, the critical value is where the red shading starts; the test
+statistic is where the blue line lands. If the blue line sits in the red
+shading, reject $H_0$; if it sits in the white area, fail to reject $H_0$. The
+plot removes any ambiguity about whether a "borderline" statistic is on the
+correct side of the threshold.
+
+### 2.3 One-sided vs two-sided alternatives
+
+The shape of the rejection region depends on the alternative hypothesis
+$H_1$:
+
+| Alternative | Rejection region | Tail(s) |
+|-------------|------------------|---------|
+| $H_1: \mu \neq \mu_0$ (two-sided) | $\|t\| > c_{\alpha/2}$ | both |
+| $H_1: \mu > \mu_0$ (greater) | $t > c_{\alpha}$ | right |
+| $H_1: \mu < \mu_0$ (less) | $t < -c_{\alpha}$ | left |
+
+The **p-value** is the probability of observing a statistic at least as extreme
+as the one observed, assuming $H_0$ is true:
+
+$$
+p = P_{H_0}\bigl(|T| \geq |t_{\text{obs}}|\bigr).
+$$
+
+When $p < \alpha$ the observed statistic falls inside the rejection region and
+we reject $H_0$. The functions in this package let you annotate the p-value
+directly on the curve so the graphical verdict and the numeric verdict always
+agree.
+
+## 3. plot_hypothesis_curve() — rejection region plot
+
+`plot_hypothesis_curve()` draws a normal or Student's t sampling distribution,
+shades the rejection region in red, and drops a blue vertical line at the
+observed test statistic. The rule is simple: **blue in red — reject; blue in
+white — fail to reject**.
+
+### Function signature
+
+```{r, eval = FALSE}
+plot_hypothesis_curve(
+  dist = c("norm", "t"),
+  stat_value,
+  critical_value,
+  alternative = c("two.sided", "less", "greater"),
+  alpha = 0.05,
+  df = NULL,
+  stat_label = NULL,
+  p_value = NULL,
+  theme = NULL
+)
+```
+
+### Two-sided z-test example
+
+Suppose a z-statistic of 2.34 is observed against a critical value of 1.96
+under a two-sided alternative at $\alpha = 0.05$.
+
+```{r}
+p <- plot_hypothesis_curve(
+  dist = "norm",
+  stat_value = 2.34,
+  critical_value = 1.96,
+  alternative = "two.sided",
+  alpha = 0.05,
+  stat_label = "Z",
+  p_value = 0.0192
+)
+p
+```
+
+The blue line at $Z = 2.34$ falls inside the right-tail red shading, so we
+reject $H_0$. The p-value annotation confirms the decision numerically.
+
+### One-sided greater alternative
+
+For a one-sided test, only one tail is shaded. With a statistic of 1.72 against
+a one-sided critical value of 1.645:
+
+```{r}
+plot_hypothesis_curve(
+  dist = "norm",
+  stat_value = 1.72,
+  critical_value = 1.645,
+  alternative = "greater",
+  alpha = 0.05,
+  stat_label = "Z",
+  p_value = 0.0427
+)
+```
+
+### t-distribution example
+
+When the population standard deviation is unknown and estimated from the
+sample, the test statistic follows a t distribution with $n-1$ degrees of
+freedom. With $\text{df} = 24$, a statistic of 2.20, and a two-sided critical
+value of about 2.064:
+
+```{r}
+plot_hypothesis_curve(
+  dist = "t",
+  stat_value = 2.20,
+  critical_value = 2.064,
+  alternative = "two.sided",
+  alpha = 0.05,
+  df = 24,
+  stat_label = "t",
+  p_value = 0.0382
+)
+```
+
+The heavier tails of the t distribution are visible: the rejection region is
+slightly wider than under the normal curve for the same $\alpha$.
+
+### One-sided less alternative
+
+When the alternative is $H_1: \mu < \mu_0$, the rejection region is in the left
+tail. A statistic of $-2.05$ against $-1.96$:
+
+```{r}
+plot_hypothesis_curve(
+  dist = "norm",
+  stat_value = -2.05,
+  critical_value = 1.96,
+  alternative = "less",
+  alpha = 0.05,
+  stat_label = "Z",
+  p_value = 0.0202
+)
+```
+
+## 4. plot_hypothesis_box() — H0 line with confidence interval
+
+While `plot_hypothesis_curve()` shows the *distribution* of the test statistic,
+`plot_hypothesis_box()` grounds the decision in the *raw sample data*. It draws
+a boxplot of the sample, marks the hypothesized mean $\mu_0$ with a red cross,
+marks the sample mean $\bar{x}$ with a blue point, and draws the confidence
+interval as blue error bars. An embedded statistics table reports the test
+statistic, p-value, and decision.
+
+### Function signature
+
+```{r, eval = FALSE}
+plot_hypothesis_box(
+  x,
+  mu,
+  sigma = NULL,
+  alternative = c("two.sided", "less", "greater"),
+  conf_level = 0.95,
+  show_table = TRUE,
+  table_position = "right",
+  theme = NULL
+)
+```
+
+### Example with simulated data
+
+```{r}
+set.seed(42)
+fill_weights <- rnorm(30, mean = 498, sd = 4)
+
+p_box <- plot_hypothesis_box(
+  x = fill_weights,
+  mu = 500,
+  alternative = "two.sided",
+  conf_level = 0.95
+)
+p_box
+```
+
+The blue point (sample mean) is clearly below the red cross ($\mu_0 = 500$), and
+the confidence interval does not overlap $\mu_0$, signaling rejection of $H_0$.
+
+### Z-test mode with known sigma
+
+When the population standard deviation is known, pass `sigma` to perform a
+Z-test rather than a t-test:
+
+```{r}
+plot_hypothesis_box(
+  x = fill_weights,
+  mu = 500,
+  sigma = 4,
+  alternative = "two.sided",
+  conf_level = 0.95
+)
+```
+
+### Table below the plot
+
+Set `table_position = "bottom"` to stack the statistics table under the
+boxplot:
+
+```{r}
+plot_hypothesis_box(
+  x = fill_weights,
+  mu = 500,
+  alternative = "less",
+  conf_level = 0.95,
+  table_position = "bottom"
+)
+```
+
+## 5. plot_hypothesis_combined() — curve + box
+
+`plot_hypothesis_combined()` stacks the rejection-region curve and the sample
+boxplot into a single patchwork composition. The top panel shows the
+distribution logic; the bottom panel shows the data evidence. Reading the two
+together is the most convincing way to communicate a hypothesis test result to
+a mixed audience.
+
+### Function signature
+
+```{r, eval = FALSE}
+plot_hypothesis_combined(
+  x,
+  mu,
+  sigma = NULL,
+  alternative = c("two.sided", "less", "greater"),
+  conf_level = 0.95,
+  theme = NULL
+)
+```
+
+### Combined view
+
+```{r, fig.height = 7}
+set.seed(42)
+fill_weights <- rnorm(30, mean = 498, sd = 4)
+
+p_combined <- plot_hypothesis_combined(
+  x = fill_weights,
+  mu = 500,
+  alternative = "two.sided",
+  conf_level = 0.95
+)
+p_combined
+```
+
+The top panel shows the test statistic sitting in the rejection region; the
+bottom panel shows the sample mean and its confidence interval clearly below
+$\mu_0 = 500$. Both panels tell the same story, which is exactly what you want
+in a regulatory or audit setting.
+
+## 6. Quality Scenario: verifying a supplier's mean fill weight claim
+
+A supplier of bottled beverage claims the mean fill weight is 500 g. As the
+quality engineer, you draw a random sample of 30 bottles from the latest
+shipment. Unbeknownst to the supplier, the process has drifted and the true
+mean is 498 g with a standard deviation of 4 g.
+
+```{r}
+set.seed(42)
+fill_weights <- rnorm(30, mean = 498, sd = 4)
+
+# Sample summary
+sample_mean <- mean(fill_weights)
+sample_sd <- sd(fill_weights)
+sample_se <- sample_sd / sqrt(length(fill_weights))
+
+cat("Sample mean      :", fmt_num(sample_mean), "g\n")
+cat("Sample SD         :", fmt_num(sample_sd), "g\n")
+cat("Standard error    :", fmt_num(sample_se), "g\n")
+```
+
+### Step 1 — state the hypotheses
+
+$$
+H_0: \mu = 500 \quad \text{vs} \quad H_1: \mu \neq 500
+$$
+
+### Step 2 — compute the test statistic
+
+Because the population SD is unknown, we use a one-sample t-test with
+$\text{df} = 29$.
+
+```{r}
+t_stat <- (sample_mean - 500) / sample_se
+critical_t <- qt(0.975, df = 29)
+p_val <- 2 * pt(-abs(t_stat), df = 29)
+
+cat("t statistic       :", fmt_num(t_stat), "\n")
+cat("Critical t (0.025):", fmt_num(critical_t), "\n")
+cat("p-value           :", fmt_num(p_val), "\n")
+```
+
+### Step 3 — visualize the rejection region
+
+```{r}
+plot_hypothesis_curve(
+  dist = "t",
+  stat_value = t_stat,
+  critical_value = critical_t,
+  alternative = "two.sided",
+  alpha = 0.05,
+  df = 29,
+  stat_label = "t",
+  p_value = p_val
+)
+```
+
+The blue line falls inside the left-tail rejection region: reject $H_0$.
+
+### Step 4 — visualize the sample evidence
+
+```{r}
+plot_hypothesis_box(
+  x = fill_weights,
+  mu = 500,
+  alternative = "two.sided",
+  conf_level = 0.95
+)
+```
+
+### Step 5 — combined view for the audit report
+
+```{r, fig.height = 7}
+plot_hypothesis_combined(
+  x = fill_weights,
+  mu = 500,
+  alternative = "two.sided",
+  conf_level = 0.95
+)
+```
+
+### Step 6 — theme-driven coloring
+
+Every hypothesis plot resolves its colors from the active `IqrTheme`.
+The rejection-region ribbon uses the theme `fail` semantic, the
+statistic line uses the theme `primary` semantic, and the critical-value
+dashes use the theme `muted` role. Switching `theme` repaints the entire
+report — no per-call color arguments are required:
+
+```{r, fig.show="hold", out.width="50%"}
+plot_hypothesis_curve(
+  dist = "t", stat_value = t_stat, critical_value = critical_t,
+  alternative = "two.sided", alpha = 0.05, df = 29,
+  stat_label = "t", p_value = p_val, theme = "economist"
+) + ggplot2::labs(title = "t-curve — economist")
+
+plot_hypothesis_box(
+  x = fill_weights, mu = 500, alternative = "two.sided",
+  conf_level = 0.95, theme = "prism"
+) + ggplot2::labs(title = "Box — prism")
+```
+
+### Conclusion
+
+Because $|t| > c_{0.025, 29}$ and $p < 0.05$, we reject $H_0$. There is
+statistically significant evidence that the supplier's mean fill weight differs
+from 500 g — specifically, it is below the claimed target. The lot should be
+flagged for review.
+
+## 7. Decision Guide — reading the plots
+
+Use the following table to translate what you see on the plot into a decision.
+
+| What you see on the curve plot | What you see on the box plot | Decision |
+|--------------------------------|------------------------------|----------|
+| Blue line in red shading | CI does not overlap $\mu_0$ | Reject $H_0$ |
+| Blue line in white area | CI overlaps $\mu_0$ | Fail to reject $H_0$ |
+| Blue line exactly on the critical value | CI edge touches $\mu_0$ | Borderline — collect more data |
+
+Practical tips:
+
+- **Always check both panels.** The curve plot confirms the statistical
+  decision; the box plot confirms the practical magnitude. A statistically
+  significant shift of 0.1 g may not matter operationally.
+- **Mind the alternative.** A one-sided test has more power in its favored
+  direction but no power in the opposite direction. Match the alternative to
+  the engineering question, not to the desired p-value.
+- **Report the p-value, do not worship it.** The plot conveys the same
+  information as $p < 0.05$ but also shows *how far* into the rejection region
+  the statistic falls, which a bare p-value hides.
+- **Use the t distribution when sigma is unknown.** With small samples the
+  heavier tails of the t distribution make a real difference to the decision.
+- **Check assumptions.** These plots assume the sampling distribution of the
+  mean is approximately normal (CLT) or that the underlying data are normal.
+  For small samples from skewed data, consider a non-parametric alternative.
+
+## 8. Parameter Reference
+
+### plot_hypothesis_curve()
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `dist` | character | `"norm"` for normal, `"t"` for Student's t. |
+| `stat_value` | numeric | Observed test statistic (z or t). |
+| `critical_value` | numeric | Critical value (positive scalar). |
+| `alternative` | character | `"two.sided"`, `"less"`, or `"greater"`. |
+| `alpha` | numeric | Significance level (default 0.05). |
+| `df` | numeric | Degrees of freedom for the t distribution. |
+| `stat_label` | character | Label for the statistic axis (e.g. `"Z"`, `"t"`). |
+| `p_value` | numeric | Optional p-value, displayed on the plot. |
+| `theme` | character/IqrTheme | Theme name or object; ribbon uses `fail` semantic, statistic line uses `primary`, critical dashes use `muted`. |
+
+### plot_hypothesis_box()
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `x` | numeric | Sample data vector. |
+| `mu` | numeric | Hypothesized population mean under $H_0$. |
+| `sigma` | numeric | Known population SD (Z-test); `NULL` uses sample SD (t-test). |
+| `alternative` | character | `"two.sided"`, `"less"`, or `"greater"`. |
+| `conf_level` | numeric | Confidence level for the interval (default 0.95). |
+| `show_table` | logical | Whether to embed the statistics table. |
+| `table_position` | character | `"right"` or `"bottom"`. |
+| `theme` | character/IqrTheme | Theme name or object; H0 marker uses `fail` semantic, sample mean uses `primary`. |
+
+### plot_hypothesis_combined()
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `x` | numeric | Sample data vector. |
+| `mu` | numeric | Hypothesized population mean under $H_0$. |
+| `sigma` | numeric | Known population SD (Z-test); `NULL` uses sample SD (t-test). |
+| `alternative` | character | `"two.sided"`, `"less"`, or `"greater"`. |
+| `conf_level` | numeric | Confidence level (default 0.95). |
+| `theme` | character/IqrTheme | Theme name or object propagated to both panels. |
+
+## 9. Summary
+
+The three hypothesis-testing plotters in `iQualityR.plot` turn the abstract
+logic of rejection regions, critical values, and p-values into a graphical
+verdict that engineers, auditors, and managers can read at a glance:
+
+- **`plot_hypothesis_curve()`** shows whether the test statistic falls inside
+  the rejection region of the sampling distribution.
+- **`plot_hypothesis_box()`** grounds the decision in the raw sample data with
+  the hypothesized mean, sample mean, and confidence interval annotated.
+- **`plot_hypothesis_combined()`** stacks both views so the distribution logic
+  and the data evidence reinforce each other.
+
+Used together, they make hypothesis test communication defensible,
+reproducible, and accessible to non-statisticians.
+
+## 10. Further Reading
+
+- The `iQualityR.plot` package vignettes on **MSA (Measurement System
+  Analysis)** and **ANOVA Visualization** for related visualization tools.
+- Montgomery, D. C. (2019). *Introduction to Statistical Quality Control*,
+  8th ed. Wiley. — Chapters on hypothesis testing and process capability.
+- NIST/SEMATECH e-Handbook of Statistical Methods,
+  <https://www.itl.nist.gov/div898/handbook/> — sections on test statistics
+  and critical values.
+- `?stats::t.test` and `?stats::pnorm` for the underlying R machinery that
+  computes the statistics visualized here.
+
+## References
+
+Montgomery, D. C. (2019). *Introduction to Statistical Quality Control* (8th
+ed.). John Wiley & Sons.
+
+NIST/SEMATECH. (2024). *e-Handbook of Statistical Methods*.
+<https://www.itl.nist.gov/div898/handbook/>
+
+R Core Team. (2024). *R: A Language and Environment for Statistical
+Computing*. R Foundation for Statistical Computing, Vienna, Austria.
+<https://www.R-project.org/>
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*.
+Springer-Verlag New York. <https://ggplot2-book.org/>

@@ -13,9 +13,14 @@
 #' @importFrom stats hatvalues cooks.distance dffits fitted
 #' @importFrom rlang .data
 #' @importFrom utils packageVersion
-#' @importFrom iQualityR.core IqrTaskBase IqrPlanBase IqrPlotterBase
+#' @importFrom iQualityR.core IqrTaskBase IqrPlanBase IqrPlotterBase IqrTheme
 #' @keywords internal
 "_PACKAGE"
+
+# Shared IqrPlotterBase singleton — unified color pipeline entry point.
+# All plotter classes in this package source colors from this instance via
+# .pal_* / .scale_* methods, ensuring consistent theming across the ecosystem.
+.iqr_plotter <- iQualityR.core::IqrPlotterBase$new()
 
 # =============================================================================
 # Global Configuration Constants

@@ -218,12 +218,13 @@ plot_fishbone_weighted <- function(problem,
     stop("ggplot2 is required.")
   }
 
-  # Default importance colors from semantic palette
+  # Default importance colors from semantic palette (consolidated via .iqr_aes())
+  c <- .iqr_aes(theme_obj)
   if (is.null(importance_colors)) {
     importance_colors <- c(
-      "critical"   = .iqr_plotter$.pal_semantic(theme_obj, "fail"),
-      "important"  = .iqr_plotter$.pal_semantic(theme_obj, "watch"),
-      "normal"     = .iqr_plotter$.pal_semantic(theme_obj, "neutral")
+      "critical"   = c$fail,
+      "important"  = c$watch,
+      "normal"     = c$neutral
     )
   }
 
@@ -496,7 +497,7 @@ plot_fishbone_weighted <- function(problem,
     ggplot2::geom_segment(
       data = segments_data[segments_data$bone_type == "spine", ],
       ggplot2::aes(x = x, y = y, xend = xend, yend = yend),
-      color = .iqr_plotter$.pal_ui(theme_obj, "text", default = "black"),
+      color = c$text,
       linewidth = 2,
       lineend = "round",
       arrow = ggplot2::arrow(length = ggplot2::unit(0.3, "cm"), type = "closed")
@@ -505,7 +506,7 @@ plot_fishbone_weighted <- function(problem,
     ggplot2::geom_segment(
       data = segments_data[segments_data$bone_type == "main", ],
       ggplot2::aes(x = x, y = y, xend = xend, yend = yend),
-      color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666"),
+      color = c$muted,
       linewidth = 1.5,
       lineend = "round"
     ) +
@@ -532,8 +533,8 @@ plot_fishbone_weighted <- function(problem,
     ggplot2::geom_label(
       data = labels_data[labels_data$bone_type == "problem", ],
       ggplot2::aes(x = x * 1.05, y = y, label = label),
-      fill = .iqr_plotter$.pal_ui(theme_obj, "danger"),
-      color = .iqr_plotter$.pal_ui(theme_obj, "surface", default = "white"),
+      fill = c$danger,
+      color = c$surface,
       fontface = "bold",
       size = font_size * 0.6,
       linewidth = 1
@@ -542,7 +543,7 @@ plot_fishbone_weighted <- function(problem,
     ggplot2::geom_text(
       data = labels_data[labels_data$bone_type == "main", ],
       ggplot2::aes(x = x, y = y, label = label),
-      color = .iqr_plotter$.pal_ui(theme_obj, "text", default = "black"),
+      color = c$text,
       fontface = "bold",
       size = font_size * 0.6,
       hjust = 0.5
@@ -590,7 +591,7 @@ plot_fishbone_weighted <- function(problem,
       plot.subtitle = ggplot2::element_text(
         hjust = 0.5,
         size = font_size * 1.5,
-        color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666")
+        color = c$muted
       )
     ) +
     ggplot2::labs(
@@ -680,12 +681,13 @@ plot_fishbone_faceted <- function(problem,
     stop("patchwork is required for faceted fishbone diagrams.")
   }
 
-  # Default importance colors from semantic palette
+  # Default importance colors from semantic palette (consolidated via .iqr_aes())
+  c <- .iqr_aes(theme_obj)
   if (is.null(importance_colors)) {
     importance_colors <- c(
-      "critical"   = .iqr_plotter$.pal_semantic(theme_obj, "fail"),
-      "important"  = .iqr_plotter$.pal_semantic(theme_obj, "watch"),
-      "normal"     = .iqr_plotter$.pal_semantic(theme_obj, "neutral")
+      "critical"   = c$fail,
+      "important"  = c$watch,
+      "normal"     = c$neutral
     )
   }
 
@@ -742,7 +744,7 @@ plot_fishbone_faceted <- function(problem,
       subtitle = subtitle,
       theme = ggplot2::theme(
         plot.title = ggplot2::element_text(hjust = 0.5, size = 16, face = "bold"),
-        plot.subtitle = ggplot2::element_text(hjust = 0.5, size = 12, color = .iqr_plotter$.pal_ui(theme_obj, "muted", default = "#666666"))
+        plot.subtitle = ggplot2::element_text(hjust = 0.5, size = 12, color = c$muted)
       )
     )
 

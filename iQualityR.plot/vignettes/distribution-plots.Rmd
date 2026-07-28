@@ -1,0 +1,500 @@
+---
+title: "Distribution and Normality Visualization"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Distribution and Normality Visualization}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Many statistical methods used in quality engineering — process capability
+analysis, control chart design, hypothesis tests on means, and gauge R&R
+studies — rely on the assumption that the underlying process output follows
+a specified probability distribution. The most common assumption is
+**normality**, but Weibull, exponential, and uniform distributions also
+appear in reliability, waiting-time, and randomness studies.
+
+Visual diagnostics are the first line of defense against distributional
+misspecification. A well-constructed probability plot can reveal skewness,
+heavy tails, multimodality, and outliers long before a formal hypothesis
+test would flag them. The `iQualityR.plot` package provides three building
+blocks for this purpose:
+
+* `plot_pp()` — Probability-Probability (P-P) plots
+* `plot_qq()` — Quantile-Quantile (Q-Q) plots with confidence bands and
+  goodness-of-fit tests
+* `layers_qq()` — Composable `ggplot2` layers for custom Q-Q constructions
+
+This vignette walks through the theory behind each plot, demonstrates every
+function on realistic quality-engineering data, and provides a decision
+guide for interpreting the results.
+
+## 2. Theory: Assessing Distributional Assumptions
+
+### 2.1 P-P plots vs Q-Q plots — what each diagnoses
+
+Both P-P and Q-Q plots compare an empirical distribution to a theoretical
+one, but they emphasize different regions of the data.
+
+**P-P plot.** For an ordered sample $x_{(1)} \le x_{(2)} \le \dots \le x_{(n)}$,
+the P-P plot pairs the empirical cumulative probability
+
+$$
+p_i^{emp} = \frac{i - 0.5}{n}
+$$
+
+against the theoretical cumulative probability
+
+$$
+p_i^{theo} = F\!\left(x_{(i)};\,\theta\right)
+$$
+
+where $F$ is the candidate CDF with parameters $\theta$. If the data follow
+$F$, the points fall on the $y = x$ diagonal. Because both axes are
+cumulative *probabilities* (not raw data values), the P-P plot is
+**most sensitive to deviations in the center** of the distribution, where
+most observations accumulate.
+
+**Q-Q plot.** The Q-Q plot pairs the ordered sample values (sample
+quantiles) against the theoretical quantiles
+
+$$
+q_i = F^{-1}\!\left(\frac{i - 0.5}{n};\,\theta\right)
+$$
+
+so the horizontal axis is in the **units of the theoretical distribution**
+while the vertical axis is in the units of the data. The Q-Q plot is
+**most sensitive to deviations in the tails**, because tail quantiles are
+spread far apart along the theoretical axis.
+
+| Feature | P-P plot | Q-Q plot |
+|---|---|---|
+| Horizontal axis | Empirical CDF | Theoretical quantile |
+| Vertical axis | Theoretical CDF | Sample quantile |
+| Sensitive region | Center | Tails |
+| Units | Probabilities (0–1) | Data units |
+| Outlier detection | Weak | Strong |
+
+### 2.2 Expected quantile calculation
+
+For a normal distribution, the plotting position most commonly used in Q-Q
+plots is the **Blom approximation**,
+
+$$
+z_i = \Phi^{-1}\!\left(\frac{i - 3/8}{n + 1/4}\right),
+$$
+
+although the simpler form $\Phi^{-1}((i - 0.5)/n)$ is adequate for most
+practical work and is the convention used by `stats::qqnorm()`. For
+non-normal families the inverse CDF $F^{-1}$ is substituted directly; for
+example, the Weibull quantile function is
+
+$$
+Q(p) = \eta\,[-\ln(1 - p)]^{1/\beta},
+$$
+
+with shape $\beta$ and scale $\eta$.
+
+### 2.3 Common distribution families in quality engineering
+
+| Family | CDF | Typical use in quality |
+|---|---|---|
+| Normal | $\Phi((x-\mu)/\sigma)$ | Measurement error, dimensional data |
+| Uniform | $(x - a)/(b - a)$ | Randomness checks, lottery, balance |
+| Exponential | $1 - e^{-\lambda x}$ | Waiting times between events |
+| Weibull | $1 - e^{-(x/\eta)^\beta}$ | Time-to-failure, reliability |
+
+The `plot_pp()` and `plot_qq()` functions accept a `dist_family` shortcut
+that selects one of `"none"`, `"norm"`, `"unif"`, `"exp"`, or `"weibull"`,
+or a custom `distribution`/`dist_params` pair for any `p*`/`q*` function.
+
+## 3. plot_pp() — Probability-Probability Plots
+
+`plot_pp()` produces a P-P plot of the empirical cumulative probability
+against the theoretical cumulative probability. Set `add_test = TRUE` to
+also print a Kolmogorov–Smirnov goodness-of-fit test to the console.
+
+```{r}
+# Basic normal P-P plot on simulated measurement data
+set.seed(1)
+meas <- data.frame(length = rnorm(120, mean = 50, sd = 0.3))
+
+p1 <- plot_pp(
+  data        = meas,
+  sample_col  = "length",
+  dist_family = "norm",
+  add_test    = TRUE
+)
+p1
+```
+
+The points hug the diagonal, consistent with normality. The Kolmogorov–
+Smirnov statistic reported to the console quantifies the maximum vertical
+distance between the empirical and theoretical CDFs.
+
+**Custom distribution.** Any valid `p*` function can be supplied. Here the
+theoretical distribution is forced to be uniform, and the departure from
+the diagonal is immediately visible:
+
+```{r}
+plot_pp(
+  data        = meas,
+  sample_col  = "length",
+  dist_family = "unif",
+  add_test    = TRUE
+)
+```
+
+**Exponential family** for simulated inter-arrival times:
+
+```{r}
+set.seed(7)
+waits <- data.frame(t = rexp(150, rate = 0.4))
+
+plot_pp(
+  data        = waits,
+  sample_col  = "t",
+  dist_family = "exp",
+  add_test    = TRUE
+)
+```
+
+## 4. plot_qq() — Quantile-Quantile Plots
+
+`plot_qq()` is the workhorse for distributional assessment. Beyond the
+base Q-Q point cloud, it supports a reference line, a simulated confidence
+band, and a choice of goodness-of-fit test.
+
+### 4.1 Normal Q-Q
+
+By default `plot_qq()` produces a normal Q-Q plot with a quartile reference
+line (the line passes through the first and third sample quartiles) and an
+Anderson–Darling test.
+
+```{r}
+plot_qq(
+  data           = meas,
+  sample_col     = "length",
+  dist_family    = "norm",
+  qq_line        = "quartiles",
+  add_confidence = TRUE,
+  conf_level     = 0.95,
+  n_sim          = 1000,
+  add_test       = TRUE,
+  test_method    = "auto"
+)
+```
+
+The grey band represents the region in which 95% of the points are expected
+to fall if the data truly follow the fitted normal distribution. Points
+that leave the band signal departures from normality.
+
+**Identity line.** When the theoretical and sample scales already match
+(for example, standardized residuals), use `qq_line = "identity"` to draw
+the $y = x$ line:
+
+```{r}
+std_resid <- data.frame(r = scale(meas$length)[, 1])
+
+plot_qq(
+  data        = std_resid,
+  sample_col  = "r",
+  dist_family = "norm",
+  qq_line     = "identity",
+  add_test    = FALSE
+)
+```
+
+### 4.2 Fitting other distributions
+
+`dist_family = "weibull"` fits a two-parameter Weibull distribution to
+simulated time-to-failure data. Note that the Anderson–Darling test is
+preferred for Weibull because it weights tail discrepancies more heavily
+than the K-S test.
+
+```{r}
+set.seed(21)
+fail_times <- data.frame(t = rweibull(100, shape = 1.7, scale = 500))
+
+plot_qq(
+  data           = fail_times,
+  sample_col     = "t",
+  dist_family    = "weibull",
+  qq_line        = "quartiles",
+  add_confidence = TRUE,
+  conf_level     = 0.95,
+  add_test       = TRUE,
+  test_method    = "ad"
+)
+```
+
+The `test_method` argument controls which goodness-of-fit statistic is
+reported:
+
+* `"auto"` — Anderson–Darling for normal, Kolmogorov–Smirnov otherwise
+* `"ad"` — Anderson–Darling (tail-weighted)
+* `"ks"` — Kolmogorov–Smirnov (center-weighted)
+
+## 5. layers_qq() — Composable Q-Q layers
+
+`layers_qq()` returns a list of `ggplot2` layers (a `stat_qq` layer and a
+`stat_qq_line` layer) that can be added to any `ggplot()` call. This is
+useful when you need fine control over aesthetics or want to combine the
+Q-Q construction with other geoms. The function accepts a `theme` argument
+so the layer colors follow the active theme, just like the other `layers_*`
+builders.
+
+```{r}
+# Build a custom Q-Q plot by hand using layers_qq().
+# Point and line colors are pulled from the resolved theme via attr(p, "iqr_theme").
+p_qq <- base_plot(meas, aes(sample = .data$length), theme = "academic")
+c_qq <- attr(p_qq, "iqr_theme")
+
+p_qq <- p_qq +
+  layers_qq(
+    distribution = "norm",
+    dparams      = list(mean = 50, sd = 0.3),
+    theme        = "academic",
+    qq_args      = list(color = c_qq$get_pal("discrete")[1], alpha = 0.7),
+    line_args    = list(color = c_qq$get_pal("semantic", name = "fail"),
+                        linewidth = 1.1)
+  ) +
+  labs(
+    title    = "Custom Q-Q plot using layers_qq()",
+    subtitle = "Normal reference, parameters fixed by the analyst",
+    x        = "Theoretical quantiles",
+    y        = "Sample quantiles"
+  )
+
+print(p_qq)
+```
+
+The layers accept any arguments that `ggplot2::stat_qq()` and
+`ggplot2::stat_qq_line()` accept, passed through `qq_args` and `line_args`.
+
+## 6. Quality Scenario: Normality Assessment of Injection-Molded Parts
+
+A Six Sigma team is verifying the normality assumption for a wall-thickness
+capability study on injection-molded plastic housings. One hundred parts
+were sampled from a single cavity. Past experience suggests the process is
+"mostly normal" but occasionally contaminated by a slightly off-center
+short shot. We simulate this structure and apply every diagnostic in turn.
+
+```{r}
+set.seed(42)
+molded <- data.frame(
+  thickness = c(rnorm(80, 2.5, 0.08), rnorm(20, 2.6, 0.12))  # mostly normal with some contamination
+)
+
+# Quick look at the data
+summary(molded$thickness)
+#>    Min. 1st Qu.  Median    Mean 3rd Qu.    Max.
+#>   2.282   2.446   2.501   2.518   2.579   2.812
+```
+
+**Step 1 — P-P plot.** The center of the distribution looks healthy, but
+recall that P-P plots are insensitive to tail contamination.
+
+```{r}
+plot_pp(
+  data        = molded,
+  sample_col  = "thickness",
+  dist_family = "norm",
+  add_test    = TRUE
+)
+```
+
+**Step 2 — Q-Q plot with confidence band.** The tails reveal the
+contamination: the upper-tail points drift outside the 95% simulated band.
+
+```{r}
+plot_qq(
+  data           = molded,
+  sample_col     = "thickness",
+  dist_family    = "norm",
+  qq_line        = "quartiles",
+  add_confidence = TRUE,
+  conf_level     = 0.95,
+  n_sim          = 1000,
+  add_test       = TRUE,
+  test_method    = "ad"
+)
+```
+
+**Step 3 — Compare Anderson–Darling vs Kolmogorov–Smirnov.** The
+Anderson–Darling statistic is more likely to flag the tail contamination
+because it weights squared discrepancies in the tails.
+
+```{r}
+plot_qq(
+  data        = molded,
+  sample_col  = "thickness",
+  dist_family = "norm",
+  add_test    = TRUE,
+  test_method = "ks"
+)
+```
+
+**Step 4 — Custom Q-Q with layers_qq().** The team wants to overlay the
+Q-Q construction on a plot with their own theme and annotation. Colors are
+resolved from the active theme via `attr(p, "iqr_theme")`, so no hardcoded
+values are needed.
+
+```{r}
+p_molded <- base_plot(molded, aes(sample = .data$thickness), theme = "academic")
+c_molded <- attr(p_molded, "iqr_theme")
+
+p_molded +
+  layers_qq(
+    distribution = "norm",
+    theme        = "academic",
+    qq_args      = list(color = c_molded$get_pal("discrete")[1], alpha = 0.7),
+    line_args    = list(color = c_molded$get_pal("semantic", name = "fail"),
+                        linetype = "dashed")
+  ) +
+  annotate(
+    "text", x = 2, y = 2.75,
+    label = "Upper-tail contamination\nfrom short shots",
+    color = c_molded$get_ui_colors()$warning, hjust = 0
+  ) +
+  labs(
+    title    = "Wall thickness — Q-Q diagnostic",
+    subtitle = "Injection-molded housings, cavity A",
+    x        = "Theoretical quantiles",
+    y        = "Sample thickness (mm)"
+  )
+```
+
+**Step 5 — Decision.** The combined evidence (visible tail departure on the
+Q-Q plot, elevated Anderson–Darling statistic) tells the team that the
+cavity produces a contaminated mixture. Before computing $C_p$/$C_{pk}$ they
+should investigate the short-shot root cause or use a robust capability
+method rather than assuming normality.
+
+## 7. Interpreting Distribution Plots — Decision Guide
+
+| Pattern on Q-Q plot | Likely cause | Recommended action |
+|---|---|---|
+| Points follow the line, inside band | Data consistent with distribution | Proceed with capability / SPC analysis |
+| Both tails bend upward | Right-skewed (positive skew) | Try Weibull or lognormal; transform data |
+| Both tails bend downward | Left-skewed (negative skew) | Try reflected-lognormal; check for floor effect |
+| Heavy tails (S-shape) | Leptokurtic; mixture or contamination | Investigate subgroups; consider robust methods |
+| Light tails (inverted S) | Platykurtic; truncated data | Check for inspection screening |
+| Single off-diagonal point | Outlier | Verify measurement; consider retention |
+| Curved overall pattern | Wrong distribution family | Re-fit with alternative `dist_family` |
+
+**Reading the confidence band.** The band shows the envelope within which
+*every* point is expected to fall, with probability `conf_level`, when the
+data truly follow the fitted distribution. One or two points leaving the
+band is not alarming; systematic excursions in the tails or center are.
+
+**Test vs plot.** A non-significant goodness-of-fit test does **not**
+prove the distribution fits — large samples will reject nearly any
+distribution, and small samples rarely reject. Always read the test
+alongside the plot.
+
+## 8. Parameter Reference
+
+### plot_pp()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `data` | data.frame | — | Data frame containing the sample |
+| `sample_col` | bare name | — | Column with sample values |
+| `theme` | ggplot theme | `NULL` | Optional `ggplot2` theme |
+| `distribution` | function | `pnorm` | CDF function of candidate distribution |
+| `dist_params` | list | `list()` | Named parameters passed to `distribution` |
+| `dist_family` | character | `"none"` | Shortcut: `"norm"`, `"unif"`, `"exp"`, `"weibull"` |
+| `add_test` | logical | `TRUE` | Print Kolmogorov–Smirnov test to console |
+
+### plot_qq()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `data` | data.frame | — | Data frame containing the sample |
+| `sample_col` | bare name | — | Column with sample values |
+| `theme` | ggplot theme | `NULL` | Optional `ggplot2` theme |
+| `distribution` | function | `qnorm` | Quantile function of candidate distribution |
+| `dist_params` | list | `list()` | Named parameters passed to `distribution` |
+| `dist_family` | character | `"none"` | Shortcut family selector |
+| `qq_line` | character | `"quartiles"` | `"quartiles"` or `"identity"` |
+| `add_confidence` | logical | `FALSE` | Add simulated confidence band |
+| `conf_level` | numeric | `0.95` | Confidence level for the band |
+| `n_sim` | integer | `1000` | Number of simulations for the band |
+| `add_test` | logical | `TRUE` | Print goodness-of-fit test |
+| `test_method` | character | `"auto"` | `"auto"`, `"ad"`, or `"ks"` |
+
+### layers_qq()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `distribution` | character | `"norm"` | Distribution name understood by `stat_qq` |
+| `dparams` | list | `list()` | Distribution parameters |
+| `theme` | character/IqrTheme | `NULL` | Theme name or object; defaults resolved via `as_iqr_theme_object()` |
+| `qq_args` | list | `list()` | Extra arguments forwarded to `stat_qq()` |
+| `line_args` | list | `list()` | Extra arguments forwarded to `stat_qq_line()` |
+
+## 9. Summary
+
+* **P-P plots** are best for diagnosing the *center* of a distribution.
+* **Q-Q plots** are best for diagnosing the *tails* and detecting outliers.
+* Use **Anderson–Darling** when tail behavior matters (reliability,
+  capability); use **Kolmogorov–Smirnov** for a general-purpose center
+  check.
+* The **simulated confidence band** provides a visual acceptance region
+  without relying on asymptotic approximations.
+* **layers_qq()** lets you embed Q-Q diagnostics inside bespoke
+  `ggplot2` constructions for reports and dashboards.
+* Always pair a visual diagnostic with a goodness-of-fit test, and never
+  treat a non-rejection as proof of fit.
+
+## 10. Further Reading
+
+* Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*,
+  7th ed. Wiley. — Chapters on process capability and measurement systems.
+* D'Agostino, R. B., & Stephens, M. A. (1986). *Goodness-of-Fit
+  Techniques*. Marcel Dekker. — Reference for Anderson–Darling and related
+  statistics.
+* Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*.
+  Springer. — Background on `stat_qq()` and layer composition.
+* Meeker, W. Q., & Escobar, L. A. (1998). *Statistical Methods for
+  Reliability Data*. Wiley. — Weibull and lognormal Q-Q methodology.
+
+## References
+
+D'Agostino, R. B., & Stephens, M. A. (1986). *Goodness-of-Fit Techniques*.
+New York: Marcel Dekker.
+
+Meeker, W. Q., & Escobar, L. A. (1998). *Statistical Methods for
+Reliability Data*. New York: Wiley.
+
+Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+(7th ed.). Hoboken, NJ: Wiley.
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*.
+New York: Springer.

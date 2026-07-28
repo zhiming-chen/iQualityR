@@ -29,15 +29,7 @@ Type1Plotter <- R6::R6Class(
     render = function(results, theme_obj, type = "summary", ...) {
       iqr_theme <- if (inherits(theme_obj, "IqrTheme")) theme_obj else NULL
       gg_theme <- if (is.null(iqr_theme)) ggplot2::theme_bw() else iqr_theme$theme_iqr()
-      colors <- if (is.null(iqr_theme)) {
-        c("#4477AA", "#EE6677", "#228833", "#CCBB44", "#66CCEE", "#AA3377")
-      } else {
-        iqr_theme$config$data$discrete %||% c("#4477AA", "#EE6677", "#228833", "#CCBB44", "#66CCEE", "#AA3377")
-      }
-      if (length(colors) < 3) {
-        colors <- c("#4477AA", "#EE6677", "#228833", "#CCBB44", "#66CCEE", "#AA3377")
-      }
-      colors <- rep(colors, length.out = 8)
+      colors <- self$.pal_discrete(iqr_theme %||% IqrTheme$new(), 8)
 
       study_type <- results$raw_output$study_type
       if (is.null(study_type)) {
@@ -74,7 +66,8 @@ Type1Plotter <- R6::R6Class(
       type
     },
 
-    plot_bias_runchart = function(results, theme_obj, colors = c("#4477AA", "#EE6677", "#228833")) {
+    plot_bias_runchart = function(results, theme_obj, colors = NULL) {
+      if (is.null(colors)) colors <- .iqr_plotter$.pal_discrete(IqrTheme$new(), 3)
       dt <- data.table::data.table(
         index = seq_along(results$raw_output$measurements),
         measurement = results$raw_output$measurements
@@ -98,7 +91,8 @@ Type1Plotter <- R6::R6Class(
         theme_obj
     },
 
-    plot_capability = function(results, theme_obj, colors = c("#4477AA", "#EE6677", "#228833")) {
+    plot_capability = function(results, theme_obj, colors = NULL) {
+      if (is.null(colors)) colors <- .iqr_plotter$.pal_discrete(IqrTheme$new(), 3)
       cap_df <- data.table::data.table(
         metric = c("Cg", "Cgk"),
         value = c(results$statistics$Cg, results$statistics$Cgk)
@@ -123,7 +117,8 @@ Type1Plotter <- R6::R6Class(
         ggplot2::theme(legend.position = "none")
     },
 
-    plot_vda5_uncertainty = function(results, theme_obj, colors = c("#4477AA", "#EE6677", "#228833")) {
+    plot_vda5_uncertainty = function(results, theme_obj, colors = NULL) {
+      if (is.null(colors)) colors <- .iqr_plotter$.pal_discrete(IqrTheme$new(), 3)
       uc <- results$data_tables$vda5_uncertainty
       uc_filter <- uc[uc$component != "Total", ]
 
@@ -142,7 +137,8 @@ Type1Plotter <- R6::R6Class(
         ggplot2::theme(legend.position = "none")
     },
 
-    plot_linearity = function(results, theme_obj, colors = c("#4477AA", "#EE6677", "#228833")) {
+    plot_linearity = function(results, theme_obj, colors = NULL) {
+      if (is.null(colors)) colors <- .iqr_plotter$.pal_discrete(IqrTheme$new(), 3)
       ref_sum <- results$data_tables$ref_summary
       lm_mod <- results$raw_output$lm_model
       pred_data <- data.table::data.table(
@@ -186,7 +182,8 @@ Type1Plotter <- R6::R6Class(
       p
     },
 
-    plot_ref_biases = function(results, theme_obj, colors = c("#4477AA", "#EE6677", "#228833")) {
+    plot_ref_biases = function(results, theme_obj, colors = NULL) {
+      if (is.null(colors)) colors <- .iqr_plotter$.pal_discrete(IqrTheme$new(), 3)
       ref_sum <- results$data_tables$ref_summary
 
       ggplot2::ggplot(ref_sum, ggplot2::aes(x = factor(.data$reference), y = .data$bias, fill = factor(.data$reference))) +
@@ -203,7 +200,8 @@ Type1Plotter <- R6::R6Class(
         ggplot2::theme(legend.position = "none")
     },
 
-    plot_repeatability = function(results, theme_obj, colors = c("#4477AA", "#EE6677", "#228833")) {
+    plot_repeatability = function(results, theme_obj, colors = NULL) {
+      if (is.null(colors)) colors <- .iqr_plotter$.pal_discrete(IqrTheme$new(), 3)
       ref_sum <- results$data_tables$ref_summary
 
       ggplot2::ggplot(ref_sum, ggplot2::aes(x = factor(.data$reference), y = .data$sd, fill = factor(.data$reference))) +

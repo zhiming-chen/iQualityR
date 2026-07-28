@@ -15,8 +15,37 @@ base_plot(data, mapping, theme = NULL)
 (e.g. "prism"), theme function, or IqrTheme object.}
 }
 \value{
-A \code{ggplot} object.
+A \code{ggplot} object with theme and (if applicable) fill/color
+scales already attached.
 }
 \description{
-Creates the base ggplot object with the iQualityR theme applied.
+Creates the base ggplot object with the iQualityR theme applied and
+automatically injects theme-aware scales for any \code{fill} / \code{color}
+(or \code{colour}) aesthetic present in \code{mapping}. This means that
+whenever the user maps a fill or color to a variable, the resulting plot
+follows the active theme palette without any extra code.
+}
+\details{
+\strong{Auto-injected scales} (based on column type):
+\itemize{
+\item discrete column  -> \code{theme_obj$plot$scale_fill_iqr(discrete=TRUE)}
+\item continuous column -> \code{theme_obj$plot$scale_fill_sequential()}
+}
+
+\strong{Scales that cannot be auto-inferred} (attach explicitly using the
+IqrTheme object retrieved via \code{attr(p, "iqr_theme")}):
+\itemize{
+\item paired mode (fill + darkened color, for boxplots/bars) ->
+\code{theme_obj$plot$scale_fill_iqr(discrete=TRUE, style="paired")}
++ \code{theme_obj$plot$scale_color_iqr(discrete=TRUE, style="paired")}
+\item diverging gradient (for residuals, correlations) ->
+\code{theme_obj$plot$scale_fill_diverging(midpoint=0)}
+\item semantic palette (pass / fail / watch) ->
+\code{theme_obj$plot$scale_fill_semantic(labels=c("pass","fail","watch"))}
+}
+
+The resolved \code{IqrTheme} object is stashed as attribute
+\code{"iqr_theme"} on the returned ggplot object so downstream code can
+retrieve it via \code{attr(p, "iqr_theme")} and use the full
+\code{theme_obj$plot$*} / \code{theme_obj$config$*} API directly.
 }

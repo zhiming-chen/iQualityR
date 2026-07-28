@@ -22,7 +22,14 @@
 #'   sigma_estimate sigma_decomposition summarize_spc_rules list_spc_rules
 #'   get_d2 get_d3 get_d4 get_c4 get_A2 get_A3 get_B3 get_B4 get_D3 get_D4 get_E2
 #' @importFrom iQualityR.plot layers_control_chart base_plot
+#' @importFrom iQualityR.core IqrTheme IqrPlotterBase
 "_PACKAGE"
+
+# Shared IqrPlotterBase singleton — unified color pipeline entry point.
+# All plotter classes in this package source colors from this instance via
+# .pal_* / .scale_* methods, ensuring consistent theming across the iQualityR
+# ecosystem.
+.iqr_plotter <- iQualityR.core::IqrPlotterBase$new()
 
 # Suppress R CMD check NOTE for ggplot2 aes() column references and
 # data.table/non-standard evaluation variable bindings.

@@ -6,6 +6,7 @@
 \usage{
 layers_boxplot(
   add_jitter = TRUE,
+  theme = NULL,
   ...,
   boxplot_args = list(),
   jitter_args = list()
@@ -13,6 +14,11 @@ layers_boxplot(
 }
 \arguments{
 \item{add_jitter}{If TRUE, adds jittered points.}
+
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Currently
+not used for color resolution (boxplot fill is usually mapped via
+\code{base_plot()}'s auto-injection); accepted for API consistency with
+the other \code{layers_*} functions.}
 
 \item{...}{Common arguments passed to both geoms.}
 

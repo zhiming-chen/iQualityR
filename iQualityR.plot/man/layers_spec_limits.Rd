@@ -7,7 +7,8 @@
 layers_spec_limits(
   lsl = NULL,
   usl = NULL,
-  spec_color = "red",
+  theme = NULL,
+  spec_color = NULL,
   lsl_label = paste("LSL =", lsl),
   usl_label = paste("USL =", usl),
   vline_args = list(),
@@ -19,7 +20,14 @@ layers_spec_limits(
 
 \item{usl}{Upper specification limit. If NULL, not drawn.}
 
-\item{spec_color}{Color for specification lines and labels.}
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Used to
+resolve \code{spec_color} when it is NULL. The color is taken from the
+theme's semantic palette slot \code{"fail"}.}
+
+\item{spec_color}{Color for specification lines and labels. If NULL
+(default), the color is resolved from \code{theme} via
+\code{theme_obj$get_pal("semantic", name="fail")}, so the lines follow
+the active theme automatically. Pass an explicit color to override.}
 
 \item{lsl_label}{Label for LSL.}
 

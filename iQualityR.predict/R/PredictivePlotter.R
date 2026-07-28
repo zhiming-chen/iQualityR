@@ -3,15 +3,6 @@
 # Description: Quality Prediction Modeling Plotting Module
 # =============================================================================
 
-# Helper function to safely access theme properties with fallback defaults
-.safe_theme_color <- function(theme_obj, color_name = "primary", default = "#4477AA") {
-  tryCatch({
-    theme_obj$config$config$ui[[color_name]]
-  }, error = function(e) {
-    default
-  })
-}
-
 .safe_theme_fn <- function(theme_obj, fn_name = "theme_iqr", default_fn = ggplot2::theme_minimal) {
   tryCatch({
     theme_obj$plot[[fn_name]]
@@ -310,13 +301,13 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         predicted = predicted
       )
 
-      primary_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      primary_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
       ggplot2::ggplot(df, ggplot2::aes(x = actual, y = predicted)) +
         ggplot2::geom_point(alpha = 0.6, color = primary_color) +
         ggplot2::geom_abline(intercept = 0, slope = 1, linetype = "dashed",
-                             color = "red", linewidth = 1) +
+                             color = .iqr_plotter$.pal_semantic(theme_obj, "fail"), linewidth = 1) +
         theme_fn() +
         ggplot2::labs(
           x = "Actual",
@@ -335,13 +326,13 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         residual = residuals
       )
 
-      primary_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      primary_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
       ggplot2::ggplot(df, ggplot2::aes(x = fitted, y = residual)) +
         ggplot2::geom_hline(yintercept = 0, linetype = "solid", color = "grey50") +
         ggplot2::geom_point(alpha = 0.6, color = primary_color) +
-        ggplot2::geom_smooth(method = "loess", color = "red", linewidth = 1) +
+        ggplot2::geom_smooth(method = "loess", color = .iqr_plotter$.pal_semantic(theme_obj, "fail"), linewidth = 1) +
         theme_fn() +
         ggplot2::labs(
           x = "Fitted",
@@ -355,12 +346,12 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         return(ggplot2::ggplot() + ggplot2::theme_void())
       }
 
-      primary_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      primary_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
       ggplot2::ggplot(qq_data, ggplot2::aes(x = theoretical, y = sample)) +
         ggplot2::geom_abline(intercept = 0, slope = 1, linetype = "dashed",
-                             color = "red") +
+                             color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
         ggplot2::geom_point(color = primary_color) +
         theme_fn() +
         ggplot2::labs(
@@ -379,15 +370,15 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
       mean_res <- mean(residuals)
       sd_res <- sd(residuals)
 
-      primary_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      primary_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
       ggplot2::ggplot(df, ggplot2::aes(x = residual)) +
         ggplot2::geom_histogram(ggplot2::aes(y = ggplot2::after_stat(density)),
                                 bins = 20, fill = primary_color,
                                 alpha = 0.7) +
-        ggplot2::geom_density(color = "red", linewidth = 1) +
-        ggplot2::geom_vline(xintercept = mean_res, linetype = "dashed", color = "blue") +
+        ggplot2::geom_density(color = .iqr_plotter$.pal_semantic(theme_obj, "fail"), linewidth = 1) +
+        ggplot2::geom_vline(xintercept = mean_res, linetype = "dashed", color = .iqr_plotter$.pal_discrete(theme_obj)[2]) +
         theme_fn() +
         ggplot2::labs(
           x = "Residual",
@@ -409,8 +400,8 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
 
       ggplot2::ggplot(vif_df, ggplot2::aes(x = term, y = vif, fill = severity)) +
         ggplot2::geom_col() +
-        ggplot2::geom_hline(yintercept = 5, linetype = "dashed", color = "orange") +
-        ggplot2::geom_hline(yintercept = 10, linetype = "dashed", color = "red") +
+        ggplot2::geom_hline(yintercept = 5, linetype = "dashed", color = .iqr_plotter$.pal_ui(theme_obj, "warning")) +
+        ggplot2::geom_hline(yintercept = 10, linetype = "dashed", color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
         theme_fn() +
         ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
         ggplot2::labs(
@@ -433,8 +424,8 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
 
       ggplot2::ggplot(df, ggplot2::aes(x = observation, y = hat_value)) +
         ggplot2::geom_hline(yintercept = df$threshold[1], linetype = "dashed",
-                            color = "red") +
-        ggplot2::geom_point(color = ifelse(df$is_highlight, "red", "grey"),
+                            color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
+        ggplot2::geom_point(color = ifelse(df$is_highlight, .iqr_plotter$.pal_semantic(theme_obj, "fail"), "grey"),
                             alpha = 0.7) +
         theme_fn() +
         ggplot2::labs(
@@ -453,8 +444,8 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
 
       ggplot2::ggplot(cooks_df, ggplot2::aes(x = observation, y = cooks_d)) +
         ggplot2::geom_hline(yintercept = cooks_df$threshold[1], linetype = "dashed",
-                            color = "red") +
-        ggplot2::geom_point(color = ifelse(cooks_df$is_influential, "red", "grey"),
+                            color = .iqr_plotter$.pal_semantic(theme_obj, "fail")) +
+        ggplot2::geom_point(color = ifelse(cooks_df$is_influential, .iqr_plotter$.pal_semantic(theme_obj, "fail"), "grey"),
                             alpha = 0.7) +
         theme_fn() +
         ggplot2::labs(
@@ -498,8 +489,8 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         df$percentage <- rep(0, nrow(df))
       }
 
-      # Determine bar fill color using safe accessor
-      bar_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      # Determine bar fill color using unified palette
+      bar_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
 
       ggplot2::ggplot(df, ggplot2::aes(x = factor, y = importance)) +
         ggplot2::geom_col(fill = bar_color) +
@@ -601,7 +592,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
       importance_df <- importance_df[order(-importance_df$importance), ]
       importance_df$factor <- factor(importance_df$factor, levels = importance_df$factor)
 
-      bar_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      bar_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
       ggplot2::ggplot(importance_df, ggplot2::aes(x = factor, y = importance)) +
@@ -620,7 +611,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         return(ggplot2::ggplot() + ggplot2::theme_void())
       }
 
-      bar_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      bar_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
       # Create partial dependence plot for each factor, combine into multi-panel
@@ -673,7 +664,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         ggplot2::geom_tile() +
         ggplot2::geom_text(ggplot2::aes(label = Freq), size = 5) +
         theme_fn() +
-        ggplot2::scale_fill_gradient(low = "white", high = "steelblue") +
+        .iqr_plotter$.scale_fill_sequential(theme_obj) +
         ggplot2::labs(title = "Confusion Matrix")
     },
 
@@ -699,7 +690,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
           tpr = roc_obj$sensitivities
         )
 
-        bar_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+        bar_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
         theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
 
         ggplot2::ggplot(roc_df, ggplot2::aes(x = fpr, y = tpr)) +
@@ -748,7 +739,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
         ggplot2::geom_point(size = 2) +
         {if (!all(is.na(df$ci_lower))) ggplot2::geom_ribbon(
           ggplot2::aes(ymin = ci_lower, ymax = ci_upper),
-          fill = "grey", alpha = 0.3, inherit.aes = FALSE,
+          fill = .iqr_plotter$.pal_ui(theme_obj, "muted"), alpha = 0.3, inherit.aes = FALSE,
           data = df[!is.na(df$ci_lower), ]
         )} +
         .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)() +
@@ -839,7 +830,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
       }
 
       theme_fn <- .safe_theme_fn(theme_obj, "theme_iqr", ggplot2::theme_minimal)
-      bar_color <- .safe_theme_color(theme_obj, "primary", "#4477AA")
+      bar_color <- .iqr_plotter$.pal_discrete(theme_obj)[1]
 
       plots <- list()
 
@@ -852,7 +843,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
             ggplot2::geom_tile() +
             ggplot2::geom_text(ggplot2::aes(label = Freq), size = 6, fontface = "bold") +
             theme_fn() +
-            ggplot2::scale_fill_gradient(low = "white", high = bar_color) +
+            .iqr_plotter$.scale_fill_sequential(theme_obj) +
             ggplot2::labs(title = "Confusion Matrix")
           plots[[1]] <- p1
         }
@@ -901,7 +892,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
           ggplot2::geom_text(ggplot2::aes(label = sprintf("%.3f", Value)), vjust = -0.5, size = 4) +
           ggplot2::scale_y_continuous(limits = c(0, 1.1), expand = ggplot2::expansion(mult = c(0, 0.1))) +
           theme_fn() +
-          ggplot2::scale_fill_brewer(palette = "Set2") +
+          .iqr_plotter$.scale_fill_discrete(theme_obj) +
           ggplot2::labs(title = "Classification Metrics", y = "Value", x = "") +
           ggplot2::theme(legend.position = "none", axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
       } else {
@@ -926,7 +917,7 @@ PredictivePlotter <- R6::R6Class("PredictivePlotter",
             ggplot2::geom_col(width = 0.6) +
             ggplot2::geom_text(ggplot2::aes(label = Count), vjust = -0.5, size = 4) +
             theme_fn() +
-            ggplot2::scale_fill_brewer(palette = "Set2") +
+            .iqr_plotter$.scale_fill_discrete(theme_obj) +
             ggplot2::labs(title = "Class Distribution") +
             ggplot2::theme(legend.position = "none")
           plots[[4]] <- p4

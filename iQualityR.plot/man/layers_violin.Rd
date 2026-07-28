@@ -6,6 +6,7 @@
 \usage{
 layers_violin(
   add_boxplot = TRUE,
+  theme = NULL,
   ...,
   violin_args = list(),
   boxplot_args = list()
@@ -13,6 +14,10 @@ layers_violin(
 }
 \arguments{
 \item{add_boxplot}{If TRUE, adds a small boxplot inside.}
+
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Used to
+resolve the inner boxplot \code{fill} from the theme's \code{"surface"}
+UI slot so the inner boxplot contrasts with the violin fill.}
 
 \item{...}{Common arguments passed to geom_violin and (optionally) geom_boxplot.}
 

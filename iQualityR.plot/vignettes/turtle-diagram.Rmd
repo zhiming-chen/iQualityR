@@ -1,0 +1,646 @@
+---
+title: "Turtle Diagrams for Process Mapping"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Turtle Diagrams for Process Mapping}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(iQualityR.core)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+A quality management system lives or dies by how well its processes are
+understood. The **turtle diagram** is a one-page visual artifact that captures
+every essential facet of a single process on a single canvas, making it a
+favorite of ISO 9001 auditors and process owners alike. Where a flowchart shows
+*what happens next*, a turtle diagram answers the broader question *what does
+this process need to operate correctly, and how do we know it worked?*
+
+The `iQualityR.plot` package provides `plot_turtle_diagram()`, a function that
+renders a turtle diagram as a Graphviz graph integrated with the package's
+`IqrTheme` system. The output is an interactive `DiagrammeR::grViz` object that
+can be displayed in the RStudio viewer, embedded in an R Markdown document, or
+exported to PNG, SVG, or PDF for inclusion in quality manuals and audit
+evidence packs.
+
+A defining feature of `plot_turtle_diagram()` is that **every box color is
+resolved automatically from the active `IqrTheme`**. The process body pulls
+the theme's `primary` UI color, while the six surrounding element boxes
+(inputs, outputs, resources, procedures, metrics, responsibilities) pull the
+first six entries of the theme's discrete palette. Switching the theme -- by
+name (`"academic"`, `"economist"`, `"solarized"`, ...) or by passing a custom
+`IqrTheme` object -- recolors the entire diagram in one step, so the turtle
+diagram stays visually consistent with the rest of the `iQualityR.plot`
+family (control charts, Pareto charts, fishbone diagrams) without any
+per-element color arguments.
+
+This vignette develops the theory of the process approach, walks through the
+seven elements of a turtle diagram, demonstrates the function with a worked
+calibration-process example, and closes with a parameter reference.
+
+## 2. Theory: The Process Approach (ISO 9001)
+
+### 2.1 What a turtle diagram represents
+
+ISO 9001:2015 promotes the **process approach** in Clause 0.3, which asks
+organizations to understand and manage their interrelated processes as a
+coherent system rather than as isolated procedures. The standard defines a
+process as a set of interrelated activities that transform inputs into outputs
+to deliver a planned result. A turtle diagram is the visual expression of that
+definition: a central body of activities flanked by the resources,
+responsibilities, methods, and measures that make the transformation
+consistent and controllable.
+
+The metaphor is anatomical. The *shell* (the central body) carries the
+process activities. The *head* points toward the methods and procedures that
+govern the work. The *flippers* hold the resources above and the
+responsibilities below. The *tail* carries the measures that tell the
+organization whether the process is behaving. Inputs flow in from the left and
+outputs flow out to the right, completing the transformation picture.
+
+ISO 9001 connects turtle diagrams to several operative clauses:
+
+* **Clause 8.2** — Requirements for products and services: inputs and outputs
+  make explicit what the customer needs and what the process delivers.
+* **Clause 8.5** — Production and service provision: activities, resources,
+  and procedures are the controlled conditions of provision.
+* **Clause 9.1** — Monitoring, measurement, analysis, and evaluation: the
+  measures element is the direct evidence base for Clause 9.1.
+
+### 2.2 The seven elements: Inputs, Outputs, Process, Resources, Responsibility, Measures, Methods
+
+A complete turtle diagram always carries seven elements. Leaving any of them
+blank is a signal that the process is not yet fully specified.
+
+1. **Inputs** — materials, information, or requirements entering the process.
+  An input is something the process consumes or reacts to; without it the
+  process cannot start.
+2. **Outputs** — products, services, or information leaving the process.
+  Outputs must be verifiable against input requirements, closing the
+  transformation loop.
+3. **Process (body)** — the core activities and transformations that turn
+  inputs into outputs. This is the *what we do* of the process.
+4. **Resources (top flipper)** — equipment, people, facilities, software, and
+  materials required to perform the activities. Resources answer *what do we
+  need to do it well?*
+5. **Responsibility (bottom flipper)** — who owns and runs the process.
+  ISO 9001 Clause 5.3 requires roles and responsibilities to be assigned; the
+  responsibility element makes this explicit for a single process.
+6. **Measures (tail)** — key performance indicators and metrics used to
+  monitor the process. These feed Clause 9.1 monitoring and are the basis for
+  data-driven improvement.
+7. **Methods / Procedures (head direction)** — standard operating procedures,
+  work instructions, and standards that define *how* the work is done. These
+  are the controlled documents referenced in Clause 7.5.
+
+The head direction of the turtle indicates where the methods element is drawn.
+The default `"T"` (top) places methods above the body alongside resources, but
+the diagram can be reoriented to `"B"`, `"L"`, or `"R"` to fit the available
+page layout.
+
+## 3. plot_turtle_diagram() — single process
+
+The `plot_turtle_diagram()` function accepts the seven elements as character
+vectors and renders a Graphviz-based turtle diagram. The minimal call
+specifies only the process name and the activities; the remaining elements
+default to placeholders that the user is expected to fill in.
+
+Let us begin with a minimal diagram showing only the process body and the
+seven-element skeleton.
+
+```{r}
+minimal_turtle <- plot_turtle_diagram(
+  process_name = "Raw Material Inspection",
+  activities = c(
+    "Receive material lot",
+    "Verify certificate of analysis",
+    "Sample per AQL plan",
+    "Perform incoming tests",
+    "Record results in ERP"
+  )
+)
+
+minimal_turtle
+```
+
+The function returns a `DiagrammeR::grViz` object invisibly, which renders
+inline in the viewer. The default `theme_style = "workbench"` palette uses
+muted engineering tones suitable for documentation: the process body is
+filled with the theme's `primary` UI color and the six element boxes take
+the first six entries of the theme's discrete palette, so the entire diagram
+is themed without any color argument. Each activity is listed in the central
+body, while the surrounding boxes prompt the user to supply the remaining six
+elements.
+
+A more complete call fills in every element. Here we map a simple document
+control process.
+
+```{r}
+doc_control <- plot_turtle_diagram(
+  process_name = "Document Control Process",
+  process_owner = "Document Control Coordinator",
+  activities = c(
+    "Receive document for review",
+    "Check format against template",
+    "Route for approval signatures",
+    "Publish to controlled repository",
+    "Distribute change notification"
+  ),
+  inputs = c(
+    "Draft document from author",
+    "Document change request form",
+    "Current revision history"
+  ),
+  outputs = c(
+    "Approved controlled document",
+    "Updated master list",
+    "Obsolete document withdrawn"
+  ),
+  resources = c(
+    "Document management system",
+    "Approval workflow software",
+    "Trained document coordinators"
+  ),
+  procedures = c(
+    "SOP-DOC-001: Document Control",
+    "ISO 9001:2015 Clause 7.5",
+    "Template library"
+  ),
+  metrics = c(
+    "Average approval cycle time",
+    "Document revision rate",
+    "Outdated-document incidents"
+  ),
+  responsibilities = c(
+    "Document Control Coordinator - owns process",
+    "Process Owner - approves content",
+    "QA Manager - audits compliance"
+  )
+)
+
+doc_control
+```
+
+## 4. Customizing the turtle diagram
+
+### 4.1 Theme style and IqrTheme objects
+
+The `theme_style` argument accepts `"tech"`, `"academic"`, or `"workbench"`.
+Each preset applies a distinct color palette to the seven element boxes. For
+audit submissions and academic reports the `"academic"` style is often
+preferred because it uses high-contrast monochrome tones that print cleanly in
+black and white.
+
+Internally, every preset is resolved into an `IqrTheme` object via
+`as_iqr_theme_object()`, and the seven box fills are pulled from two theme
+slots:
+
+| Diagram element              | Theme slot                  |
+|------------------------------|-----------------------------|
+| Process body                 | `ui$primary`                |
+| Inputs box                   | `discrete` palette entry 1  |
+| Outputs box                  | `discrete` palette entry 2  |
+| Resources box                | `discrete` palette entry 3  |
+| Procedures / methods box     | `discrete` palette entry 4  |
+| Metrics box                  | `discrete` palette entry 5  |
+| Responsibilities box         | `discrete` palette entry 6  |
+
+Because the mapping is fixed, switching the theme recolors the whole diagram
+deterministically. The chunk below renders the same calibration skeleton under
+three preset themes so the difference is visible at a glance.
+
+```{r}
+calib_activities <- c(
+  "Receive instrument",
+  "Verify environmental conditions",
+  "Perform calibration against reference standard",
+  "Record results",
+  "Issue calibration certificate"
+)
+
+plot_turtle_diagram(
+  process_name = "Calibration - workbench",
+  activities = calib_activities, theme_style = "workbench"
+)
+
+plot_turtle_diagram(
+  process_name = "Calibration - academic",
+  activities = calib_activities, theme_style = "academic"
+)
+
+plot_turtle_diagram(
+  process_name = "Calibration - tech",
+  activities = calib_activities, theme_style = "tech"
+)
+```
+
+```{r}
+plot_turtle_diagram(
+  process_name = "Internal Audit Process",
+  activities = c("Plan audit", "Conduct opening meeting", "Gather evidence"),
+  theme_style = "academic",
+  title = "Internal Audit Process Map",
+  subtitle = "Prepared for ISO 9001 surveillance audit"
+)
+```
+
+When an organization has codified its own colors in an `IqrTheme` object, the
+`iqr_theme` argument takes precedence over `theme_style`. This is the
+recommended route for enterprise consistency: build the theme once with
+`IqrTheme$new()` and pass it to every plot function in the package. The
+process body then inherits the corporate `primary` color and the six element
+boxes inherit the corporate discrete palette, so the turtle diagram matches
+the rest of the quality dashboard automatically.
+
+`IqrTheme$new(style, ...)` starts from a built-in preset and accepts nested
+overrides via `...`. The `merge_config` step does a deep merge, so you can
+override individual slots without re-specifying the whole configuration --
+for example, replacing only the `primary` UI color and the `discrete` data
+palette while keeping the rest of the preset.
+
+```{r}
+# A corporate IqrTheme: start from "academic", override the primary UI color
+# and the discrete data palette so all seven turtle boxes track the brand.
+custom_theme <- IqrTheme$new(
+  "academic",
+  ui   = list(primary = "#1F3A5F"),
+  data = list(discrete = c("#1F3A5F", "#C9A227", "#4C8C2B", "#6A4C93",
+                           "#A8431F", "#0F766E", "#7C3AED", "#0891B2"))
+)
+
+plot_turtle_diagram(
+  process_name = "Supplier Qualification Process",
+  activities = c(
+    "Receive supplier questionnaire",
+    "Perform risk assessment",
+    "Conduct on-site audit",
+    "Approve or reject supplier"
+  ),
+  iqr_theme = custom_theme,
+  theme_style = "tech"
+)
+```
+
+### 4.2 User-defined colors (one-off overrides)
+
+The theme is the primary color mechanism and should cover the overwhelming
+majority of use cases. The `user_colors` argument is an escape hatch for the
+rare situation where a single diagram must highlight one element outside the
+theme system -- for example, flagging a broken process step in a corrective
+action report. It accepts a named vector; recognized names map to the seven
+elements: `body`, `inputs`, `outputs`, `resources`, `responsibilities`,
+`measures`, and `methods`. Any name not supplied falls back to the theme
+palette, so you can override a single box without re-specifying the other six.
+
+The recommended pattern is to derive even one-off overrides from the active
+theme's semantic palette (e.g. `fail` for a broken step, `watch` for a
+degraded one) rather than hard-coding raw hex values, so the diagram still
+tracks the corporate palette.
+
+```{r}
+# Highlight the "resources" box with the theme's "fail" semantic color to
+# signal a resourcing gap; the other six boxes keep their theme fills.
+theme_obj <- as_iqr_theme_object("workbench")
+fail_col  <- theme_obj$get_pal("semantic", name = "fail")
+
+plot_turtle_diagram(
+  process_name = "Training Management Process",
+  activities = c(
+    "Identify training needs",
+    "Schedule sessions",
+    "Deliver training",
+    "Evaluate effectiveness"
+  ),
+  theme_style  = "workbench",
+  user_colors  = c(resources = fail_col)
+)
+```
+
+For ad-hoc diagrams that are not part of a themed report, raw hex values are
+also accepted:
+
+```{r, eval = FALSE}
+plot_turtle_diagram(
+  process_name = "Training Management Process",
+  activities = c("Identify training needs", "Deliver training"),
+  user_colors = c(body = "#2E5C8A", resources = "#E8A33D", measures = "#4C8C2B")
+)
+```
+
+### 4.3 Head direction
+
+The `direction` argument controls where the methods/procedures box is drawn
+relative to the body. The default `"T"` places it on top. On a portrait page,
+`"R"` (right) often produces a more balanced layout.
+
+```{r}
+plot_turtle_diagram(
+  process_name = "Corrective Action Process",
+  activities = c(
+    "Identify nonconformity",
+    "Determine root cause",
+    "Implement corrective action",
+    "Verify effectiveness"
+  ),
+  direction = "R",
+  theme_style = "tech"
+)
+```
+
+### 4.4 Title, subtitle, and annotation
+
+A title and subtitle appear above the diagram, while an annotation line is
+drawn at the bottom — useful for recording the document number, revision, and
+approval date required by controlled-document systems.
+
+```{r}
+plot_turtle_diagram(
+  process_name = "Risk Management Process",
+  activities = c(
+    "Identify risks",
+    "Assess severity and likelihood",
+    "Define mitigation actions",
+    "Monitor residual risk"
+  ),
+  title = "Risk Management Process Map",
+  subtitle = "Aligned with ISO 31000 and ISO 9001:2015 Clause 6.1",
+  subtitle_fontsize = 12,
+  annotation = "Document No. QM-PR-007  |  Rev. 3  |  Approved: 2025-11-04",
+  annotation_fontsize = 9
+)
+```
+
+### 4.5 Exporting to file
+
+Setting `output_file` writes the diagram to disk in the format specified by
+`output_type`. PNG is appropriate for slide decks, SVG for editable graphics
+in technical documentation, and PDF for inclusion in printed quality manuals.
+
+```{r, eval=FALSE}
+plot_turtle_diagram(
+  process_name = "Calibration Process",
+  activities = c("Receive instrument", "Perform calibration", "Issue certificate"),
+  output_file = "calibration_turtle",
+  output_type = "png"
+)
+```
+
+## 5. Quality Scenario: mapping the calibration process
+
+To bring the elements together we now map a realistic metrology process: the
+**Instrument Calibration Process** operated by a manufacturing site's
+Metrology Laboratory. Calibration is a high-risk process because every
+downstream measurement depends on the integrity of the calibrated instrument,
+so a complete turtle diagram is essential audit evidence under both ISO 9001
+and ISO/IEC 17025.
+
+### 5.1 Process context
+
+Instruments used for product verification must be calibrated against
+traceable reference standards at defined intervals. The metrology lab receives
+an uncalibrated instrument, verifies that environmental conditions support a
+valid calibration, performs the calibration against a reference standard,
+records the results, issues a certificate, and applies a calibration label.
+The process owner is the Metrology Lab Manager, and the work is governed by
+ISO/IEC 17025:2017 and a family of site standard operating procedures.
+
+### 5.2 Building the diagram
+
+We pass the seven elements as character vectors. Note that long text strings
+wrap automatically inside each box, so there is no need to pre-format the
+content.
+
+```{r}
+calibration_turtle <- plot_turtle_diagram(
+  process_name = "Instrument Calibration Process",
+  process_owner = "Metrology Lab Manager",
+  activities = c(
+    "Receive instrument",
+    "Verify environmental conditions",
+    "Perform calibration against reference standard",
+    "Record results",
+    "Issue calibration certificate",
+    "Apply calibration label"
+  ),
+  inputs = c(
+    "Uncalibrated instrument",
+    "Calibration procedure document",
+    "Previous calibration record"
+  ),
+  outputs = c(
+    "Calibrated instrument",
+    "Calibration certificate",
+    "Updated calibration database"
+  ),
+  resources = c(
+    "Reference standards (traceable to NIST)",
+    "Calibration software",
+    "Climate-controlled lab",
+    "Trained calibration technician"
+  ),
+  procedures = c(
+    "ISO 17025:2017",
+    "SOP-CAL-001: General Calibration Procedure",
+    "SOP-CAL-012: Temperature Calibration"
+  ),
+  metrics = c(
+    "Calibration interval adherence rate",
+    "Out-of-tolerance events per month",
+    "Average calibration turnaround time",
+    "Repeatability of reference standards"
+  ),
+  responsibilities = c(
+    "Metrology Lab Manager - overall process",
+    "Calibration Technician - execution",
+    "QA Manager - periodic review"
+  ),
+  direction = "T",
+  theme_style = "workbench",
+  title = "Instrument Calibration Process",
+  subtitle = "Metrology Laboratory  |  ISO/IEC 17025:2017",
+  subtitle_fontsize = 12,
+  annotation = "Document No. MET-PR-014  |  Rev. 2  |  Owner: Metrology Lab Manager",
+  annotation_fontsize = 9
+)
+
+calibration_turtle
+```
+
+### 5.3 Interpreting the diagram for an audit
+
+An auditor reading this turtle diagram can verify each ISO 9001 clause
+efficiently:
+
+* **Inputs and outputs** map to Clause 8.2 requirements — the uncalibrated
+  instrument and procedure document enter, and a calibrated instrument plus a
+  certificate leave.
+* **Activities and procedures** map to Clause 8.5 controlled conditions — the
+  six activity steps are governed by SOP-CAL-001 and ISO/IEC 17025.
+* **Resources** map to Clause 7.1.4 environment for the operation of
+  processes — the climate-controlled lab and traceable reference standards are
+  explicit.
+* **Responsibilities** map to Clause 5.3 organizational roles — three roles
+  are named with their scope.
+* **Measures** map to Clause 9.1 monitoring — four KPIs are listed, including
+  the out-of-tolerance event count that drives corrective action.
+
+### 5.4 Exporting the calibration diagram
+
+Because the calibration turtle is part of the controlled quality manual, we
+export it as a PDF for the document control repository.
+
+```{r, eval=FALSE}
+plot_turtle_diagram(
+  process_name = "Instrument Calibration Process",
+  process_owner = "Metrology Lab Manager",
+  activities = c(
+    "Receive instrument",
+    "Verify environmental conditions",
+    "Perform calibration against reference standard",
+    "Record results",
+    "Issue calibration certificate",
+    "Apply calibration label"
+  ),
+  inputs = c(
+    "Uncalibrated instrument",
+    "Calibration procedure document",
+    "Previous calibration record"
+  ),
+  outputs = c(
+    "Calibrated instrument",
+    "Calibration certificate",
+    "Updated calibration database"
+  ),
+  resources = c(
+    "Reference standards (traceable to NIST)",
+    "Calibration software",
+    "Climate-controlled lab",
+    "Trained calibration technician"
+  ),
+  procedures = c(
+    "ISO 17025:2017",
+    "SOP-CAL-001: General Calibration Procedure",
+    "SOP-CAL-012: Temperature Calibration"
+  ),
+  metrics = c(
+    "Calibration interval adherence rate",
+    "Out-of-tolerance events per month",
+    "Average calibration turnaround time",
+    "Repeatability of reference standards"
+  ),
+  responsibilities = c(
+    "Metrology Lab Manager - overall process",
+    "Calibration Technician - execution",
+    "QA Manager - periodic review"
+  ),
+  title = "Instrument Calibration Process",
+  subtitle = "Metrology Laboratory  |  ISO/IEC 17025:2017",
+  output_file = "calibration_process_map",
+  output_type = "pdf"
+)
+```
+
+## 6. Parameter Reference
+
+The table below summarizes every argument of `plot_turtle_diagram()`.
+
+| Argument              | Type                | Default      | Description                                                       |
+|-----------------------|---------------------|--------------|-------------------------------------------------------------------|
+| `process_name`        | character(1)        | —            | Name of the process, drawn at the top of the body.                |
+| `process_owner`       | character(1)        | `NULL`       | Process owner; appears in the responsibility box header.          |
+| `activities`          | character           | `NULL`       | Core activity steps, listed in the central body.                  |
+| `inputs`              | character/list      | `NULL`       | Inputs entering the process (left side).                         |
+| `outputs`             | character/list      | `NULL`       | Outputs leaving the process (right side).                        |
+| `resources`           | character           | `NULL`       | Resources required (top flipper).                                |
+| `procedures`          | character           | `NULL`       | Methods, SOPs, and standards (head direction).                   |
+| `metrics`             | character           | `NULL`       | KPIs and measures (tail).                                        |
+| `responsibilities`    | character           | `NULL`       | Roles and responsibility assignments (bottom flipper).           |
+| `direction`           | character(1)        | `"T"`        | Head direction: `"T"`, `"B"`, `"L"`, or `"R"`.                   |
+| `theme_style`         | character(1)        | `"workbench"`| Preset name resolved into an `IqrTheme`: `"tech"`, `"academic"`, or `"workbench"`. Drives all seven box fills (body <- `ui$primary`; elements <- `discrete` 1-6). |
+| `iqr_theme`           | IqrTheme/NULL       | `NULL`       | Custom `IqrTheme` object (built via `IqrTheme$new()`); takes precedence over `theme_style`. Recommended for enterprise consistency. |
+| `user_colors`         | named vector/NULL   | `NULL`       | Per-element one-off overrides; names: `body`, `inputs`, `outputs`, `resources`, `responsibilities`, `measures`, `methods`. Unspecified names fall back to the theme palette. |
+| `title`               | character(1)/NULL   | `NULL`       | Diagram title above the figure.                                  |
+| `subtitle`            | character(1)/NULL   | `NULL`       | Subtitle line below the title.                                   |
+| `subtitle_fontsize`   | numeric             | `14`         | Font size for the subtitle.                                      |
+| `annotation`          | character(1)/NULL   | `NULL`       | Annotation line at the bottom (e.g. document number).            |
+| `annotation_fontsize` | numeric             | `10`         | Font size for the annotation.                                    |
+| `output_file`         | character(1)/NULL   | `NULL`       | If set, exports the diagram to this file path.                   |
+| `output_type`         | character(1)        | `"png"`      | Export format: `"png"`, `"svg"`, or `"pdf"`.                     |
+| `...`                 | any                 | —            | Additional arguments forwarded to the Graphviz renderer.         |
+
+**Return value:** A `DiagrammeR::grViz` object, returned invisibly. When
+`output_file` is set, the file is written to disk in addition to the return
+value.
+
+**Color resolution:** The theme is the single source of truth for color.
+Internally, `as_iqr_theme_object(iqr_theme %||% theme_style)` resolves the
+active `IqrTheme`; the process body fill is pulled from `ui$primary` and the
+six element boxes from `discrete` palette entries 1-6. `user_colors` overrides
+individual boxes after the theme has been applied. No color argument is
+required for the default themed look.
+
+## 7. Summary
+
+The turtle diagram is a compact, audit-ready representation of a single
+process. By forcing the author to articulate all seven elements — inputs,
+outputs, activities, resources, responsibilities, measures, and methods — it
+exposes gaps in process definition that a flowchart alone would hide.
+`plot_turtle_diagram()` brings this artifact into the reproducible R workflow:
+the diagram is generated from data, themed consistently with the rest of the
+`iQualityR.plot` family, and exported to the formats required by controlled
+document systems. Used alongside the package's other process-mapping and
+statistical tools, it closes the loop between process definition, monitoring,
+and improvement that ISO 9001 calls the process approach.
+
+## 8. Further Reading
+
+* ISO 9001:2015 — *Quality management systems — Requirements*, Clauses 0.3,
+  5.3, 7.5, 8.2, 8.5, and 9.1.
+* ISO/IEC 17025:2017 — *General requirements for the competence of testing
+  and calibration laboratories*.
+* ISO 31000:2018 — *Risk management — Guidelines*.
+* Juran, J. M. and De Feo, J. A. (2010). *Juran's Quality Handbook*, 6th ed.
+  McGraw-Hill.
+* `iQualityR.plot` package — `plot_fishbone()`, `plot_pareto_enhanced()`, and
+  `IqrTheme$new()` for complementary quality-engineering visualizations.
+
+## References
+
+International Organization for Standardization. (2015). *ISO 9001:2015
+Quality management systems — Requirements*. Geneva: ISO.
+
+International Organization for Standardization. (2017). *ISO/IEC 17025:2017
+General requirements for the competence of testing and calibration
+laboratories*. Geneva: ISO.
+
+International Organization for Standardization. (2018). *ISO 31000:2018 Risk
+management — Guidelines*. Geneva: ISO.
+
+Juran, J. M., & De Feo, J. A. (2010). *Juran's Quality Handbook: The Complete
+Guide to Performance Excellence* (6th ed.). New York: McGraw-Hill.
+
+Socrates, J. A. (2015). *Process Mapping and Management*. Quality Press.

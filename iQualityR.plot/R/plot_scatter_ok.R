@@ -75,6 +75,7 @@ plot_scatter_basic <- function(data,
   }
 
   theme_obj <- as_iqr_theme_object(theme)
+  c <- .iqr_aes(theme_obj)
 
   # Create base plot
   p <- base_plot(data,
@@ -85,7 +86,7 @@ plot_scatter_basic <- function(data,
     theme = theme
   ) +
     ggplot2::geom_point(
-      color = point_color %||% .iqr_plotter$.pal_discrete(theme_obj)[1],
+      color = point_color %||% c$data,
       size = point_size,
       alpha = point_alpha,
       ...
@@ -97,8 +98,8 @@ plot_scatter_basic <- function(data,
       p <- p +
         ggplot2::geom_smooth(
           method = "lm",
-          color = line_color %||% .iqr_plotter$.pal_ui(theme_obj, "danger"),
-          fill = ci_fill %||% .iqr_plotter$.pal_ui(theme_obj, "primary"),
+          color = line_color %||% c$danger,
+          fill = ci_fill %||% c$primary,
           alpha = ci_alpha,
           linewidth = line_size,
           ...
@@ -107,7 +108,7 @@ plot_scatter_basic <- function(data,
       p <- p +
         ggplot2::geom_smooth(
           method = "lm",
-          color = line_color %||% .iqr_plotter$.pal_ui(theme_obj, "danger"),
+          color = line_color %||% c$danger,
           se = FALSE,
           linewidth = line_size,
           ...
@@ -294,7 +295,7 @@ plot_scatter_grouped <- function(data,
         model <- stats::lm(y_vals ~ x_vals, na.action = stats::na.exclude)
         coef_vals <- stats::coef(model)
         eq_label <- sprintf("y = %.2f + %.2f*x", coef_vals[1], coef_vals[2])
-        cor_labels[i] <- paste0(group, ": r = ", sprintf("%.3f", cor_value), "\n", eq_label)
+        cor_labels[i] <- paste0(group, ": r = ", sprintf("%.3f", cor_value), "|", eq_label)
       } else {
         cor_labels[i] <- paste0(group, ": r = ", sprintf("%.3f", cor_value))
       }
@@ -391,6 +392,7 @@ plot_scatter_bubble <- function(data,
   }
 
   theme_obj <- as_iqr_theme_object(theme)
+  c <- .iqr_aes(theme_obj)
 
   # Ensure group variable is a factor for discrete color scale
   if (!is.null(group_var) && !is.factor(data[[group_var]])) {
@@ -421,7 +423,7 @@ plot_scatter_bubble <- function(data,
       theme = theme
     ) +
       ggplot2::geom_point(
-        color = .iqr_plotter$.pal_discrete(theme_obj)[1],
+        color = c$data,
         alpha = point_alpha,
         ...
       )
@@ -531,14 +533,14 @@ plot_scatter_density <- function(data,
   }
 
   method <- match.arg(method)
-  theme_obj <- as_iqr_theme_object(theme)
-  data_colors <- .iqr_plotter$.pal_discrete(theme_obj)
+  c <- .iqr_aes(theme)
+  data_colors <- .iqr_plotter$.pal_discrete(c$theme_obj)
   # Density / count fills are always >= 0: use the theme sequential scale by
   # default, but honor an explicit user override (color_low / color_high).
   user_density_colors <- !is.null(color_low) || !is.null(color_high)
-  color_low <- color_low %||% .iqr_plotter$.pal_ui(theme_obj, "surface_soft", default = "#F7F9FC")
-  color_high <- color_high %||% .iqr_plotter$.pal_ui(theme_obj, "primary")
-  density_mid <- .iqr_plotter$.pal_ui(theme_obj, "surface", default = "white")
+  color_low <- color_low %||% c$surface_soft
+  color_high <- color_high %||% c$primary
+  density_mid <- c$surface
 
   # Create plot based on method
   if (method == "alpha") {
@@ -594,7 +596,7 @@ plot_scatter_density <- function(data,
         name = "Count"
       )
     } else {
-      p <- p + .iqr_plotter$.scale_fill_sequential(theme_obj, name = "Count")
+      p <- p + .iqr_plotter$.scale_fill_sequential(c$theme_obj, name = "Count")
     }
   } else if (method == "hex") {
     # Hexagonal binning method
@@ -622,7 +624,7 @@ plot_scatter_density <- function(data,
         name = "Count"
       )
     } else {
-      p <- p + .iqr_plotter$.scale_fill_sequential(theme_obj, name = "Count")
+      p <- p + .iqr_plotter$.scale_fill_sequential(c$theme_obj, name = "Count")
     }
   } else if (method == "density") {
     # Density coloring method
@@ -663,13 +665,13 @@ plot_scatter_density <- function(data,
         name = "Density"
       )
     } else {
-      p <- p + .iqr_plotter$.scale_fill_sequential(theme_obj, name = "Density")
+      p <- p + .iqr_plotter$.scale_fill_sequential(c$theme_obj, name = "Density")
     }
     p <- p +
       ggplot2::geom_point(
         alpha = 0.3,
         size = point_size / 2,
-        color = .iqr_plotter$.pal_ui(theme_obj, "text")
+        color = c$text
       )
   }
 
@@ -678,11 +680,11 @@ plot_scatter_density <- function(data,
     p <- p +
       ggplot2::geom_smooth(
         method = smooth_method,
-        color = .iqr_plotter$.pal_semantic(theme_obj, "fail"),
+        color = c$fail,
         linewidth = 1.2,
         se = TRUE,
         alpha = 0.2,
-        fill = .iqr_plotter$.pal_semantic(theme_obj, "fail")
+        fill = c$fail
       )
   }
 

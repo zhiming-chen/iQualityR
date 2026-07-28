@@ -1,0 +1,666 @@
+---
+title: "Advanced Statistical Plots"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Advanced Statistical Plots}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Beyond the basic quality tools — Pareto charts, histograms, and control
+charts — the `iQualityR.plot` package offers a family of advanced statistical
+plots that support multivariate analysis, designed-experiment diagnostics,
+time-series stability checks, classifier evaluation, and measurement system
+analysis (MSA). These plots share a common theming layer through `IqrTheme`
+and return `ggplot` objects, so they compose naturally with the rest of the
+`ggplot2` ecosystem.
+
+Every function in this vignette accepts a `theme` argument that can be
+either a theme name (e.g. `"academic"`, `"economist"`, `"solarized"`,
+`"prism"`) or an `IqrTheme` object. Colors — including diverging palettes
+for correlations, discrete palettes for variance components, and semantic
+colors for ACF significance lines — are resolved automatically through
+`.iqr_aes()` based on the active theme, so users rarely need to specify
+colors explicitly.
+
+This vignette covers six functions:
+
+* `plot_correlation_heatmap()` — multivariate correlation matrices.
+* `plot_interaction_line()` — two-way interaction effects in factorial
+  designs.
+* `plot_acf()` and `plot_pacf()` — autocorrelation and partial
+  autocorrelation for time-series and process-stability diagnostics.
+* `plot_roc_curve()` — receiver operating characteristic curves for binary
+  classifiers.
+* `plot_variance_components()` — variance decomposition for MSA.
+
+Each section develops the underlying theory, demonstrates the function on
+realistic quality-engineering data, and closes with interpretation guidance.
+
+## 2. plot_correlation_heatmap() — multivariate correlation
+
+### 2.1 Theory: Pearson/Spearman correlation and diverging palettes
+
+The Pearson correlation coefficient between two random variables $X$ and $Y$
+is defined as
+
+$$
+r_{XY} = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}
+               {\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \cdot \sum_{i=1}^{n}(y_i - \bar{y})^2}},
+$$
+
+and ranges from $-1$ (perfect negative linear association) through $0$ (no
+linear association) to $+1$ (perfect positive linear association). The
+Spearman rank correlation replaces the raw values with their ranks before
+applying the same formula, capturing monotonic but non-linear relationships
+and is robust to outliers.
+
+A correlation matrix is symmetric with ones on the diagonal. Visualizing it
+requires a **diverging palette** — a color scale that runs from one hue
+through a neutral midpoint to a contrasting hue. The neutral midpoint must
+sit exactly at zero so that the sign of the correlation is encoded in color.
+This is a critical rule: a sequential palette (e.g. a plain blue ramp) must
+never be used for correlations, because a strong negative correlation and a
+strong positive correlation would receive similar colors and the sign
+information would be lost.
+
+A practical threshold for **multicollinearity** is $|r| > 0.8$ between two
+predictors. Pairs exceeding this threshold inflate the variance of regression
+coefficient estimates and should be flagged before modeling.
+
+### 2.2 Function signature
+
+```r
+plot_correlation_heatmap(data, theme = NULL, digits = 2, diagonal = FALSE)
+```
+
+`data` is a data frame of numeric columns. `digits` controls the decimal
+places of the printed coefficients. When `diagonal = FALSE` (the default) the
+self-correlations on the diagonal are set to `NA`, removing the trivial
+ones from the figure so that genuine cross-variable relationships stand out.
+
+### 2.3 Example: correlated process variables
+
+We simulate four process variables in which the etch rate is driven by
+temperature and pressure.
+
+```{r}
+set.seed(42)
+process_vars <- data.frame(
+  temperature = rnorm(120, 1200, 15),
+  pressure = rnorm(120, 5.2, 0.3),
+  gas_flow = rnorm(120, 250, 10),
+  etch_rate = rnorm(120, 450, 20)
+)
+process_vars$etch_rate <- with(process_vars,
+  300 + 0.8 * temperature / 10 + 20 * pressure + rnorm(120, 0, 10))
+
+plot_correlation_heatmap(process_vars, digits = 2)
+```
+
+The diverging palette immediately reveals the strong positive correlation
+between temperature and etch rate and between pressure and etch rate, while
+`gas_flow` shows only weak association with the others — a useful signal that
+gas flow can be retained as an independent predictor without multicollinearity
+concerns.
+
+Keeping the diagonal visible is occasionally useful when the matrix is to be
+read as a complete descriptive summary:
+
+```{r}
+plot_correlation_heatmap(process_vars, digits = 2, diagonal = TRUE)
+```
+
+## 3. plot_interaction_line() — interaction effects
+
+### 3.1 Theory: two-way interactions in factorial designs
+
+In a two-way factorial design with factors $A$ and $B$, the response is
+modeled as
+
+$$
+Y_{ijk} = \mu + \alpha_i + \beta_j + (\alpha\beta)_{ij} + \varepsilon_{ijk},
+$$
+
+where $\alpha_i$ is the main effect of level $i$ of factor $A$, $\beta_j$ is
+the main effect of level $j$ of factor $B$, and $(\alpha\beta)_{ij}$ is the
+**interaction** — the extra deviation from additivity. An interaction means
+that the effect of factor $A$ depends on the level of factor $B$.
+
+The interaction plot makes this visible by plotting the mean response of $Y$
+against the levels of $A$, with one line per level of $B$.
+
+* **Parallel lines** $\Rightarrow$ no interaction; the effect of $A$ is the
+  same at every level of $B$.
+* **Non-parallel lines** $\Rightarrow$ interaction present; the effect of $A$
+  changes across levels of $B$. Crossing lines indicate a disordinal
+  (crossover) interaction.
+
+### 3.2 Function signature
+
+```r
+plot_interaction_line(data, x_var, y_var, group_var,
+                      fun = c("mean", "median"), theme = NULL)
+```
+
+`x_var` is the x-axis variable (factor or numeric), `group_var` is the
+grouping variable (factor), and `fun` selects the aggregation function
+applied to `y_var` within each `(x, group)` cell. The function returns a
+`ggplot` object with points and connecting lines.
+
+### 3.3 Example: welding parameter study
+
+A welding engineer runs a $3 \times 2$ factorial on current (low / medium /
+high) and electrode type (A / B), measuring tensile strength. We expect an
+interaction because electrode B is more sensitive to current.
+
+```{r}
+set.seed(7)
+welding <- data.frame(
+  current = factor(rep(c("Low", "Medium", "High"), each = 20)),
+  electrode = factor(rep(rep(c("A", "B"), each = 10), 3)),
+  tensile = c(
+    rnorm(10, 380, 8), rnorm(10, 360, 8),   # Low: A, B
+    rnorm(10, 410, 8), rnorm(10, 430, 8),   # Medium: A, B
+    rnorm(10, 425, 8), rnorm(10, 470, 8)    # High: A, B
+  )
+)
+
+plot_interaction_line(
+  data = welding,
+  x_var = "current",
+  y_var = "tensile",
+  group_var = "electrode",
+  fun = "mean"
+)
+```
+
+The lines are clearly non-parallel: electrode B gains tensile strength faster
+than electrode A as current rises, indicating a current-by-electrode
+interaction. The engineer would not pick a single "best electrode" without
+also specifying the operating current.
+
+Using the median instead of the mean provides robustness when a cell contains
+outliers:
+
+```{r}
+plot_interaction_line(
+  data = welding,
+  x_var = "current",
+  y_var = "tensile",
+  group_var = "electrode",
+  fun = "median"
+)
+```
+
+## 4. plot_acf() and plot_pacf() — time series autocorrelation
+
+### 4.1 Theory: ACF/PACF for process stability
+
+For a stationary time series $Y_t$ with variance $\sigma^2$, the
+autocorrelation at lag $k$ is
+
+$$
+\rho(k) = \frac{\mathrm{Cov}(Y_t, Y_{t-k})}{\mathrm{Var}(Y_t)}
+        = \frac{\mathrm{E}[(Y_t - \mu)(Y_{t-k} - \mu)]}{\sigma^2}.
+$$
+
+The **autocorrelation function (ACF)** measures the direct and indirect
+linear dependence of $Y_t$ on its own past values up to lag $k$. The
+**partial autocorrelation function (PACF)** at lag $k$ removes the effect of
+the intermediate lags $1, \dots, k-1$, isolating the *direct* contribution of
+$Y_{t-k}$ to $Y_t$.
+
+Under the null hypothesis of white noise, the sample autocorrelations are
+approximately normally distributed with standard error
+$1/\sqrt{n}$. A $100(1-\alpha)\%$ confidence band is drawn at
+$\pm z_{1-\alpha/2}/\sqrt{n}$ (Bartlett's formula gives refined bands for
+higher lags). For a process in statistical control, sample ACF values should
+fall within this band and decay to zero quickly. Lags whose bars cross the
+confidence limits indicate statistically significant autocorrelation — a sign
+that the process is not yet in a state of statistical control and that a
+control-chart analysis is warranted.
+
+### 4.2 Function signatures
+
+```r
+plot_acf(data_vec, theme = NULL, lag.max = NULL, ci = 0.95,
+         highlight_sig = TRUE)
+
+plot_pacf(data_vec, theme = NULL, lag.max = NULL, ci = 0.95,
+          highlight_sig = TRUE)
+```
+
+`data_vec` is a numeric vector. `lag.max` bounds the number of lags shown
+(defaults to a reasonable value derived from the series length). `ci` sets
+the confidence level (default `0.95`). When `highlight_sig = TRUE` (the
+default) bars exceeding the CI are highlighted in a contrasting color.
+
+### 4.3 Example: stability of a chemical process
+
+We simulate 200 consecutive pH readings from a process. A well-behaved
+process should show no significant autocorrelation.
+
+```{r}
+set.seed(123)
+ph_stable <- rnorm(200, mean = 7.0, sd = 0.05)
+
+plot_acf(ph_stable, lag.max = 30, ci = 0.95)
+```
+
+```{r}
+plot_pacf(ph_stable, lag.max = 30, ci = 0.95)
+```
+
+Now contrast with a drifting process in which today's pH depends on
+yesterday's — a first-order autoregressive structure that signals a loss of
+control.
+
+```{r}
+set.seed(321)
+ph_drift <- stats::filter(rnorm(200, 0, 0.05), filter = 0.7, method = "recursive") + 7.0
+
+plot_acf(ph_drift, lag.max = 30, ci = 0.95)
+```
+
+The ACF of the drifting process decays slowly and several lags exceed the
+confidence band, confirming that the process is autocorrelated and not in
+statistical control. The PACF would typically show a single significant spike
+at lag 1, characteristic of an AR(1) process:
+
+```{r}
+plot_pacf(ph_drift, lag.max = 30, ci = 0.95)
+```
+
+## 5. plot_roc_curve() — classifier evaluation
+
+### 5.1 Theory: ROC, AUC, sensitivity vs specificity
+
+For a binary classifier that outputs a probability score, the classification
+threshold trades sensitivity against specificity. At a given threshold $t$:
+
+$$
+\mathrm{Sensitivity (TPR)} = \frac{TP}{TP + FN}, \qquad
+\mathrm{Specificity (TNR)} = \frac{TN}{TN + FP}.
+$$
+
+The **receiver operating characteristic (ROC)** curve plots sensitivity (true
+positive rate) against $1 - \mathrm{specificity}$ (false positive rate) for
+all possible thresholds. The **area under the curve (AUC)** summarizes the
+curve into a single number in $[0.5, 1.0]$:
+
+| AUC range    | Interpretation |
+|--------------|----------------|
+| $0.5$        | Random classifier, no discrimination. |
+| $0.5$–$0.7$  | Poor discrimination. |
+| $0.7$–$0.8$  | Acceptable discrimination. |
+| $0.8$–$0.9$  | Good discrimination. |
+| $> 0.9$      | Excellent discrimination. |
+| $1.0$        | Perfect classifier. |
+
+AUC equals the probability that the classifier ranks a randomly chosen
+positive instance above a randomly chosen negative instance.
+
+### 5.2 Function signature
+
+```r
+plot_roc_curve(data, labels_var, predictions_var,
+               theme = NULL, ci_auc = FALSE)
+```
+
+`data` is a data frame. `labels_var` is the true binary label column (coded
+`0`/`1` or as a two-level factor). `predictions_var` is the column of
+predicted probabilities. When `ci_auc = TRUE` a bootstrap confidence interval
+for the AUC is computed via the `pROC` package and added to the annotation.
+
+### 5.3 Example: fault detection classifier
+
+We simulate 200 scored units with separable score distributions for the
+faulty and healthy classes.
+
+```{r}
+set.seed(42)
+n <- 200
+roc_demo <- data.frame(
+  actual = factor(rep(c(0, 1), each = n/2)),
+  predicted = c(rbeta(n/2, 2, 5), rbeta(n/2, 5, 2))  # separable distributions
+)
+
+plot_roc_curve(
+  data = roc_demo,
+  labels_var = "actual",
+  predictions_var = "predicted"
+)
+```
+
+The curve hugs the top-left corner and the AUC is well above 0.9, indicating
+excellent discrimination. Adding a bootstrap confidence interval quantifies
+the uncertainty in the AUC estimate:
+
+```{r}
+plot_roc_curve(
+  data = roc_demo,
+  labels_var = "actual",
+  predictions_var = "predicted",
+  ci_auc = TRUE
+)
+```
+
+## 6. plot_variance_components() — variance decomposition
+
+### 6.1 Theory: components of variation in MSA
+
+In a Measurement System Analysis (MSA) the total observed variance is
+decomposed into components attributable to the parts, the repeatability of
+the gauge, and the reproducibility across operators:
+
+$$
+\sigma^2_{\mathrm{total}} = \sigma^2_{\mathrm{part}}
+                           + \sigma^2_{\mathrm{repeatability}}
+                           + \sigma^2_{\mathrm{reproducibility}}
+                           + \sigma^2_{\mathrm{interaction}}.
+$$
+
+Each component's percentage contribution is
+
+$$
+\%\,\mathrm{contribution}_s = \frac{\sigma^2_s}{\sigma^2_{\mathrm{total}}} \times 100\%.
+$$
+
+The **% GRR** (gage R&R) is the combined repeatability and reproducibility
+contribution. The acceptance criteria from AIAG are:
+
+| % GRR        | Assessment     |
+|--------------|----------------|
+| $< 10\%$     | Acceptable measurement system. |
+| $10\%$–$30\%$| Marginal; may be acceptable depending on application, cost, and risk. |
+| $> 30\%$     | Unacceptable; the measurement system must be improved. |
+
+### 6.2 Function signature
+
+```r
+plot_variance_components(data, theme = NULL, sort_by_variance = TRUE)
+```
+
+`data` is a data frame with columns `source` and `variance_percent`. When
+`sort_by_variance = TRUE` (the default) the components are ordered by
+decreasing variance so that the dominant source appears first.
+
+### 6.3 Example: gage R&R study
+
+A gage R&R study on a coordinate measuring machine produced the following
+variance breakdown.
+
+```{r}
+variance_data <- data.frame(
+  source = c("Part-to-Part", "Repeatability", "Reproducibility", "Interaction"),
+  variance_percent = c(78.5, 8.2, 10.3, 3.0)
+)
+
+plot_variance_components(variance_data, sort_by_variance = TRUE)
+```
+
+Part-to-part variation dominates at 78.5%, which is desirable — it means the
+measurement system can distinguish between parts. The combined GRR
+(repeatability + reproducibility) is
+`r fmt_pct(8.2 + 10.3)` (10.3% + 8.2%), placing the system in the marginal
+band: it is borderline acceptable but warrants monitoring. The interaction
+component (3.0%) is small, indicating that operator-by-part effects are
+negligible.
+
+## 7. Quality Scenario: multivariate process monitoring
+
+We now combine several of the advanced plots in a single multivariate
+monitoring workflow for a semiconductor wafer etch process. The process has
+four correlated sensor channels: temperature, pressure, gas flow, and etch
+rate. The quality engineer wants to (a) understand the correlation structure,
+(b) check whether the etch-rate time series is in statistical control, and
+(c) confirm that the gauge used to measure etch rate is acceptable.
+
+### 7.1 Simulating the wafer process
+
+```{r}
+set.seed(42)
+wafer_process <- data.frame(
+  temperature = rnorm(100, 1200, 15),
+  pressure = rnorm(100, 5.2, 0.3),
+  gas_flow = rnorm(100, 250, 10),
+  etch_rate = rnorm(100, 450, 20)
+)
+# Add some correlation
+wafer_process$etch_rate <- with(wafer_process,
+  300 + 0.8 * temperature / 10 + 20 * pressure + rnorm(100, 0, 10))
+```
+
+### 7.2 Step 1 — correlation structure
+
+```{r}
+plot_correlation_heatmap(wafer_process, digits = 2)
+```
+
+The heatmap confirms that temperature and pressure are strongly positively
+correlated with etch rate, while gas flow is only weakly correlated. No pair
+exceeds $|r| = 0.8$, so multicollinearity is not a concern for a regression
+model of etch rate.
+
+### 7.3 Step 2 — time-series stability of etch rate
+
+Treating the 100 consecutive wafers as a time-ordered series, we examine the
+ACF to check whether the etch-rate process is in statistical control.
+
+```{r}
+plot_acf(wafer_process$etch_rate, lag.max = 25, ci = 0.95)
+```
+
+```{r}
+plot_pacf(wafer_process$etch_rate, lag.max = 25, ci = 0.95)
+```
+
+If no lag exceeds the confidence band the process is consistent with a stable
+random source; significant lags would trigger a control-chart investigation
+and a search for assignable causes such as a drift in the mass-flow
+controller.
+
+### 7.4 Step 3 — measurement system acceptance
+
+Finally the engineer reviews the variance components from a gage R&R study of
+the etch-rate measurement system.
+
+```{r}
+variance_data <- data.frame(
+  source = c("Part-to-Part", "Repeatability", "Reproducibility", "Interaction"),
+  variance_percent = c(78.5, 8.2, 10.3, 3.0)
+)
+
+plot_variance_components(variance_data, sort_by_variance = TRUE)
+```
+
+The combined % GRR of `r fmt_pct(8.2 + 10.3)` sits in the marginal band. The
+engineer records this as a risk in the MSA register and schedules a
+follow-up study after the next gauge calibration cycle.
+
+### 7.5 Step 4 — fault-detection classifier evaluation
+
+As a final analytical step, a machine-learning model scores each wafer as
+pass or fail based on the four sensor channels. We evaluate the classifier
+with an ROC curve.
+
+```{r}
+set.seed(42)
+n <- 200
+roc_demo <- data.frame(
+  actual = factor(rep(c(0, 1), each = n/2)),
+  predicted = c(rbeta(n/2, 2, 5), rbeta(n/2, 5, 2))  # separable distributions
+)
+
+plot_roc_curve(
+  data = roc_demo,
+  labels_var = "actual",
+  predictions_var = "predicted",
+  ci_auc = TRUE
+)
+```
+
+The high AUC confirms that the classifier can reliably separate conforming
+from nonconforming wafers, closing the multivariate monitoring loop from
+correlation discovery through stability assessment, gauge acceptance, and
+automated fault detection.
+
+### 7.6 Step 5 — theme-driven coloring
+
+Every advanced plot in this vignette resolves its colors from the active
+`IqrTheme`. Switching the `theme` argument repaints the diverging scale
+of the correlation heatmap, the discrete scale of the variance
+components, and the line color of the ROC curve in one stroke — no
+per-call color arguments are required.
+
+```{r, fig.show="hold", out.width="50%"}
+plot_correlation_heatmap(wafer_process, digits = 2, theme = "economist") +
+  ggplot2::labs(title = "economist")
+
+plot_correlation_heatmap(wafer_process, digits = 2, theme = "solarized") +
+  ggplot2::labs(title = "solarized")
+```
+
+```{r, fig.show="hold", out.width="50%"}
+plot_roc_curve(
+  data = roc_demo, labels_var = "actual",
+  predictions_var = "predicted", theme = "prism"
+) + ggplot2::labs(title = "ROC — prism")
+
+plot_variance_components(variance_data, sort_by_variance = TRUE,
+                         theme = "prism") +
+  ggplot2::labs(title = "Variance — prism")
+```
+
+## 8. Parameter Reference
+
+### plot_correlation_heatmap(data, theme = NULL, digits = 2, diagonal = FALSE)
+
+| Argument   | Type                  | Default | Description                                                                  |
+|------------|-----------------------|---------|------------------------------------------------------------------------------|
+| `data`     | data.frame            | —       | Data frame of numeric columns.                                               |
+| `theme`    | character/IqrTheme    | `NULL`  | Theme name or object; drives the diverging fill scale (midpoint = 0).        |
+| `digits`   | integer               | `2`     | Decimal places for printed coefficients.                                     |
+| `diagonal` | logical               | `FALSE` | If `FALSE`, diagonal (self-correlation) set to `NA`.                         |
+
+Returns: `ggplot` object.
+
+### plot_interaction_line(data, x_var, y_var, group_var, fun = c("mean", "median"), theme = NULL)
+
+| Argument     | Type                | Default  | Description                                                |
+|--------------|---------------------|----------|------------------------------------------------------------|
+| `data`       | data.frame          | —        | Data frame containing the variables.                       |
+| `x_var`      | character(1)        | —        | X-axis variable (factor or numeric).                       |
+| `y_var`      | character(1)        | —        | Response variable.                                         |
+| `group_var`  | character(1)        | —        | Grouping variable (factor).                                |
+| `fun`        | character(1)        | `"mean"` | Aggregation function: `"mean"` or `"median"`.              |
+| `theme`      | character/IqrTheme  | `NULL`   | Theme name or object; discrete color scale auto-injected.  |
+
+Returns: `ggplot` object.
+
+### plot_acf(data_vec, theme = NULL, lag.max = NULL, ci = 0.95, highlight_sig = TRUE)
+
+### plot_pacf(data_vec, theme = NULL, lag.max = NULL, ci = 0.95, highlight_sig = TRUE)
+
+| Argument        | Type                | Default | Description                                                          |
+|-----------------|---------------------|---------|----------------------------------------------------------------------|
+| `data_vec`      | numeric             | —       | Numeric vector (time series).                                        |
+| `theme`         | character/IqrTheme  | `NULL`  | Theme name or object; CI lines use theme `fail` semantic.            |
+| `lag.max`       | integer/NULL        | `NULL`  | Maximum lag to display.                                              |
+| `ci`            | numeric             | `0.95`  | Confidence level for the reference band.                             |
+| `highlight_sig` | logical             | `TRUE`  | Highlight bars exceeding the CI using the theme `fail` semantic.     |
+
+Returns: `ggplot` object.
+
+### plot_roc_curve(data, labels_var, predictions_var, theme = NULL, ci_auc = FALSE)
+
+| Argument         | Type                | Default | Description                                                |
+|------------------|---------------------|---------|------------------------------------------------------------|
+| `data`           | data.frame          | —       | Data frame with labels and predictions.                    |
+| `labels_var`     | character(1)        | —       | True binary labels column (0/1 or factor).                 |
+| `predictions_var`| character(1)        | —       | Predicted probabilities column.                            |
+| `theme`          | character/IqrTheme  | `NULL`  | Theme name or object; ROC line uses theme `data` role.     |
+| `ci_auc`         | logical             | `FALSE` | If `TRUE`, add a bootstrap CI for AUC (uses pROC).         |
+
+Returns: `ggplot` object.
+
+### plot_variance_components(data, theme = NULL, sort_by_variance = TRUE)
+
+| Argument            | Type                | Default | Description                                                       |
+|---------------------|---------------------|---------|-------------------------------------------------------------------|
+| `data`              | data.frame          | —       | Data frame with `source` and `variance_percent`.                  |
+| `theme`             | character/IqrTheme  | `NULL`  | Theme name or object; discrete fill scale auto-injected.          |
+| `sort_by_variance`  | logical             | `TRUE`  | Sort components by decreasing variance.                           |
+
+Returns: `ggplot` object.
+
+## 9. Summary
+
+The six advanced plotting functions in `iQualityR.plot` cover the analytical
+steps that follow basic quality monitoring: understanding multivariate
+structure with `plot_correlation_heatmap()`, diagnosing designed experiments
+with `plot_interaction_line()`, verifying process stability with
+`plot_acf()` and `plot_pacf()`, evaluating classifiers with
+`plot_roc_curve()`, and assessing measurement systems with
+`plot_variance_components()`. Because every function returns a standard
+`ggplot` object, the outputs can be themed, annotated, and combined with any
+other `ggplot2`-based tool in the quality-engineering workflow.
+
+## 10. Further Reading
+
+* AIAG. (2010). *Measurement Systems Analysis (MSA)*, 4th ed. Automotive
+  Industry Action Group.
+* Box, G. E. P., Hunter, J. S., & Hunter, W. G. (2005). *Statistics for
+  Experimenters*, 2nd ed. Wiley.
+* Montgomery, D. C. (2013). *Statistical Quality Control: A Modern
+  Introduction*, 7th ed. Wiley.
+* Shumway, R. H., & Stoffer, D. S. (2017). *Time Series Analysis and Its
+  Applications*, 4th ed. Springer.
+* `iQualityR.plot` package — `plot_control_chart()`,
+  `plot_pareto_enhanced()`, and `plot_fishbone()` for complementary
+  quality-engineering visualizations.
+
+## References
+
+Automotive Industry Action Group. (2010). *Measurement Systems Analysis
+(MSA) Reference Manual* (4th ed.). Southfield, MI: AIAG.
+
+Box, G. E. P., Hunter, J. S., & Hunter, W. G. (2005). *Statistics for
+Experimenters: Design, Innovation, and Discovery* (2nd ed.). Hoboken, NJ:
+Wiley-Interscience.
+
+Montgomery, D. C. (2013). *Statistical Quality Control: A Modern
+Introduction* (7th ed.). Hoboken, NJ: Wiley.
+
+Robin, X., Turck, N., Hainard, A., Tiberti, N., Lisacek, F., Sanchez, J.-C.,
+& Müller, M. (2011). pROC: an open-source package for R and S+ to analyze and
+compare ROC curves. *BMC Bioinformatics*, 12, 77.
+
+Shumway, R. H., & Stoffer, D. S. (2017). *Time Series Analysis and Its
+Applications: With R Examples* (4th ed.). New York: Springer.

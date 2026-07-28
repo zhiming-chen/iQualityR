@@ -1,0 +1,643 @@
+---
+title: "Composable Layer Builders for Quality Charts"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Composable Layer Builders for Quality Charts}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Every chart in `iQualityR.plot` is assembled from small, reusable pieces.
+This vignette documents the `layers_*` family of builder functions, which
+return ready-to-add lists of ggplot2 layers encapsulating best-practice
+defaults for common quality-engineering visualizations: distribution
+diagnostics, group comparisons, trend bands, and the reference lines that
+make a chart a *quality* chart -- specification limits and control limits.
+
+The running scenario throughout is a pharmaceutical tablet-press process:
+individual tablet weights (nominal 250 mg) sampled over 30 consecutive
+subgroups, with an engineering tolerance of 242-258 mg. We will use the
+layer builders to answer two distinct questions about the same data:
+
+- *Is the process stable?* -- answered by control limits (from the data).
+- *Is the stable process capable?* -- answered by specification limits
+  (from the customer).
+
+### 1.1 Why composable layers? Reuse and consistency
+
+A quality engineer builds dozens of charts per week that differ only in
+details: a histogram today with a density overlay, a control chart tomorrow
+with the same axes, a capability panel next week that overlays both. Writing
+each chart from scratch with raw `geom_*` calls invites two problems:
+
+1. **Inconsistency.** Slightly different defaults creep in -- bin width,
+   jitter width, line type for the UCL -- so charts are not comparable.
+2. **Repetition.** The same five-line idiom is copied into every script,
+   so a change in house style must be propagated by hand.
+
+The `layers_*` functions solve both problems by encapsulating a
+best-practice layer set behind a single call that returns a *list* of
+ggplot2 layers. Because the return value is a list, it can be added to any
+`base_plot()` with `+`, mixed freely with raw `geom_*` calls, or composed
+into a dashboard with `combine_plots()`. The defaults are centralised in one
+place, so updating a house style updates every chart at once.
+
+### 1.2 Theme-aware color resolution
+
+Every `layers_*` function accepts a `theme` argument with the same
+semantics as `base_plot()`: `NULL` (use the global default), a theme name
+string (`"academic"`, `"economist"`, ...), a theme function, or an
+`IqrTheme` object. The function resolves the theme once via
+`as_iqr_theme_object()` and pulls every color it needs from the theme's
+palettes -- so switching the theme recolors the layers automatically.
+
+This means that, in the overwhelming majority of cases, **you do not need
+to pass any color argument to a `layers_*` function.** The conventional
+pattern is:
+
+```r
+base_plot(data, aes(...), theme = "economist") +
+  layers_control_chart(data, theme = "economist") +
+  layers_spec_limits(lsl = 242, usl = 258, theme = "economist")
+```
+
+All three calls resolve the same `IqrTheme` object, and the layers pull
+their colors from it: control-limit lines use the semantic `"fail"` color,
+the center line uses `"neutral"`, the data line uses the first discrete
+palette entry, and the specification lines use `"fail"` as well. Switch the
+theme string on all three calls and the whole chart recolors consistently.
+
+The `theme` argument is the *primary* color knob. The legacy
+`ucl_color` / `cl_color` / `data_color` / `spec_color` arguments are still
+accepted, default to `NULL`, and are only meant for one-off overrides; when
+left `NULL`, they fall back to the theme palette.
+
+## 2. Theory: The Grammar of Graphics and Layer Composition
+
+### 2.1 ggplot2 layer model
+
+A ggplot2 plot is a stack of independent layers. Each layer combines five
+components:
+
+| Component | Role | Example |
+|---|---|---|
+| **Data** | The data frame the layer draws from | `cc_data` |
+| **Mapping** | Which columns map to which aesthetics | `aes(x = .data$x, y = .data$y)` |
+| **Geometry (geom)** | The mark drawn (points, lines, bars) | `geom_point` |
+| **Statistic (stat)** | Optional transformation of the data | `stat_qq`, binning |
+| **Position** | Adjustments for overlapping marks | `jitter`, `dodge` |
+
+When you write `p + geom_boxplot(...)`, ggplot2 wraps your arguments into a
+layer object and appends it to the plot's layer list. Crucially, **a list of
+layers can be added with a single `+`**: `p + list(layer1, layer2)` is valid
+and appends every layer in the list. This is the mechanism every `layers_*`
+function relies on.
+
+### 2.2 How layers_* functions encapsulate best-practice defaults
+
+Each `layers_*` function follows the same pattern:
+
+1. Collect the user's customisation arguments (e.g. `hist_args`,
+   `density_args`).
+2. Build a default argument list for each underlying geom.
+3. Merge defaults with user overrides via `utils::modifyList()` -- user
+   wins, defaults fill the gaps.
+4. Construct each layer with `do.call(geom_*, final_args)`.
+5. Return the layers as an R `list`.
+
+Because `modifyList()` merges recursively, you can override a single nested
+field (say, the histogram fill) without re-specifying every other default.
+This keeps call sites short while leaving the full geom API available when
+you need it.
+
+## 3. Distribution Layers
+
+We first prepare the process data: 30 tablet weights with their
+individuals-chart statistics.
+
+```{r process-data}
+set.seed(7)
+n_points <- 30
+tablet_mean <- 250   # mg nominal
+tablet_sd   <- 2.5   # mg short-term sigma
+x <- 1:n_points
+y <- rnorm(n_points, tablet_mean, tablet_sd)
+cl  <- mean(y)
+sig <- sd(y)
+ucl <- cl + 3 * sig
+lcl <- cl - 3 * sig
+cc_data <- data.frame(x = x, y = y, cl = cl, lcl = lcl, ucl = ucl)
+head(cc_data)
+#>   x        y       cl      lcl      ucl
+#> 1 1 255.7181 250.9892 242.5404 259.4379
+#> 2 2 247.0081 250.9892 242.5404 259.4379
+#> 3 3 248.2643 250.9892 242.5404 259.4379
+#> 4 4 248.9693 250.9892 242.5404 259.4379
+#> 5 5 247.5733 250.9892 242.5404 259.4379
+#> 6 6 247.6318 250.9892 242.5404 259.4379
+```
+
+### 3.1 layers_histogram_density() — histogram + density overlay
+
+`layers_histogram_density(bins = NULL, theme = NULL, ..., hist_args = list(), density_args = list())`
+returns a list of two layers: a `geom_histogram` (with `aes(y = after_stat(density))`
+so the bar heights are on the density scale) and a `geom_density`. The `...`
+arguments are passed to both geoms, while `hist_args` / `density_args` target
+a single geom.
+
+The example below resolves the histogram fill and the density line color
+from the active theme: the fill is taken from the first discrete palette
+entry and the density line from the semantic `"fail"` slot, so both colors
+follow the theme automatically. No `scale_*` call and no hardcoded color
+appear in the code.
+
+```{r hist-density}
+# Resolve theme-driven colors once, then pass them to the layer builders.
+p_hd <- base_plot(cc_data, aes(x = .data$y), theme = "academic")
+c <- attr(p_hd, "iqr_theme")
+hist_fill <- c$get_pal("discrete")[1]
+dens_color <- c$get_pal("semantic", name = "fail")
+
+p_hd <- p_hd +
+  layers_histogram_density(
+    bins         = 12,
+    theme        = "academic",
+    hist_args    = list(fill = hist_fill, alpha = 0.6),
+    density_args = list(color = dens_color, linewidth = 1)
+  ) +
+  labs(title = "Tablet Weight Distribution",
+       x = "Weight (mg)", y = "Density")
+
+print(p_hd)
+```
+
+To overlay a theoretical normal curve, add a `geom_line()` with a pre-computed
+density -- the layer set is just a starting point and accepts any further
+ggplot2 layers.
+
+### 3.2 layers_qq() — quantile-quantile layers
+
+`layers_qq(distribution = "norm", dparams = list(), theme = NULL, ..., qq_args = list(), line_args = list())`
+returns `stat_qq` (the points) and `stat_qq_line` (the reference line). The
+`distribution` argument is the suffix appended to `q` to fetch the quantile
+function (e.g. `"norm"` -> `qnorm`), and `dparams` supplies its parameters.
+Use the `sample` aesthetic in the base mapping.
+
+The points and the reference line pull their colors from the resolved theme
+so the Q-Q plot matches the rest of the chart.
+
+```{r qq-layer}
+p_qq <- base_plot(cc_data, aes(sample = .data$y), theme = "academic")
+c_qq <- attr(p_qq, "iqr_theme")
+
+p_qq <- p_qq +
+  layers_qq(
+    distribution = "norm",
+    theme        = "academic",
+    qq_args      = list(color = c_qq$get_pal("discrete")[1],
+                        size = 2.5, alpha = 0.7),
+    line_args    = list(color = c_qq$get_pal("semantic", name = "fail"),
+                        linetype = "dashed", linewidth = 1)
+  ) +
+  labs(title = "Normal Q-Q Plot of Tablet Weight",
+       x = "Theoretical Quantiles", y = "Sample Quantiles")
+
+print(p_qq)
+```
+
+A linear point cloud hugging the reference line supports the normality
+assumption that underpins the ±3sigma control limits used later.
+
+## 4. Comparison Layers
+
+### 4.1 layers_boxplot() — with jitter option
+
+`layers_boxplot(add_jitter = TRUE, theme = NULL, ..., boxplot_args = list(), jitter_args = list())`
+returns a `geom_boxplot` and, when `add_jitter = TRUE`, a `geom_jitter` so
+individual observations are visible alongside the five-number summary. This is
+the recommended default for small-to-moderate quality samples, where hiding
+the raw points behind a box can mask outliers and bimodality.
+
+```{r boxplot-layer}
+p_box <- base_plot(cc_data, aes(x = factor(1), y = .data$y), theme = "academic")
+c_box <- attr(p_box, "iqr_theme")
+
+p_box <- p_box +
+  layers_boxplot(
+    add_jitter   = TRUE,
+    theme        = "academic",
+    boxplot_args = list(fill = c_box$get_pal("discrete")[1], alpha = 0.6,
+                        outlier.color = c_box$get_pal("semantic", name = "fail"),
+                        outlier.size = 2),
+    jitter_args  = list(width = 0.12, alpha = 0.6, size = 2,
+                        color = c_box$get_ui_colors()$muted)
+  ) +
+  labs(title = "Tablet Weight Summary", x = NULL, y = "Weight (mg)")
+
+print(p_box)
+```
+
+### 4.2 layers_violin() — with optional boxplot overlay
+
+`layers_violin(add_boxplot = TRUE, theme = NULL, ..., violin_args = list(), boxplot_args = list())`
+returns a `geom_violin` and, when `add_boxplot = TRUE`, a narrow
+`geom_boxplot` drawn on top. The violin shows the full distribution shape
+(useful for detecting bimodality that a boxplot hides), while the inner box
+preserves the median and quartiles. The inner boxplot fill is resolved from
+the theme's `"surface"` UI slot so it contrasts with the violin fill
+regardless of which theme is active.
+
+```{r violin-layer}
+# Add a second 'shift' to compare two process states
+cc2 <- cc_data
+cc2$state <- "Before"
+cc2$y[16:30] <- cc2$y[16:30] + 1.2   # simulate a small mean shift
+cc2$state[16:30] <- "After"
+
+# base_plot() auto-injects the discrete fill scale for the mapped `fill`
+# aesthetic, so the violin fills follow the theme without any scale_* call.
+# layers_violin(theme = ...) resolves the inner boxplot fill from the theme.
+p_vio <- base_plot(cc2,
+                   aes(x = .data$state, y = .data$y, fill = .data$state),
+                   theme = "academic") +
+  layers_violin(
+    add_boxplot  = TRUE,
+    theme        = "academic",
+    violin_args  = list(alpha = 0.55),
+    boxplot_args = list(width = 0.12, alpha = 0.9, outlier.shape = NA)
+  ) +
+  labs(title = "Weight Distribution: Before vs After Shift",
+       x = "Process State", y = "Weight (mg)") +
+  theme(legend.position = "none")
+
+print(p_vio)
+```
+
+## 5. Trend and Band Layers
+
+### 5.1 layers_trend_line() — regression smoothing
+
+`layers_trend_line(mapping = NULL, data = NULL, add_points = TRUE, smoothing = NULL, theme = NULL, line_args = list(), point_args = list(), smooth_args = list())`
+returns a `geom_line` plus, optionally, a `geom_point` and a `geom_smooth`.
+The optional `mapping`/`data` arguments let the trend line read from a
+different data frame than the base plot (e.g. aggregated means over raw
+points). `smoothing` accepts any method supported by `geom_smooth`, such as
+`"lm"`, `"loess"`, or `"glm"`.
+
+```{r trend-line}
+p_tr <- base_plot(cc_data, aes(x = .data$x, y = .data$y), theme = "academic")
+c_tr <- attr(p_tr, "iqr_theme")
+
+p_tr <- p_tr +
+  layers_trend_line(
+    add_points  = TRUE,
+    smoothing   = "lm",
+    theme       = "academic",
+    line_args   = list(color = c_tr$get_pal("discrete")[1], linewidth = 0.6),
+    point_args  = list(color = c_tr$get_ui_colors()$muted,
+                       size = 1.8, alpha = 0.7),
+    smooth_args = list(color = c_tr$get_pal("semantic", name = "fail"),
+                       se = FALSE, linetype = "dashed")
+  ) +
+  labs(title = "Tablet Weight Trend Over Subgroups",
+       x = "Subgroup", y = "Weight (mg)")
+
+print(p_tr)
+```
+
+A flat, non-significant regression slope is consistent with a process free
+of drift -- a first screen for stability before drawing the control limits.
+
+### 5.2 layers_percentile_band() — reference bands
+
+`layers_percentile_band(theme = NULL, ..., errorbar_args = list(), point_args = list())`
+returns a `geom_errorbar` plus a `geom_point`, intended for forest-plot
+styles where each row is a group estimate with an uncertainty band. The
+default `orientation = "y"` places the groups on the y-axis, suitable for
+comparing several production lines. The point center fill is resolved from
+the theme's `"surface"` UI slot so the point contrasts with its stroke
+regardless of which theme is active.
+
+```{r percentile-band}
+line_est <- data.frame(
+  line  = c("Line 1", "Line 2", "Line 3"),
+  est   = c(249.8, 250.6, 250.1),
+  lower = c(249.1, 249.9, 249.6),
+  upper = c(250.5, 251.3, 250.6)
+)
+
+p_band <- base_plot(line_est,
+                    aes(x = .data$est, y = .data$line,
+                        xmin = .data$lower, xmax = .data$upper),
+                    theme = "academic")
+c_band <- attr(p_band, "iqr_theme")
+
+p_band <- p_band +
+  layers_percentile_band(
+    theme         = "academic",
+    errorbar_args = list(color = c_band$get_pal("discrete")[1],
+                         width = 0.2, linewidth = 1),
+    point_args    = list(size = 3,
+                         color = c_band$get_pal("semantic", name = "fail"),
+                         stroke = 1.5)
+  ) +
+  geom_vline(xintercept = 250, linetype = "dotted",
+             color = c_band$get_ui_colors()$muted) +
+  labs(title = "Tablet Weight by Production Line",
+       x = "Mean Weight (mg)", y = NULL)
+
+print(p_band)
+```
+
+## 6. Quality-Reference Layers
+
+### 6.1 layers_spec_limits() — LSL/USL annotation
+
+`layers_spec_limits(lsl = NULL, usl = NULL, theme = NULL, spec_color = NULL, lsl_label = paste("LSL =", lsl), usl_label = paste("USL =", usl), vline_args = list(), annotate_args = list())`
+returns a list of `geom_vline` + `annotate` layers for each supplied limit.
+The lines are *vertical*, so this builder is designed for charts whose
+measurement axis is the x-axis (histograms, dot plots, capability panels).
+Limits left `NULL` are simply not drawn.
+
+When `spec_color = NULL` (the default), the color is resolved from the
+theme's semantic `"fail"` slot, so the specification lines follow the
+active theme automatically. Pass an explicit color only for one-off
+overrides.
+
+```{r spec-limits}
+# The histogram fill is resolved from the theme; the spec lines default to
+# the theme's semantic "fail" color (no spec_color argument needed).
+p_spec <- base_plot(cc_data, aes(x = .data$y), theme = "academic")
+c_spec <- attr(p_spec, "iqr_theme")
+
+p_spec <- p_spec +
+  layers_histogram_density(bins = 12,
+    theme        = "academic",
+    hist_args    = list(fill = c_spec$get_pal("discrete")[1], alpha = 0.5),
+    density_args = list(color = c_spec$get_ui_colors()$muted,
+                        linewidth = 0.8)) +
+  layers_spec_limits(lsl = 242, usl = 258, theme = "academic") +
+  labs(title = "Capability: Distribution vs Specification",
+       x = "Weight (mg)", y = "Density")
+
+print(p_spec)
+```
+
+#### Theory: specification vs control limits
+
+Specification limits and control limits are often confused but answer
+fundamentally different questions:
+
+- **Specification limits (LSL / USL)** originate from *engineering or
+  customer requirements*. They define the range of acceptable product. They
+  are fixed before production starts and are independent of what the process
+  actually does. A part outside the spec limits is non-conforming.
+- **Control limits (UCL / LCL)** originate from *the process data itself*.
+  They describe the natural voice of the process -- the range within which a
+  stable process is expected to vary. They are computed from the process
+  mean and sigma, typically at mean +/- 3sigma, and have no knowledge of
+  what the customer wants.
+
+A process can be *in control* (all points inside the control limits) yet
+*not capable* (the control limits lie partly outside the spec limits), or
+*capable* yet *out of control* (a special cause has shifted the mean). The
+two panels built in Section 7 make this distinction visible at a glance.
+
+### 6.2 layers_control_chart() — center line + control limits + warning limits
+
+`layers_control_chart(data, theme = NULL, ucl_color = NULL, cl_color = NULL, data_color = NULL)`
+returns a list of layers that draw the full individuals control chart: the
+upper and lower control limits (dashed), the center line (solid), the
+connecting data line, the data points, text labels for UCL/LCL/CL, and a
+`coord_cartesian` that pads the y-axis. The `data` argument must be a data
+frame with columns `x`, `y`, `cl`, `lcl`, `ucl`; the geom layers inherit the
+base plot's data and mapping, so pass the same data frame to `base_plot()`.
+
+The color arguments all default to `NULL` and are resolved from the theme
+when omitted:
+
+- `ucl_color` / `lcl_color` lines <- theme semantic `"fail"` (signals a limit breach)
+- `cl_color` line            <- theme semantic `"neutral"` (reference baseline)
+- `data_color` line/points   <- first discrete palette entry
+
+Pass explicit colors only when you need to override the theme for a specific
+chart.
+
+```{r control-chart}
+# All three color arguments are left NULL, so the colors are pulled from
+# the "academic" theme. Switching theme = "economist" would recolor every
+# line in one step.
+p_cc <- base_plot(cc_data, aes(x = .data$x, y = .data$y), theme = "academic") +
+  layers_control_chart(cc_data, theme = "academic") +
+  labs(title = "Tablet Weight Individuals Control Chart",
+       x = "Subgroup", y = "Weight (mg)")
+
+print(p_cc)
+```
+
+#### Theory: ±3σ limits, Western Electric zones
+
+The control limits are placed at the process mean plus and minus three
+standard deviations:
+
+UCL = mu + 3*sigma,   CL = mu,   LCL = mu - 3*sigma
+
+where `mu` and `sigma` are estimated from the process data (here, the sample
+mean and sample standard deviation of the 30 tablet weights). Under the
+normality assumption, a point falling outside the +/- 3sigma band is rare
+(approximately 0.27% probability) and is treated as a signal of a special
+cause.
+
+Between the center line and each control limit, the chart is divided into
+three **Western Electric zones**, each one sigma wide:
+
+- **Zone A** (2sigma to 3sigma from the mean) -- the outer band.
+- **Zone B** (1sigma to 2sigma from the mean) -- the middle band.
+- **Zone C** (0 to 1sigma from the mean) -- the inner band, around the mean.
+
+The Western Electric run rules use these zones to detect non-random
+patterns *before* a point actually breaches the control limit. The most
+common rules are:
+
+1. One point beyond Zone A (i.e. beyond +/- 3sigma) -- a single special
+   cause.
+2. Two of three consecutive points in Zone A or beyond, on the same side --
+   a small sustained shift.
+3. Four of five consecutive points in Zone B or beyond, on the same side --
+   a moderate drift.
+4. Eight consecutive points on one side of the center line -- a sustained
+   shift or stratification.
+
+These rules turn the control chart from a binary "in / out" gate into an
+early-warning system. The `layers_control_chart()` builder draws the
+center line and +/- 3sigma limits; the sigma-zone shading required by the
+run rules can be added on top with `geom_hline()` or `annotate("rect")` when
+a full zone chart is needed.
+
+## 7. Combining Layers with base_plot
+
+The clearest way to answer "stable and capable?" for the tablet process is
+a two-panel dashboard. The left panel uses `layers_control_chart()` to show
+*stability* (control limits, drawn from the data, on the measurement y-axis).
+The right panel uses `layers_histogram_density()` plus
+`layers_spec_limits()` to show *capability* (specification limits, drawn
+from the customer, as vertical lines bracketing the distribution on the
+x-axis). `combine_plots()` assembles both panels with `patchwork`.
+
+```{r combined-dashboard}
+# Stability panel: control chart (measurement on y-axis).
+# layers_control_chart() pulls UCL/CL/data colors from the "academic" theme.
+p_stability <- base_plot(cc_data, aes(x = .data$x, y = .data$y),
+                         theme = "academic") +
+  layers_control_chart(cc_data, theme = "academic") +
+  labs(title = "Stability: In Control?",
+       subtitle = "Control limits from process data (+/- 3 sigma)",
+       x = "Subgroup", y = "Weight (mg)")
+
+# Capability panel: distribution vs spec limits (measurement on x-axis).
+# The histogram fill and the spec-line color are both resolved from the theme.
+p_capability <- base_plot(cc_data, aes(x = .data$y), theme = "academic")
+c_cap <- attr(p_capability, "iqr_theme")
+p_capability <- p_capability +
+  layers_histogram_density(bins = 12,
+    theme        = "academic",
+    hist_args    = list(fill = c_cap$get_pal("discrete")[1], alpha = 0.55),
+    density_args = list(color = c_cap$get_ui_colors()$muted,
+                        linewidth = 0.8)) +
+  layers_spec_limits(lsl = 242, usl = 258, theme = "academic") +
+  labs(title = "Capability: Meets Spec?",
+       subtitle = "Spec limits from engineering tolerance",
+       x = "Weight (mg)", y = "Density")
+
+combine_plots(p_stability, p_capability, ncol = 2)
+```
+
+Read together, the two panels tell a single story: all 30 points fall
+inside the control limits, so the process is stable; and the distribution
+sits comfortably within the 242-258 mg specification band, so the stable
+process is also capable. Layer builders make this kind of combined
+narrative a few lines to assemble.
+
+A custom chart can also mix layer builders with raw ggplot2 layers. For
+example, adding a normal-curve overlay to the capability panel:
+
+```{r mix-layers}
+x_grid <- seq(min(cc_data$y), max(cc_data$y), length.out = 100)
+normal_df <- data.frame(
+  x = x_grid,
+  y = dnorm(x_grid, mean = mean(cc_data$y), sd = sd(cc_data$y))
+)
+
+p_mix <- base_plot(cc_data, aes(x = .data$y), theme = "academic")
+c_mix <- attr(p_mix, "iqr_theme")
+
+p_mix <- p_mix +
+  layers_histogram_density(bins = 12,
+    theme     = "academic",
+    hist_args = list(fill = c_mix$get_pal("discrete")[1], alpha = 0.5)) +
+  layers_spec_limits(lsl = 242, usl = 258, theme = "academic") +
+  geom_line(data = normal_df, aes(x = .data$x, y = .data$y),
+            color = c_mix$get_pal("semantic", name = "fail"),
+            linewidth = 1, linetype = "dashed") +
+  labs(title = "Capability with Normal Overlay",
+       x = "Weight (mg)", y = "Density")
+
+print(p_mix)
+```
+
+## 8. Parameter Reference Table
+
+| Function | Key parameters | Returns |
+|---|---|---|
+| `layers_histogram_density()` | `bins`, `theme`, `hist_args`, `density_args` | `geom_histogram` + `geom_density` |
+| `layers_qq()` | `distribution`, `dparams`, `theme`, `qq_args`, `line_args` | `stat_qq` + `stat_qq_line` |
+| `layers_boxplot()` | `add_jitter`, `theme`, `boxplot_args`, `jitter_args` | `geom_boxplot` (+ `geom_jitter`) |
+| `layers_violin()` | `add_boxplot`, `theme`, `violin_args`, `boxplot_args` | `geom_violin` (+ `geom_boxplot`, inner fill from theme `"surface"`) |
+| `layers_trend_line()` | `add_points`, `smoothing`, `theme`, `line_args`, `point_args`, `smooth_args` | `geom_line` (+ `geom_point`, `geom_smooth`) |
+| `layers_percentile_band()` | `theme`, `errorbar_args`, `point_args` | `geom_errorbar` + `geom_point` (point fill from theme `"surface"`) |
+| `layers_spec_limits()` | `lsl`, `usl`, `theme`, `spec_color` (default: theme `"fail"`), `lsl_label`, `usl_label`, `vline_args`, `annotate_args` | `geom_vline` + `annotate` per limit |
+| `layers_control_chart()` | `data` (cols x, y, cl, lcl, ucl), `theme`, `ucl_color` (default: theme `"fail"`), `cl_color` (default: theme `"neutral"`), `data_color` (default: discrete[1]) | UCL/LCL/CL lines + data line/points + labels + coord |
+
+All `*_args` lists are merged over sensible defaults with `modifyList()`, so
+you only need to specify the arguments you want to change. The `theme`
+argument is the primary color knob: every color argument that defaults to
+`NULL` falls back to a theme palette slot, so switching the theme recolors
+the layers automatically.
+
+## 9. Summary
+
+- Every `layers_*` function returns a *list* of ggplot2 layers that can be
+  added to a `base_plot()` with a single `+`.
+- Defaults are centralised and merged with user overrides via
+  `modifyList()`, so call sites stay short while the full ggplot2 API
+  remains available.
+- Distribution layers (`layers_histogram_density`, `layers_qq`) diagnose the
+  shape and normality of the process data.
+- Comparison layers (`layers_boxplot`, `layers_violin`) contrast groups
+  while keeping individual points visible.
+- Trend and band layers (`layers_trend_line`, `layers_percentile_band`)
+  expose drift and cross-group uncertainty.
+- Quality-reference layers separate the two questions a quality engineer
+  must always keep distinct: `layers_spec_limits()` answers *is it
+  capable?* (limits from the customer), while `layers_control_chart()`
+  answers *is it stable?* (limits from the data at +/- 3sigma).
+- Combining layer builders with `combine_plots()` turns these pieces into a
+  coherent stability-and-capability dashboard in a handful of lines.
+
+## 10. Further Reading
+
+- **Visualization Infrastructure: base_plot and the Theme Pipeline** --
+  `vignette("plotting-overview", package = "iQualityR.plot")` covers the
+  `base_plot()` foundation, theme resolution, and the unified color
+  pipeline that the layer builders in this vignette sit on top of.
+- **Basic Plotting and Theme System** --
+  `vignette("basic_plotting_theme", package = "iQualityR.plot")`.
+- **Hypothesis Visualization**, **Scatter Plots**, and **Pareto Charts**
+  vignettes show the higher-level `plot_*` functions that are themselves
+  assembled from these layer builders.
+- The `iQualityR.core` package documents the `IqrTheme` and
+  `IqrPlotterBase` classes that supply the colors and scales.
+
+## References
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis* (2nd ed.).
+Springer. <https://ggplot2-book.org>
+
+Wilkinson, L. (2005). *The Grammar of Graphics* (2nd ed.). Springer, New York.
+
+Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+(7th ed.). John Wiley & Sons, Hoboken, NJ. -- control limits, Western
+Electric run rules, and capability analysis.
+
+Western Electric Company. (1956). *Statistical Quality Control Handbook*
+(1st ed.). Western Electric, Indianapolis, IN. -- the original source of
+the zone-based run rules.
+
+Juran, J. M., & Godfrey, A. B. (1999). *Juran's Quality Handbook*
+(5th ed.). McGraw-Hill, New York. -- specification versus control limits
+and the distinction between stability and capability.

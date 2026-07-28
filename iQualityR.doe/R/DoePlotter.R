@@ -46,6 +46,13 @@ DoePlotter <- R6::R6Class("DoePlotter",
     #'   otherwise the first two numeric factors are used.
     #' @return A `ggplot`, `patchwork`, or list object (see `type`).
     render = function(results, theme_obj, type = "design", ...) {
+      # Fall back to the default IqrTheme so the IqrPlotterBase palette
+      # accessors always receive a non-NULL theme_obj. This preserves the
+      # historical behavior of tolerating a NULL theme_obj argument.
+      if (is.null(theme_obj)) {
+        theme_obj <- tryCatch(IqrTheme$new("academic"), error = function(e) NULL)
+      }
+
       dots <- list(...)
       plan <- dots$plan
       response_name <- dots$response_name
@@ -95,52 +102,6 @@ DoePlotter <- R6::R6Class("DoePlotter",
   ),
 
   private = list(
-    # Safely retrieve a discrete color palette from the IqrTheme. Falls
-    # back to a sensible default when theme_obj is NULL or does not expose
-    # the expected accessor, so plot methods never break on theme lookup.
-    .data_colors = function(theme_obj, n = 1) {
-      if (is.null(theme_obj)) return(rep("#2C7BB6", max(n, 1)))
-      cols <- tryCatch(
-        theme_obj$get_data_colors("discrete"),
-        error = function(e) NULL
-      )
-      if (is.null(cols) || length(cols) == 0) cols <- "#2C7BB6"
-      rep_len(cols, max(n, 1))
-    },
-
-    # Safely retrieve a continuous color palette from the IqrTheme for
-    # response-surface / contour gradients.
-    .continuous_colors = function(theme_obj) {
-      if (is.null(theme_obj)) {
-        return(c("#2C7BB6", "white", "#D7191C"))
-      }
-      cols <- tryCatch(
-        theme_obj$get_data_colors("continuous"),
-        error = function(e) NULL
-      )
-      if (is.null(cols) || length(cols) < 2) {
-        return(c("#2C7BB6", "white", "#D7191C"))
-      }
-      cols
-    },
-
-    # Safely retrieve UI colors (primary, danger, muted, success, ...) from
-    # the IqrTheme. Returns a named list with sensible defaults.
-    .ui_colors = function(theme_obj) {
-      default <- list(
-        primary = "#2C7BB6", danger = "#D7191C", muted = "gray50",
-        success = "#1A9850", warning = "#F46D43", surface = "white",
-        text = "black"
-      )
-      if (is.null(theme_obj)) return(default)
-      cols <- tryCatch(
-        theme_obj$get_ui_colors(),
-        error = function(e) NULL
-      )
-      if (is.null(cols) || !is.list(cols)) return(default)
-      utils::modifyList(default, cols)
-    },
-
     # Apply the IqrTheme to a ggplot/patchwork object when available. Falls
     # back to the plot's existing theme (theme_minimal) if theme_obj is NULL
     # or does not expose a plot theme method. The theme_obj should be applied
@@ -401,8 +362,8 @@ DoePlotter <- R6::R6Class("DoePlotter",
       # theme-dependent UI colors (primary/danger) caused bars to change
       # color depending on the active preset (workbench vs academic vs tech),
       # which made cross-response comparison confusing.
-      pos_color <- "#2C7BB6"  # cool blue for positive effects
-      neg_color <- "#D7191C"  # warm red  for negative effects
+      pos_color <- .iqr_plotter$.pal_ui(theme_obj, "primary")  # cool blue for positive effects
+      neg_color <- .iqr_plotter$.pal_ui(theme_obj, "danger")   # warm red  for negative effects
 
       p <- ggplot(effects_data,
                   aes(x = Factor, y = Effect, fill = Direction)) +
@@ -759,11 +720,11 @@ DoePlotter <- R6::R6Class("DoePlotter",
       # Surface plot data
       surface_data <- grid
 
-      # Retrieve IqrTheme continuous palette for the surface gradient.
+      # Retrieve IqrTheme diverging palette for the surface gradient.
       # The palette is used to build a diverging gradient centered at the
       # median predicted value so positive/negative deviations are
       # immediately distinguishable.
-      cont_colors <- private$.continuous_colors(theme_obj)
+      cont_colors <- .iqr_plotter$.pal_diverging(theme_obj)
       low_col  <- cont_colors[1]
       high_col <- cont_colors[length(cont_colors)]
       mid_col  <- if (length(cont_colors) >= 3) {
@@ -915,12 +876,11 @@ DoePlotter <- R6::R6Class("DoePlotter",
       plot_data$Order <- seq_len(n)
 
       # Mark active effects (beyond Lenth ME) for emphasis.
-      ui <- private$.ui_colors(theme_obj)
-      point_col <- ui$primary
-      active_col <- ui$danger
-      label_col <- ui$text
-      me_col <- ui$warning
-      sme_col <- ui$danger
+      point_col  <- .iqr_plotter$.pal_ui(theme_obj, "primary")
+      active_col <- .iqr_plotter$.pal_ui(theme_obj, "danger")
+      label_col  <- .iqr_plotter$.pal_ui(theme_obj, "text", default = "black")
+      me_col     <- .iqr_plotter$.pal_ui(theme_obj, "warning")
+      sme_col    <- .iqr_plotter$.pal_ui(theme_obj, "danger")
 
       # Determine which points are "active" (beyond ME) for color emphasis.
       if (!is.null(pse_info)) {
@@ -1015,11 +975,10 @@ DoePlotter <- R6::R6Class("DoePlotter",
       })
 
       # Determine active vs inactive effects for bar coloring.
-      ui <- private$.ui_colors(theme_obj)
-      cont_colors <- private$.continuous_colors(theme_obj)
+      cont_colors <- .iqr_plotter$.pal_diverging(theme_obj)
       low_col <- cont_colors[1]
       high_col <- cont_colors[length(cont_colors)]
-      me_col <- ui$warning
+      me_col <- .iqr_plotter$.pal_ui(theme_obj, "warning")
 
       # Mark bars as active (beyond ME) when Lenth PSE is available.
       if (!is.null(pse_info)) {
@@ -1120,10 +1079,10 @@ DoePlotter <- R6::R6Class("DoePlotter",
         grid[[f$name]] <- mean(f$levels)
       }
 
-      # Assign a distinct color to each response.
-      default_colors <- c("#2C7BB6", "#D7191C", "#FDAE61", "#ABD9E9",
-                           "#FFFFBF", "#F46D43", "#5AAE61", "#8073AC")
+      # Assign a distinct color to each response from the IqrTheme discrete
+      # palette, auto-extended to cover the number of responses.
       n_responses <- length(response_specs)
+      default_colors <- .iqr_plotter$.pal_discrete(theme_obj, n_responses)
       for (i in seq_len(n_responses)) {
         if (is.null(response_specs[[i]]$color)) {
           response_specs[[i]]$color <-
@@ -1169,7 +1128,7 @@ DoePlotter <- R6::R6Class("DoePlotter",
       p <- ggplot(plot_df, aes(.data[[x_var]], .data[[y_var]])) +
         # Feasible region: green highlight.
         geom_tile(data = subset(plot_df, Feasible == "Feasible"),
-                  fill = "#1A9850", alpha = 0.35) +
+                  fill = .iqr_plotter$.pal_semantic(theme_obj, "pass"), alpha = 0.35) +
         theme_minimal() +
         labs(
           title = "Overlaid Contour Plot",
@@ -1284,11 +1243,10 @@ DoePlotter <- R6::R6Class("DoePlotter",
         pse_info <- analyzer$compute_lenth_pse(unlist(all_effects))
       }, error = function(e) { })
 
-      ui <- private$.ui_colors(theme_obj)
-      point_col <- ui$primary
-      active_col <- ui$danger
-      label_col <- ui$text
-      me_col <- ui$warning
+      point_col  <- .iqr_plotter$.pal_ui(theme_obj, "primary")
+      active_col <- .iqr_plotter$.pal_ui(theme_obj, "danger")
+      label_col  <- .iqr_plotter$.pal_ui(theme_obj, "text", default = "black")
+      me_col     <- .iqr_plotter$.pal_ui(theme_obj, "warning")
 
       # Determine which points are "active" (beyond ME).
       if (!is.null(pse_info)) {

@@ -6,6 +6,7 @@
 \usage{
 layers_histogram_density(
   bins = NULL,
+  theme = NULL,
   ...,
   hist_args = list(),
   density_args = list()
@@ -13,6 +14,11 @@ layers_histogram_density(
 }
 \arguments{
 \item{bins}{Number of bins for the histogram. If NULL, uses default.}
+
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Currently
+not used for color resolution (histogram/density colors are usually
+mapped via \code{base_plot()}'s auto-injection); accepted for API
+consistency with the other \code{layers_*} functions.}
 
 \item{...}{Common arguments passed to both geoms (e.g., mapping, data, na.rm).}
 

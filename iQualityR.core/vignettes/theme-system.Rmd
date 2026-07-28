@@ -1,0 +1,751 @@
+---
+title: "The Unified Theme and Color Pipeline"
+author: "iQualityR.core Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{The Unified Theme and Color Pipeline}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.core)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+# 1. Introduction
+
+## 1.1 Why a unified theme system? The color chaos problem
+
+Quality engineering dashboards typically mix plots from many sources:
+a histogram from a capability study, a control chart from SPC, a
+Pareto chart from a defect analysis, a fishbone diagram from a root
+cause session, and a correlation heatmap from a multivariate drill-down.
+When each plot picks its own colors — `ggplot2` defaults in one panel,
+a hard-coded `c("#E41A1C", "#377EB8", ...)` in another, a copied
+`scale_fill_brewer()` in a third — the result is visual noise that
+undermines the credibility of the analysis. Worse, when the QA manager
+asks "make all the charts match the corporate brand for the customer
+report", the engineer faces a find-and-replace marathon across dozens
+of scripts.
+
+`iQualityR.core` solves this by providing a single theme pipeline that
+every plot function in the framework taps into. One switch changes the
+look-and-feel of every plot and every Excel export, consistently and
+predictably.
+
+## 1.2 Design goals: one switch, everything recolors
+
+The theme system is built around four design goals:
+
+1. **One switch.** Construct an `IqrTheme` with a preset name and every
+   downstream scale, theme, and Excel style follows. No per-plot color
+   arguments.
+2. **Four palette classes.** Categorical, sequential, diverging, and
+   semantic colors are first-class citizens, each matched to a visual
+   job (grouping, magnitude, signed deviation, verdict).
+3. **Accessibility by default.** Every preset is checked against the
+   WCAG 2.x contrast formula; pass/fail verdicts always meet the AA
+   threshold against their backgrounds.
+4. **Extensibility.** Seven external presets (`economist`, `wsj`,
+   `gdocs`, `tufte`, `few`, `solarized`, `prism`) are bundled as
+   full configurations, and users can override individual slots or
+   register entirely custom palettes.
+
+# 2. Theory: Color in Quality Visualization
+
+## 2.1 The four palette classes and their visual jobs
+
+Statistical graphics map data to color in fundamentally different ways.
+Using the wrong mapping produces misleading charts. The framework
+formalises four palette classes, each tied to a data type:
+
+| Palette class | Data type | Visual job | Quality example |
+|:--------------|:----------|:-----------|:----------------|
+| `discrete` | Categorical / factor | Distinguish groups | Operators, shifts, machines |
+| `sequential` | Continuous, non-negative | Encode magnitude | Defect counts, density, risk scores |
+| `diverging` | Continuous, signed | Encode deviation from a midpoint | Residuals, correlations, effects |
+| `semantic` | Verdict / status | Encode meaning | Pass / fail / watch, significant / not |
+
+**Discrete** palettes are qualitative — the colors have no inherent
+order. Paul Tol's colorblind-safe palette (used in `academic`) is the
+canonical choice. The framework auto-extends a discrete palette to any
+`n` via `grDevices::colorRampPalette()` when the number of groups
+exceeds the base length.
+
+**Sequential** palettes run from a light endpoint through a saturated
+midpoint to a dark endpoint, encoding "more is darker". A 3-stop
+gradient (low / mid / high) is interpolated by `ggplot2::scale_*_gradientn`.
+
+**Diverging** palettes have three meaningful stops: a negative hue, a
+neutral midpoint (usually white or the background color), and a
+positive hue. They are essential for signed quantities — using a
+sequential palette on residuals would imply that "−3" and "+3" differ
+only in magnitude, hiding the sign.
+
+**Semantic** palettes are a small named set tied to domain verdicts.
+`pass` / `fail` / `watch` are the canonical three; `good` / `bad` /
+`neutral` are aliases for the same colors. Traffic-light roles
+(`green` / `yellow` / `red`) are also exposed so non-statistical
+audiences can read the chart immediately.
+
+## 2.2 WCAG contrast and accessibility
+
+The Web Content Accessibility Guidelines (WCAG) 2.x define a contrast
+ratio between two colors:
+
+$$
+R = \frac{L_{\text{lighter}} + 0.05}{L_{\text{darker}} + 0.05}
+$$
+
+where $L$ is the relative luminance computed from the sRGB channels
+via the linearisation:
+
+$$
+L = 0.2126 \cdot R_{\text{lin}} + 0.7152 \cdot G_{\text{lin}} + 0.0722 \cdot B_{\text{lin}}
+$$
+
+with $C_{\text{lin}} = C/12.92$ for $C \le 0.03928$ and
+$((C+0.055)/1.055)^{2.4}$ otherwise. The ratio ranges from 1 (no
+contrast) to 21 (black on white). The AA threshold is 4.5 for normal
+text and 3.0 for large text; AAA requires 7.0.
+
+The framework uses this formula in two places:
+
+- `contrast_ratio(fg, bg)` — exported utility for ad-hoc checks.
+- `.contrast_text(bg)` — `IqrPlotterBase` helper that returns
+  `"#000000"` or `"#FFFFFF"` for a readable text color on a colored
+  fill, used for in-bar labels.
+
+## 2.3 Color-blind safety considerations
+
+Approximately 8% of men and 0.5% of women have some form of color
+vision deficiency, with deuteranopia (red-green) the most common.
+Quality reports that encode pass/fail as red/green alone are
+unreadable to this audience. The framework addresses this in two ways:
+
+- The `academic` preset ships Paul Tol's colorblind-safe qualitative
+  palette, which uses blue / red / green / yellow hues that remain
+  distinguishable under deuteranopia and protanopia simulation.
+- Semantic colors are always paired with a shape or text label, so
+  the verdict is not communicated by hue alone.
+
+# 3. The IqrTheme Facade
+
+## 3.1 IqrTheme, ThemeConfig, PlotTheme — the three-layer model
+
+The theme system is layered into three R6 classes, each with a single
+responsibility:
+
+| Layer | Class | Responsibility |
+|:------|:------|:---------------|
+| Configuration | `ThemeConfig` | Stores UI colors + four-class data palettes for one preset; resolves palettes via `get_pal()` |
+| Scales | `PlotTheme` | Builds ggplot2 `scale_*` objects and the `theme_iqr()` ggplot2 theme from a `ThemeConfig` |
+| Facade | `IqrTheme` | Single entry point; holds a `config` (`ThemeConfig`) and a `plot` (`PlotTheme`); delegates every call |
+
+Users only ever construct an `IqrTheme`. Downstream packages receive
+the `IqrTheme` object and call its `$plot$scale_*()` and
+`$plot$theme_iqr()` methods, or — more commonly — call the
+`.pal_*` / `.scale_*` toolbox on `IqrPlotterBase` (Section 6), which
+internally delegates to the same `PlotTheme`.
+
+## 3.2 Creating a theme: IqrTheme$new("academic")
+
+```{r create-theme}
+theme_academic <- IqrTheme$new("academic")
+theme_workbench <- IqrTheme$new("workbench")
+
+# The facade exposes both sub-objects
+class(theme_academic$config)  # ThemeConfig
+class(theme_academic$plot)    # PlotTheme
+
+# Inspect the active UI palette
+str(theme_academic$get_ui_colors(), max.level = 1)
+```
+
+## 3.3 Switching themes globally
+
+There is no hidden global state inside `IqrTheme` — each instance is
+self-contained. To switch the active theme for a session, pass a new
+`IqrTheme` to your task object, or use the `options()` convention
+recognised by some downstream helpers:
+
+```{r switch-theme, eval = FALSE}
+# Per-task: construct with a new preset
+task$set_theme(IqrTheme$new("economist"))
+
+# Global option (recognised by base_plot() in iQualityR.plot)
+options(iqr.default_theme = "solarized")
+```
+
+The resolution order for palette lookups inside `ThemeConfig$get_pal()`
+is:
+
+1. The `custom` argument (per-call override).
+2. `options("iqr.custom_<type>")` (session-wide custom palette).
+3. The preset's `data[[type]]` slot.
+
+This lets you override a single palette class without rebuilding the
+whole theme.
+
+# 4. Built-in Theme Presets
+
+## 4.1 academic, workbench, tech (the three internal presets)
+
+The three internal presets cover the three primary use contexts:
+
+| Preset | Audience | Look-and-feel | Default in |
+|:-------|:---------|:--------------|:-----------|
+| `academic` | Papers, reports, CRAN | White background, black borders, Paul Tol discrete palette | `IqrTheme$new()` default |
+| `workbench` | Internal QA dashboards | Soft grey background, blue primary, bold table headers | Production tooling |
+| `tech` | Engineering dashboards | Light blue background, GitHub-inspired palette | Real-time monitoring |
+
+Each preset ships a complete configuration: a `ui` list (background,
+surface, text, grid, border, primary, success, warning, danger, and
+four `table_*` slots) and a `data` list (the four palette classes).
+
+```{r compare-internal}
+# Compare the discrete palettes of the three internal presets
+internal <- c("academic", "workbench", "tech")
+disc <- lapply(internal, function(p) IqrTheme$new(p)$get_pal("discrete"))
+names(disc) <- internal
+disc
+```
+
+## 4.2 External themes: economist, wsj, gdocs, tufte, few, solarized, prism
+
+Seven external presets are bundled as full configurations — not just
+theme functions. Each carries its own UI colors and four-class data
+palettes, so picking `"economist"` recolors plots and Excel exports
+consistently with The Economist's look-and-feel.
+
+When the source package (`ggthemes` or `ggprism`) is installed, the
+matching ggplot2 theme function is layered on top of `theme_iqr()` for
+typographic fidelity. When the package is not installed, the preset's
+color configuration is still applied — only the theme function is
+skipped, with no error.
+
+| Preset | Source | Discrete palette origin |
+|:-------|:-------|:------------------------|
+| `economist` | ggthemes | Economist red/blue/green |
+| `wsj` | ggthemes | Wall Street Journal |
+| `gdocs` | ggthemes | Google Docs |
+| `tufte` | ggthemes | Tufte minimal ink (grayscale) |
+| `few` | ggthemes | Stephen Few's qualitative |
+| `solarized` | ggthemes | Solarized accent palette |
+| `prism` | ggprism | `winter_bright` |
+
+```{r external-preset, eval = FALSE}
+# Works whether or not ggthemes is installed; the theme function is
+# only layered on top when the package is present.
+theme_econ <- IqrTheme$new("economist")
+theme_econ$get_pal("discrete")
+theme_econ$plot$theme_iqr()
+```
+
+## 4.3 Side-by-side preset gallery (all 10 presets)
+
+The snippet below builds a single bar chart rendered in all ten
+presets, demonstrating how the same data recolors consistently. The
+plot is assembled with `patchwork` (used by `iQualityR.plot`).
+
+```{r preset-gallery, fig.width = 10, fig.height = 8}
+# A small dataset: defect counts by category
+defects <- data.frame(
+  category = factor(c("Scratch", "Dent", "Crack", "Stain", "Burr")),
+  count    = c(42, 28, 15, 10, 5)
+)
+
+presets <- c("academic", "workbench", "tech",
+             "economist", "wsj", "gdocs", "tufte",
+             "few", "solarized", "prism")
+
+plots <- lapply(presets, function(p) {
+  thm <- IqrTheme$new(p)
+  ggplot(defects, aes(x = category, y = count, fill = category)) +
+    geom_col() +
+    thm$plot$theme_iqr(base_size = 9) +
+    thm$plot$scale_fill_iqr(discrete = TRUE) +
+    labs(title = p, x = NULL, y = NULL) +
+    theme(legend.position = "none")
+})
+
+# Patchwork assembly (graceful fallback if patchwork is unavailable)
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  patchwork::wrap_plots(plots, ncol = 2)
+} else {
+  plots[[1]]
+}
+```
+
+# 5. The Four-Class Palette System
+
+## 5.1 Discrete palettes and auto-extension via colorRampPalette
+
+Discrete palettes are stored as a fixed-length character vector
+(10 colors in every preset). When a chart needs more groups than the
+base length, `ThemeConfig$get_pal(type = "discrete", n = N)` interpolates
+via `grDevices::colorRampPalette`:
+
+```{r discrete-extend}
+theme <- IqrTheme$new("academic")
+base <- theme$get_pal("discrete")
+length(base)  # 10
+
+extended <- theme$get_pal("discrete", n = 15)
+length(extended)  # 15 — interpolated, not recycled
+extended
+```
+
+This guarantees distinct colors for any number of groups without
+recycling, while staying close to the preset's hue family.
+
+## 5.2 Sequential and diverging gradients
+
+Sequential and diverging palettes are stored as 3-stop gradients
+(low / mid / high) and consumed by `ggplot2::scale_*_gradientn` /
+`scale_*_gradient2`:
+
+```{r gradient-palettes}
+theme <- IqrTheme$new("workbench")
+theme$get_pal("sequential")   # 3 stops: light -> mid -> dark
+theme$get_pal("diverging")    # 3 stops: negative hue -> neutral -> positive hue
+```
+
+The diverging midpoint defaults to 0 in `.scale_fill_diverging()`,
+which is correct for residuals, effects, and correlations. For a
+non-zero midpoint (e.g. a target value), pass `midpoint = T` to the
+scale.
+
+## 5.3 Semantic colors: pass / fail / watch / good / bad / neutral
+
+Semantic palettes are a named list of nine slots, organised in three
+synonym groups:
+
+| Group | Slots | Use case |
+|:------|:------|:---------|
+| Verdict | `pass`, `fail`, `watch` | Quality decisions |
+| Valence | `good`, `bad`, `neutral` | Generic assessment |
+| Traffic light | `green`, `yellow`, `red` | Stakeholder reporting |
+
+All three groups map to the same three colors within a preset, so
+`pass == good == green` by design. This lets domain code use the most
+idiomatic name without color drift.
+
+```{r semantic-palette}
+theme <- IqrTheme$new("academic")
+sem <- theme$get_pal("semantic")
+sem
+
+# Single-name lookup
+theme$get_pal("semantic", name = "pass")
+theme$get_pal("semantic", name = "fail")
+```
+
+## 5.4 Paired mode: coordinated fill + outline
+
+For bar charts and boxplots, a fill color needs a darker outline to
+keep edges visible against adjacent fills. The `style = "paired"`
+argument to `scale_fill_iqr()` / `scale_color_iqr()` derives the
+outline color by darkening each fill by 25% via the `darken()` utility:
+
+```{r paired-mode, fig.width = 9, fig.height = 4}
+theme <- IqrTheme$new("tech")
+df <- data.frame(
+  group = factor(c("A", "B", "C", "D")),
+  value = c(12, 18, 15, 9)
+)
+
+p_paired <- ggplot(df, aes(x = group, y = value, fill = group, colour = group)) +
+  geom_col(linewidth = 1) +
+  theme$plot$theme_iqr() +
+  theme$plot$scale_fill_iqr(discrete = TRUE, style = "paired") +
+  theme$plot$scale_color_iqr(discrete = TRUE, style = "paired") +
+  labs(title = "Paired fill + darkened outline", x = NULL, y = NULL) +
+  theme(legend.position = "none")
+
+p_paired
+```
+
+# 6. The IqrPlotterBase Color Toolbox
+
+## 6.1 .pal_*() accessors
+
+`IqrPlotterBase` exposes five palette accessors and one text-color
+helper. They are the only sanctioned way for a subclass to read colors
+from the active theme — directly indexing `theme_obj$config$config` is
+discouraged because the internal layout may evolve.
+
+| Method | Returns | Notes |
+|:-------|:--------|:------|
+| `.pal_discrete(theme_obj, n = NULL)` | `character` | Auto-extends to `n` |
+| `.pal_sequential(theme_obj)` | `character` (3 stops) | |
+| `.pal_diverging(theme_obj)` | `character` (3 stops) | |
+| `.pal_semantic(theme_obj, name = NULL)` | `character` (named) or scalar | Single color when `name` given |
+| `.pal_ui(theme_obj, name, default = "#888888")` | scalar | UI slot fallback |
+| `.contrast_text(bg)` | `"#000000"` or `"#FFFFFF"` | WCAG-based |
+
+## 6.2 .scale_*() factories
+
+The nine scale factories return ready-to-add ggplot2 scale objects.
+They are thin wrappers around `PlotTheme$scale_*` so that subclasses
+do not need to call `theme_obj$plot$...` explicitly.
+
+| Factory | Returns | Use when |
+|:--------|:--------|:---------|
+| `.scale_fill_discrete(theme, ...)` | `ScaleDiscrete` | Bars/boxes by category |
+| `.scale_color_discrete(theme, ...)` | `ScaleDiscrete` | Lines/points by category |
+| `.scale_fill_color_paired(theme, ...)` | `list(fill, color)` | Coordinated fill + outline |
+| `.scale_fill_sequential(theme, ...)` | `ScaleContinuous` | Density / count gradient |
+| `.scale_color_sequential(theme, ...)` | `ScaleContinuous` | Sequential point color |
+| `.scale_fill_diverging(theme, ...)` | `ScaleContinuous` | Residual / effect heatmap |
+| `.scale_color_diverging(theme, ...)` | `ScaleContinuous` | Signed point color |
+| `.scale_fill_semantic(theme, labels, ...)` | `ScaleDiscrete` | Pass/fail verdicts |
+| `.scale_color_semantic(theme, labels, ...)` | `ScaleDiscrete` | Verdict outlines |
+
+## 6.3 .contrast_text() for accessible labels
+
+When a plot places text on a colored fill (e.g. a count label inside a
+bar), the text color must contrast with the fill. `.contrast_text()`
+wraps `is_dark()` and returns black or white:
+
+```{r contrast-text}
+plotter <- IqrPlotterBase$new()
+plotter$.contrast_text("#2563EB")  # dark fill -> white text
+plotter$.contrast_text("#F7F9FC")  # light fill -> black text
+```
+
+## 6.4 Worked example: a semantic verdict bar chart
+
+This example uses the toolbox end-to-end — semantic palette, semantic
+scale, contrast text — to render a pass/fail/watch summary:
+
+```{r toolbox-example, fig.width = 7, fig.height = 4}
+verdicts <- data.frame(
+  result = factor(c("pass", "watch", "fail"),
+                  levels = c("pass", "watch", "fail")),
+  count  = c(120, 18, 7)
+)
+
+theme <- IqrTheme$new("workbench")
+
+# A minimal plot that uses the toolbox end-to-end: semantic fill scale,
+# contrast-checked text color, and the themed ggplot2 theme.
+verdict_plot <- function(df, theme_obj) {
+  txt_col <- theme_obj$get_ui_colors()$text
+  ggplot(df, aes(x = result, y = count, fill = result)) +
+    geom_col() +
+    geom_text(aes(label = count), vjust = -0.3, colour = txt_col) +
+    theme_obj$plot$theme_iqr() +
+    theme_obj$plot$scale_fill_semantic(labels = c("pass", "watch", "fail")) +
+    labs(title = "Capability verdicts (n = 145 parts)",
+         x = NULL, y = "Count") +
+    theme(legend.position = "none") +
+    ylim(0, 140)
+}
+
+verdict_plot(verdicts, theme)
+```
+
+# 7. Color Utility Functions
+
+The package exports five dependency-free color helpers. They are used
+internally by the theme system (e.g. `darken()` powers `style = "paired"`)
+and are exported so downstream packages and users can build on the same
+primitives.
+
+## 7.1 lighten(), darken(), mix()
+
+```{r color-utils-1}
+base <- "#2563EB"
+
+lighten(base, 0.2)   # mix with white
+darken(base, 0.3)    # mix with black
+mix("#FF0000", "#0000FF", 0.5)  # 50/50 red + blue -> purple
+```
+
+The `amount` parameter is a proportion in `[0, 1]`: 0 returns the
+original color, 1 returns the mixing endpoint (white / black / the
+second color).
+
+## 7.2 is_dark(), contrast_ratio()
+
+```{r color-utils-2}
+is_dark("#000000")   # TRUE
+is_dark("#FFFFFF")   # FALSE
+is_dark("#2563EB")   # TRUE — blue is dark enough for white text
+
+contrast_ratio("#FFFFFF", "#000000")  # 21 — maximum
+contrast_ratio("#2563EB", "#FFFFFF")  # check the blue/white pair
+```
+
+A ratio of 4.5 or higher meets WCAG AA for normal text; 7.0 meets AAA.
+
+## 7.3 Worked example: deriving a palette from a brand color
+
+A common request is "use our corporate blue everywhere". The utilities
+make this a five-line derivation:
+
+```{r brand-palette, fig.width = 7, fig.height = 3}
+brand_blue <- "#0B5394"  # hypothetical corporate color
+
+# Build a 5-color qualitative palette by mixing the brand color with
+# white at decreasing amounts, then darkening for the last two stops.
+brand_discrete <- c(
+  brand_blue,
+  lighten(brand_blue, 0.3),
+  lighten(brand_blue, 0.6),
+  darken(brand_blue, 0.2),
+  darken(brand_blue, 0.4)
+)
+
+# Build a sequential 3-stop gradient
+brand_sequential <- c(lighten(brand_blue, 0.85), brand_blue, darken(brand_blue, 0.4))
+
+# Visualise
+df <- data.frame(x = factor(1:5), y = 1:5)
+ggplot(df, aes(x = x, y = y, fill = x)) +
+  geom_col() +
+  scale_fill_manual(values = brand_discrete) +
+  labs(title = "Brand-derived discrete palette", x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+To plug this into the theme system, override the `discrete` slot at
+construction (Section 8.1) or via `options()`:
+
+```{r brand-option, eval = FALSE}
+options(iqr.custom_discrete = brand_discrete)
+# Every IqrTheme now returns brand_discrete for type = "discrete"
+# until the option is cleared.
+```
+
+# 8. Customizing and Extending Themes
+
+## 8.1 Overriding individual slots
+
+`ThemeConfig$initialize()` and `$set_theme()` accept `...` overrides
+that are merged into the preset via `merge_config()` (a recursive
+`modifyList`). This lets you tweak one slot without rebuilding the
+whole configuration:
+
+```{r override-slots}
+# Override the primary color and the discrete palette in one call
+theme_custom <- IqrTheme$new(
+  "academic",
+  ui = list(primary = "#0B5394"),
+  data = list(discrete = c("#0B5394", "#E69138", "#6AA84F",
+                            "#CC0000", "#674EA7", "#999999",
+                            "#3D85C6", "#B45309", "#38761D", "#7F6000"))
+)
+
+theme_custom$get_ui_colors()$primary
+theme_custom$get_pal("discrete")
+```
+
+## 8.2 Registering a custom preset
+
+For a reusable preset, add an entry to `ThemeConfig$style_presets` at
+session start. The simplest path is to copy an existing preset and
+modify it:
+
+```{r register-preset, eval = FALSE}
+# Build a "brand" preset from "workbench"
+brand_preset <- IqrTheme$new("workbench")$config$style_presets$workbench
+brand_preset$ui$primary <- "#0B5394"
+brand_preset$data$discrete <- brand_discrete
+
+# Register it on a fresh ThemeConfig
+tc <- ThemeConfig$new("academic")
+tc$style_presets$brand <- brand_preset
+tc$set_theme("brand")
+
+# Now use it through the facade
+theme_brand <- IqrTheme$new("academic")
+theme_brand$config$style_presets$brand <- brand_preset
+theme_brand$set_theme("brand")
+```
+
+For a permanent preset, ship it as a new list inside the
+`style_presets` assignment in `IqrTheme.R`. The framework will pick it
+up automatically.
+
+## 8.3 Feeding a custom palette through the toolbox
+
+Once a custom palette is registered, every `.pal_*` and `.scale_*`
+helper picks it up — no subclass changes required:
+
+```{r custom-through-toolbox, fig.width = 6, fig.height = 4}
+theme <- IqrTheme$new(
+  "academic",
+  data = list(discrete = c("#0B5394", "#E69138", "#6AA84F"))
+)
+
+df <- data.frame(group = factor(c("A", "B", "C")), value = c(10, 14, 8))
+ggplot(df, aes(x = group, y = value, fill = group)) +
+  geom_col() +
+  theme$plot$theme_iqr() +
+  theme$plot$scale_fill_iqr(discrete = TRUE) +
+  labs(title = "Custom 3-color palette via override", x = NULL, y = NULL) +
+  theme(legend.position = "none")
+```
+
+# 9. ExcelExporter Theming
+
+## 9.1 How workbook colors track the active theme
+
+`ExcelExporter` is constructed from a `ThemeConfig` (not the full
+`IqrTheme`) and derives every workbook style from the theme's UI
+palette. This guarantees that an Excel export matches the plots that
+accompany it in a report.
+
+The styles are generated once at construction by
+`$generate_excel_styles()` and cached in `$excel_styles_cache`. The
+cache is a list of `openxlsx::createStyle()` objects:
+
+| Style slot | Used for | Theme source |
+|:-----------|:---------|:-------------|
+| `main_title` | Merged title row | `ui$title` |
+| `header` | Column header row | `ui$table_header_bg`, `ui$table_header_tx` |
+| `body` | Data rows | `ui$text`, `ui$grid` |
+| `stripe` | Zebra-striped even rows | `ui$table_stripe` |
+| `t_thick` / `b_thick` / `l_thick` / `r_thick` | Outer border | `ui$table_border` |
+
+## 9.2 Customizing table headers, stripes, borders
+
+For a one-off export that needs different styling (e.g. a customer
+brand color on the header), call `$set_excel_theme(...)` with named UI
+overrides before exporting. `$reset_excel_theme()` restores the
+ThemeConfig defaults.
+
+```{r excel-theme, eval = FALSE}
+theme    <- IqrTheme$new("academic")
+exporter <- ExcelExporter$new(theme$config)
+
+# Override just the header background for this export
+exporter$set_excel_theme(table_header_bg = "#0B5394",
+                         table_header_tx = "#FFFFFF")
+
+exporter$export_excel(
+  data  = data.frame(metric = "Cpk", value = 1.42),
+  path  = tempfile(fileext = ".xlsx"),
+  title = "Bearing Diameter Capability (branded)"
+)
+
+# Restore defaults for subsequent exports
+exporter$reset_excel_theme()
+```
+
+## 9.3 A complete themed export
+
+This end-to-end example builds a small workbook whose colors track the
+`economist` preset:
+
+```{r excel-export-demo, eval = FALSE}
+theme    <- IqrTheme$new("economist")
+exporter <- ExcelExporter$new(theme$config)
+
+sheets <- list(
+  Summary = data.frame(
+    metric = c("mean", "sd", "Cpk", "verdict"),
+    value  = c(10.021, 0.034, 1.42, "pass")
+  ),
+  Subgroups = data.frame(
+    subgroup = 1:3,
+    mean     = c(10.01, 10.03, 10.02),
+    n        = c(5, 5, 5)
+  )
+)
+
+path <- exporter$export_excel(
+  data  = sheets,
+  path  = tempfile(fileext = ".xlsx"),
+  title = "Bearing Diameter Capability Study"
+)
+```
+
+# 10. Best Practices
+
+## 10.1 Resolve the theme once
+
+Construct the `IqrTheme` at the task level and pass it down to every
+plotter and reporter. Re-resolving the theme inside `render()` defeats
+the "one switch" goal and can cause inconsistent colors when the global
+option changes mid-pipeline.
+
+## 10.2 Use the toolbox, not the internals
+
+Inside a plotter subclass, call `.pal_*()` and `.scale_*()` — never
+index `theme_obj$config$config$data[[...]]` directly. The toolbox is
+the stable API; the internal layout of `ThemeConfig` may evolve.
+
+## 10.3 Match the palette class to the data
+
+- Categorical factor -> `discrete`
+- Continuous non-negative -> `sequential`
+- Continuous signed -> `diverging`
+- Verdict / status -> `semantic`
+
+Using a discrete palette on a continuous variable produces a legend
+with one entry per unique value — almost never what you want.
+
+## 10.4 Keep semantic colors redundant
+
+Always pair `pass` / `fail` color with a text label or shape. Color
+alone is inaccessible to color-blind users and unparseable by
+black-and-white printers.
+
+## 10.5 Check contrast for in-bar labels
+
+When placing text on a colored fill, route the fill color through
+`.contrast_text()` to pick black or white text. Hard-coding either
+will fail on some fills.
+
+## 10.6 Override at the right granularity
+
+- Per-call: pass `custom` to `get_pal()` or `values` to a scale.
+- Per-session: set `options("iqr.custom_<type>")`.
+- Per-project: construct `IqrTheme$new(preset, data = list(...))`.
+- Per-organisation: register a new preset in `style_presets`.
+
+Prefer the narrowest scope that solves the problem.
+
+# 11. References
+
+- Ihaka, R. (2003). *Colour for Presentation Graphics*. Proceedings of
+  the 3rd International Workshop on Distributed Statistical Computing.
+- Lumley, T. (2006). *colorspace: Color Space Manipulation*. R package.
+- Montgomery, D. C. (2013). *Statistical Quality Control* (7th ed.).
+  Wiley.
+- Paul Tol's Technical Note "Colour Schemes" (SRON Technical Note).
+  https://personal.sron.nl/~pault/
+- W3C (2018). *Web Content Accessibility Guidelines (WCAG) 2.1*.
+  https://www.w3.org/TR/WCAG21/
+- Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*
+  (2nd ed.). Springer.
+- Zeileis, A., Hornik, K., and Murrell, P. (2009). *Escaping RGBland:
+  Selecting Colors for Statistical Graphics*. Computational Statistics
+  & Data Analysis, 53, 3259-3270.
+
+*See `vignette("iQualityR-core", package = "iQualityR.core")` for the
+R6 base class architecture, and `vignette("iQualityR", package =
+"iQualityR")` for the framework-level methodology overview.*

@@ -115,8 +115,8 @@ AttrGagePlotter <- R6::R6Class(
 
       ci <- results$ci %||% c(NA_real_, NA_real_)
       colors <- private$palette(theme_obj, 5)
-      semantic <- private$agreement_palette()
-      status_color <- private$kappa_status_color(kappa_val)
+      semantic <- private$agreement_palette(theme_obj)
+      status_color <- private$kappa_status_color(kappa_val, theme_obj)
 
       bands <- data.frame(
         xmin = c(-1, 0, 0.2, 0.4, 0.6, 0.8),
@@ -258,7 +258,7 @@ AttrGagePlotter <- R6::R6Class(
           size = 3.1
         ) +
         ggplot2::scale_x_continuous(limits = c(-0.05, 1.08), breaks = seq(0, 1, 0.2)) +
-        ggplot2::scale_color_manual(values = private$threshold_palette(), guide = "none") +
+        ggplot2::scale_color_manual(values = private$threshold_palette(theme_obj), guide = "none") +
         ggplot2::labs(
           title = "Between-Appraiser Agreement",
           subtitle = "Kappa with approximate 95% intervals; labels show percent agreement",
@@ -307,7 +307,7 @@ AttrGagePlotter <- R6::R6Class(
           size = 3.1
         ) +
         ggplot2::scale_x_continuous(limits = c(-0.05, 1.08), breaks = seq(0, 1, 0.2)) +
-        ggplot2::scale_color_manual(values = private$threshold_palette(), guide = "none") +
+        ggplot2::scale_color_manual(values = private$threshold_palette(theme_obj), guide = "none") +
         ggplot2::labs(
           title = "Each Appraiser vs Standard",
           subtitle = "Kappa against known reference classification",
@@ -420,9 +420,9 @@ AttrGagePlotter <- R6::R6Class(
         ggplot2::geom_segment(
           ggplot2::aes(x = 0, xend = .data$Discordant_Ratings, y = .data$Sample, yend = .data$Sample),
           linewidth = 0.7,
-          color = "#b8c6d6"
+          color = self$.pal_ui(theme_obj, "muted")
         ) +
-        ggplot2::geom_point(size = 3.4, color = "#d64545", fill = "#d64545") +
+        ggplot2::geom_point(size = 3.4, color = self$.pal_semantic(theme_obj, "fail"), fill = self$.pal_semantic(theme_obj, "fail")) +
         ggplot2::geom_text(
           ggplot2::aes(label = paste0("modal ", sprintf("%.0f%%", .data$Percent_Modal))),
           hjust = -0.06,
@@ -664,11 +664,7 @@ AttrGagePlotter <- R6::R6Class(
     },
 
     palette = function(theme_obj, n = 4) {
-      colors <- theme_obj$config$data$discrete %||% NULL
-      if (is.null(colors) || length(colors) == 0) {
-        colors <- c("#4477AA", "#EE6677", "#228833", "#CCBB44", "#66CCEE", "#AA3377")
-      }
-      rep(colors, length.out = n)
+      self$.pal_discrete(theme_obj, n)
     },
 
     status_color = function(theme_obj) {
@@ -676,23 +672,24 @@ AttrGagePlotter <- R6::R6Class(
       colors[[2]]
     },
 
-    agreement_palette = function() {
+    agreement_palette = function(theme_obj) {
+      disc <- self$.pal_discrete(theme_obj, 6)
       list(
         bands = c(
-          "Poor" = "#c93c3c",
-          "Slight" = "#e07a3f",
-          "Fair" = "#e9b949",
-          "Moderate" = "#7fb3d5",
-          "Substantial" = "#3f8f6b",
-          "Almost perfect" = "#1f7a4d"
+          "Poor" = self$.pal_semantic(theme_obj, "fail"),
+          "Slight" = self$.pal_semantic(theme_obj, "watch"),
+          "Fair" = disc[3],
+          "Moderate" = disc[4],
+          "Substantial" = self$.pal_semantic(theme_obj, "pass"),
+          "Almost perfect" = self$.pal_semantic(theme_obj, "good")
         )
       )
     },
 
-    threshold_palette = function() {
+    threshold_palette = function(theme_obj) {
       c(
-        "Review threshold" = "#d64545",
-        "Release threshold" = "#2f855a"
+        "Review threshold" = self$.pal_semantic(theme_obj, "fail"),
+        "Release threshold" = self$.pal_semantic(theme_obj, "pass")
       )
     },
 
@@ -703,11 +700,11 @@ AttrGagePlotter <- R6::R6Class(
       )
     },
 
-    kappa_status_color = function(kappa) {
-      if (is.na(kappa)) return("#5f6b7a")
-      if (kappa < 0.4) return("#d64545")
-      if (kappa < 0.8) return("#e9b949")
-      "#2f855a"
+    kappa_status_color = function(kappa, theme_obj) {
+      if (is.na(kappa)) return(self$.pal_semantic(theme_obj, "neutral"))
+      if (kappa < 0.4) return(self$.pal_semantic(theme_obj, "fail"))
+      if (kappa < 0.8) return(self$.pal_semantic(theme_obj, "watch"))
+      self$.pal_semantic(theme_obj, "pass")
     },
 
     get_kappa_results = function(results) {

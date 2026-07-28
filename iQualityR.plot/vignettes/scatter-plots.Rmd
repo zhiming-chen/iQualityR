@@ -1,0 +1,712 @@
+---
+title: "Scatter Plots for Process Correlation Analysis"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Scatter Plots for Process Correlation Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Scatter plots are the simplest and most powerful tool for exploring the
+relationship between two continuous process variables. In quality
+engineering they are used to:
+
+* screen potential inputs before designing an experiment,
+* verify that a controllable factor tracks an output response,
+* detect non-linear behaviour, outliers, and subgroup structure,
+* communicate correlation findings to stakeholders.
+
+The `iQualityR.plot` package provides four scatter-plot functions tailored
+to process analysis: a basic regression plot, a grouped plot for
+categorical factors, a bubble plot for three variables, and a density-aware
+plot for large data sets. This vignette demonstrates each function on
+realistic quality-engineering data and explains the underlying theory.
+
+## 2. Theory: Correlation vs Causation in Process Analysis
+
+### Pearson product–moment correlation
+
+For paired observations $(x_i, y_i)$, the Pearson correlation coefficient
+is
+
+$$
+r = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}
+         {\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \;\cdot\;
+                \sum_{i=1}^{n}(y_i - \bar{y})^2}}.
+$$
+
+It ranges from $-1$ (perfect negative linear association) to $+1$ (perfect
+positive linear association), with $r = 0$ indicating the *absence of
+linear* association. Pearson's $r$ is sensitive to outliers and assumes
+that both variables are approximately normally distributed and linearly
+related.
+
+### Spearman rank correlation
+
+Spearman's $\rho$ replaces the raw values with their ranks before computing
+the Pearson formula:
+
+$$
+\rho = 1 - \frac{6 \sum d_i^2}{n(n^2 - 1)},
+$$
+
+where $d_i$ is the difference between the ranks of $x_i$ and $y_i$.
+Because it operates on ranks, $\rho$ is **robust to outliers** and detects
+any monotonic (not just linear) relationship. It does not require
+normality.
+
+### Correlation does not imply causation
+
+A strong correlation between two process variables does not establish that
+one causes the other. Three rival explanations must always be considered:
+
+1. **Direct causation** — $X$ truly drives $Y$ (e.g. feed rate drives
+   surface roughness).
+2. **Confounding** — a third variable $Z$ drives both $X$ and $Y$
+   (e.g. ambient temperature raises both cycle time and defect rate).
+3. **Coincidence** — spurious correlation from a small sample or from
+   two unrelated trends over time.
+
+A scatter plot cannot, by itself, distinguish these explanations. It can,
+however, reveal non-linearity, heteroscedasticity, and subgroup structure
+that a correlation coefficient would hide.
+
+### Confidence band for the regression line
+
+The $1 - \alpha$ confidence band around the fitted regression line
+$\hat{y} = \hat{\beta}_0 + \hat{\beta}_1 x$ at a predictor value $x_0$ is
+
+$$
+\hat{y}_0 \;\pm\; t_{\alpha/2,\,n-2} \cdot s_{y|x} \cdot
+\sqrt{\frac{1}{n} + \frac{(x_0 - \bar{x})^2}{S_{xx}}},
+$$
+
+where $s_{y|x}$ is the residual standard error and
+$S_{xx} = \sum (x_i - \bar{x})^2$. The band is narrowest at $\bar{x}$ and
+widens toward the extremes of the data, reflecting greater uncertainty in
+the slope at the boundaries.
+
+### Overplotting and its remedies
+
+When the sample size is large, points overlap and obscure structure. The
+five remedies offered by `plot_scatter_density()` are:
+
+| Method | Mechanism | Best for |
+|---|---|---|
+| `alpha` | Semi-transparent points | Moderate overlap |
+| `jitter` | Add small random noise | Discrete / rounded data |
+| `bins` | Rectangular 2-D bin counts | Very large $n$ |
+| `hex` | Hexagonal bin counts | Very large $n$, smoother than bins |
+| `density` | Color-coded 2-D kernel density | Continuous data, large $n$ |
+
+## 3. plot_scatter_basic() — with regression and confidence band
+
+`plot_scatter_basic()` produces a single-group scatter plot with optional
+least-squares regression line, $1 - \alpha$ confidence band, and printed
+correlation coefficient.
+
+```{r}
+# Simulated relationship between feed rate and surface roughness
+set.seed(11)
+feed <- data.frame(
+  feed_rate = runif(80, 100, 300),
+  roughness = NA
+)
+feed$roughness <- with(feed, 0.4 + 0.012 * feed_rate + rnorm(80, 0, 0.6))
+
+plot_scatter_basic(
+  data              = feed,
+  x_var             = "feed_rate",
+  y_var             = "roughness",
+  add_regression    = TRUE,
+  add_ci            = TRUE,
+  add_correlation   = TRUE,
+  correlation_method = "pearson",
+  title             = "Surface roughness vs feed rate",
+  subtitle          = "CNC finishing pass, n = 80"
+)
+```
+
+**Spearman correlation** is preferred when outliers are suspected or the
+relationship is monotonic but non-linear:
+
+```{r}
+plot_scatter_basic(
+  data               = feed,
+  x_var              = "feed_rate",
+  y_var              = "roughness",
+  correlation_method = "spearman",
+  add_ci             = FALSE,
+  title              = "Same data, Spearman rank correlation",
+  subtitle           = "Robust to outliers and non-linearity"
+)
+```
+
+**Theme-driven aesthetics.** When `point_color`, `line_color`, and
+`ci_fill` are left `NULL`, the colors are resolved from the active theme
+through `.iqr_aes()`: points use the theme's `data` role, the regression
+line uses the `danger` semantic, and the confidence band uses the
+`primary` semantic. Switching `theme` therefore repaints the entire plot
+without any per-call color arguments:
+
+```{r}
+plot_scatter_basic(
+  data            = feed,
+  x_var           = "feed_rate",
+  y_var           = "roughness",
+  theme           = "economist",
+  add_correlation = FALSE,
+  title           = "Scatter plot themed by 'economist'",
+  subtitle        = "All colors resolved from the IqrTheme palette"
+)
+```
+
+To override a single role with another theme semantic, retrieve the
+`IqrTheme` object via `attr(p, "iqr_theme")` and pass the desired role
+back into the function:
+
+```{r}
+p_seed <- base_plot(feed, ggplot2::aes(x = .data$feed_rate,
+                                       y = .data$roughness),
+                    theme = "academic")
+c_acad <- attr(p_seed, "iqr_theme")
+
+plot_scatter_basic(
+  data        = feed,
+  x_var       = "feed_rate",
+  y_var       = "roughness",
+  theme       = "academic",
+  point_color = c_acad$get_pal("discrete")[1],
+  point_size  = 2.5,
+  point_alpha = 0.85,
+  line_color  = c_acad$get_pal("semantic", name = "fail"),
+  line_size   = 1.3,
+  ci_fill     = c_acad$get_ui_colors()$primary,
+  ci_alpha    = 0.15,
+  add_correlation = FALSE,
+  title       = "Override individual roles with theme palette values"
+)
+```
+
+## 4. plot_scatter_grouped() — by categorical factor
+
+`plot_scatter_grouped()` colors points by a categorical factor and draws a
+separate regression line for each level. This is the standard tool for
+checking whether a single regression line adequately describes all
+subgroups, or whether an interaction with the grouping factor is present.
+
+```{r}
+# Coolant type as a categorical factor
+feed$coolant <- sample(c("Emulsion", "Micro-lube"), 80, replace = TRUE)
+
+plot_scatter_grouped(
+  data              = feed,
+  x_var             = "feed_rate",
+  y_var             = "roughness",
+  group_var         = "coolant",
+  add_regression    = TRUE,
+  add_ci            = FALSE,
+  add_correlation   = TRUE,
+  correlation_method = "pearson",
+  title             = "Roughness vs feed rate by coolant type",
+  subtitle          = "Separate regression lines reveal potential interaction"
+)
+```
+
+When the two regression lines have clearly different slopes, the grouping
+factor interacts with the continuous predictor — a key finding that a
+pooled scatter plot would hide.
+
+**Theme-driven grouping colors.** When `palette = NULL`, the grouped
+plot falls back to `as_iqr_theme_object(theme)$scale_color_iqr()`, so
+the per-group colors stay consistent with the rest of the report. Change
+the theme and every grouped plot follows:
+
+```{r}
+plot_scatter_grouped(
+  data      = feed,
+  x_var     = "feed_rate",
+  y_var     = "roughness",
+  group_var = "coolant",
+  theme     = "solarized",
+  title     = "Grouped scatter themed by 'solarized'",
+  subtitle  = "Discrete palette resolved from IqrTheme"
+)
+```
+
+For brand or accessibility overrides, build the palette from the theme
+semantics (e.g., `pass`/`fail`/`watch`) so the override still tracks the
+active theme:
+
+```{r}
+p_seed <- base_plot(feed, ggplot2::aes(x = .data$feed_rate,
+                                       y = .data$roughness),
+                    theme = "academic")
+c_acad <- attr(p_seed, "iqr_theme")
+sem <- c_acad$get_pal("semantic")
+
+plot_scatter_grouped(
+  data      = feed,
+  x_var     = "feed_rate",
+  y_var     = "roughness",
+  group_var = "coolant",
+  theme     = "academic",
+  palette   = c("Emulsion" = sem[["pass"]], "Micro-lube" = sem[["watch"]]),
+  title     = "Palette built from theme semantics"
+)
+```
+
+## 5. plot_scatter_bubble() — three-variable visualization
+
+`plot_scatter_bubble()` encodes a third continuous variable as bubble
+size, enabling a compact three-variable view without faceting. This is
+useful when the third variable is itself a process output (e.g. cycle
+time, cost, or scrap rate).
+
+```{r}
+# Add a third variable: tool wear (bubble size)
+feed$tool_wear <- with(feed, 30 + 0.05 * feed_rate + rnorm(80, 0, 8))
+
+plot_scatter_bubble(
+  data        = feed,
+  x_var       = "feed_rate",
+  y_var       = "roughness",
+  size_var    = "tool_wear",
+  group_var   = "coolant",
+  size_range  = c(2, 12),
+  add_labels  = FALSE,
+  point_alpha = 0.7,
+  title       = "Bubble plot: feed rate, roughness, tool wear",
+  subtitle    = "Bubble size encodes cumulative tool wear (min)"
+)
+```
+
+**Optional point labels** can identify individual runs or outlying parts:
+
+```{r}
+feed$run_id <- paste0("R", sprintf("%02d", seq_len(nrow(feed))))
+
+plot_scatter_bubble(
+  data       = feed,
+  x_var      = "feed_rate",
+  y_var      = "roughness",
+  size_var   = "tool_wear",
+  add_labels = TRUE,
+  label_var  = "run_id",
+  label_size = 2.5,
+  point_alpha = 0.6,
+  title      = "Labeled bubble plot with run identifiers"
+)
+```
+
+## 6. plot_scatter_density() — handling overplotting
+
+When $n$ is large, ordinary scatter plots saturate into a solid blob and
+hide the density of the underlying point cloud. `plot_scatter_density()`
+offers five methods for revealing structure that would otherwise be lost.
+
+### 6.1 alpha, jitter, bins, hex methods compared
+
+We simulate a large data set with structured overlap so the differences
+between methods are visible:
+
+```{r}
+set.seed(99)
+big <- data.frame(
+  x = rnorm(4000, 50, 8),
+  y = NA
+)
+big$y <- with(big, 0.6 * x + rnorm(4000, 0, 3))
+```
+
+**Method 1 — alpha (transparency).** Reduces the visual weight of each
+point so dense regions appear darker:
+
+```{r}
+plot_scatter_density(
+  data        = big,
+  x_var       = "x",
+  y_var       = "y",
+  method      = "alpha",
+  point_alpha = 0.15,
+  point_size  = 1.6,
+  title       = "Overplotting remedy: alpha blending",
+  subtitle    = "Dense regions appear naturally darker"
+)
+```
+
+**Method 2 — jitter.** Useful when one variable is discrete or rounded:
+
+```{r}
+discrete_y <- big
+discrete_y$y <- round(discrete_y$y)
+
+plot_scatter_density(
+  data         = discrete_y,
+  x_var        = "x",
+  y_var        = "y",
+  method       = "jitter",
+  jitter_width = 0.2,
+  jitter_height = 0.4,
+  point_alpha  = 0.4,
+  title        = "Overplotting remedy: jitter",
+  subtitle     = "Reveals points hidden by rounding"
+)
+```
+
+**Method 3 — bins (rectangular 2-D binning).** Counts points per
+rectangular cell and colors by count:
+
+```{r}
+plot_scatter_density(
+  data   = big,
+  x_var  = "x",
+  y_var  = "y",
+  method = "bins",
+  bins   = 40,
+  title  = "Overplotting remedy: rectangular bins",
+  subtitle = "Cell color encodes point count"
+)
+```
+
+**Method 4 — hex (hexagonal binning).** Hexagons tile more evenly than
+rectangles and avoid axis-aligned artifacts:
+
+```{r}
+plot_scatter_density(
+  data   = big,
+  x_var  = "x",
+  y_var  = "y",
+  method = "hex",
+  bins   = 40,
+  title  = "Overplotting remedy: hexagonal bins",
+  subtitle = "Hexagons avoid axis-alignment artifacts"
+)
+```
+
+**Method 5 — density (2-D kernel density).** Produces a smooth colored
+surface of point density:
+
+```{r}
+plot_scatter_density(
+  data       = big,
+  x_var      = "x",
+  y_var      = "y",
+  method     = "density",
+  add_smooth = FALSE,
+  title      = "Overplotting remedy: 2-D kernel density",
+  subtitle   = "Smooth surface of point concentration"
+)
+```
+
+The `add_smooth` argument can overlay a loess (or other) smoother when the
+relationship shape is itself of interest:
+
+```{r}
+plot_scatter_density(
+  data         = big,
+  x_var        = "x",
+  y_var        = "y",
+  method       = "alpha",
+  point_alpha  = 0.1,
+  add_smooth   = TRUE,
+  smooth_method = "loess",
+  title        = "Alpha scatter with loess smoother"
+)
+```
+
+**Theme-driven density colors.** For `bins`, `hex`, and `density`
+methods the high-density color is taken from the theme sequential scale,
+so a single `theme =` argument repaints the surface. Compare the same
+hex binning under two themes:
+
+```{r, fig.show="hold", out.width="50%"}
+plot_scatter_density(
+  data   = big,
+  x_var  = "x",
+  y_var  = "y",
+  method = "hex",
+  bins   = 40,
+  theme  = "academic",
+  title  = "hex — academic"
+)
+
+plot_scatter_density(
+  data   = big,
+  x_var  = "x",
+  y_var  = "y",
+  method = "hex",
+  bins   = 40,
+  theme  = "prism",
+  title  = "hex — prism"
+)
+```
+
+## 7. Quality Scenario: Cycle Time vs Defect Rate
+
+A process engineer suspects that the defect rate on a machining line
+rises when cycle time drifts away from its target. Data are collected from
+200 consecutive parts. The true relationship is non-linear (quadratic),
+which makes this an ideal case for visual analysis before computing any
+correlation coefficient.
+
+```{r}
+set.seed(123)
+process_data <- data.frame(
+  cycle_time = runif(200, 8, 15),
+  defect_rate = NA
+)
+process_data$defect_rate <- with(process_data,
+  2 + 0.8 * (cycle_time - 11.5)^2 + rnorm(200, 0, 0.5))
+
+summary(process_data)
+#>   cycle_time     defect_rate
+#> Min.   : 8.02   Min.   : 1.43
+#> 1st Qu.: 9.74   1st Qu.: 3.02
+#> Median :11.43   Median : 5.61
+#> Mean   :11.45   Mean   : 6.35
+#> 3rd Qu.:13.22   3rd Qu.: 9.11
+#> Max.   :14.99   Max.  :12.84
+```
+
+**Step 1 — Basic scatter with regression.** The fitted line is nearly flat,
+and the Pearson $r$ is small, which would tempt the analyst to conclude
+that cycle time is irrelevant. The plot reveals the truth: the
+relationship is **U-shaped**, not linear.
+
+```{r}
+plot_scatter_basic(
+  data              = process_data,
+  x_var             = "cycle_time",
+  y_var             = "defect_rate",
+  add_regression    = TRUE,
+  add_ci            = TRUE,
+  add_correlation   = TRUE,
+  correlation_method = "pearson",
+  title             = "Defect rate vs cycle time",
+  subtitle          = "Linear fit is misleading: the relationship is U-shaped"
+)
+```
+
+**Step 2 — Spearman correlation.** Because the relationship is monotonic on
+each side of the minimum but not overall, Spearman's $\rho$ is also small.
+Both coefficients miss the structure that the eye sees instantly.
+
+```{r}
+plot_scatter_basic(
+  data               = process_data,
+  x_var              = "cycle_time",
+  y_var              = "defect_rate",
+  correlation_method = "spearman",
+  add_ci             = FALSE,
+  title              = "Same data, Spearman rank correlation"
+)
+```
+
+**Step 3 — Density scatter for the full picture.** With $n = 200$ the cloud
+is dense enough to benefit from alpha blending and a smoother:
+
+```{r}
+plot_scatter_density(
+  data         = process_data,
+  x_var        = "cycle_time",
+  y_var        = "defect_rate",
+  method       = "alpha",
+  point_alpha  = 0.3,
+  add_smooth   = TRUE,
+  smooth_method = "loess",
+  title        = "Density scatter with loess smoother",
+  subtitle     = "The smoother traces the U-shape that linear correlation misses"
+)
+```
+
+**Step 4 — Grouped scatter by shift.** The data are tagged with the shift
+on which each part was produced. Grouping reveals whether the U-shape is
+consistent across shifts or driven by one shift.
+
+```{r}
+process_data$shift <- sample(c("A", "B", "C"), 200, replace = TRUE)
+
+plot_scatter_grouped(
+  data             = process_data,
+  x_var            = "cycle_time",
+  y_var            = "defect_rate",
+  group_var        = "shift",
+  add_regression   = FALSE,
+  add_correlation  = FALSE,
+  point_alpha      = 0.6,
+  title            = "Defect rate vs cycle time by shift",
+  subtitle         = "Color reveals whether shifts differ in behavior"
+)
+```
+
+**Step 5 — Bubble plot adding throughput.** A third variable, parts per
+hour, is encoded as bubble size to assess whether faster cycles (which
+raise throughput) also raise defects:
+
+```{r}
+process_data$throughput <- with(process_data, 3600 / cycle_time)
+
+plot_scatter_bubble(
+  data       = process_data,
+  x_var      = "cycle_time",
+  y_var      = "defect_rate",
+  size_var   = "throughput",
+  group_var  = "shift",
+  size_range = c(1.5, 8),
+  point_alpha = 0.6,
+  title      = "Bubble plot: cycle time, defect rate, throughput",
+  subtitle   = "Bubble size encodes parts per hour"
+)
+```
+
+**Step 6 — Decision.** The visual evidence overturns the initial
+conclusion from the correlation coefficient alone. The engineer should
+**center the cycle time near 11.5 s** (the U-minimum) rather than treat
+cycle time as irrelevant. This scenario illustrates why scatter plots are
+indispensable: they expose non-linearity that no single correlation
+summary can capture.
+
+## 8. Parameter Reference
+
+### plot_scatter_basic()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `data` | data.frame | — | Data frame |
+| `x_var` | bare name | — | Predictor column |
+| `y_var` | bare name | — | Response column |
+| `add_regression` | logical | `TRUE` | Add least-squares line |
+| `add_ci` | logical | `TRUE` | Add confidence band |
+| `add_correlation` | logical | `TRUE` | Print correlation coefficient |
+| `correlation_method` | character | `"pearson"` | `"pearson"`, `"spearman"`, `"kendall"` |
+| `point_color` | character | `NULL` | Point color; `NULL` resolves to theme `data` role |
+| `point_size` | numeric | `2` | Point size |
+| `point_alpha` | numeric | `0.8` | Point transparency |
+| `line_color` | character | `NULL` | Regression line color; `NULL` resolves to theme `danger` semantic |
+| `line_size` | numeric | `1.2` | Line width |
+| `ci_fill` | character | `NULL` | Band fill color; `NULL` resolves to theme `primary` semantic |
+| `ci_alpha` | numeric | `0.2` | Band transparency |
+| `theme` | character/IqrTheme | `NULL` | Theme name or object; propagates to `base_plot()` and `.iqr_aes()` |
+| `title`, `subtitle` | character | `NULL` | Plot titles |
+
+### plot_scatter_grouped()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `data` | data.frame | — | Data frame |
+| `x_var`, `y_var` | bare name | — | Numeric columns |
+| `group_var` | bare name | — | Categorical grouping column |
+| `add_regression` | logical | `TRUE` | Per-group regression lines |
+| `add_ci` | logical | `FALSE` | Per-group confidence bands |
+| `add_correlation` | logical | `TRUE` | Print correlation per group |
+| `correlation_method` | character | `"pearson"` | Correlation method |
+| `point_size` | numeric | `2` | Point size |
+| `point_alpha` | numeric | `0.8` | Point transparency |
+| `line_size` | numeric | `1.2` | Line width |
+| `ci_alpha` | numeric | `0.2` | Band transparency |
+| `palette` | named vector | `NULL` | Custom color palette; `NULL` uses `theme$scale_color_iqr()` |
+| `theme` | character/IqrTheme | `NULL` | Theme name or object for discrete color scale |
+| `title`, `subtitle` | character | `NULL` | Plot titles |
+
+### plot_scatter_bubble()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `data` | data.frame | — | Data frame |
+| `x_var`, `y_var` | bare name | — | Numeric columns |
+| `size_var` | bare name | — | Column encoded as bubble size |
+| `group_var` | bare name | `NULL` | Optional grouping column |
+| `size_range` | numeric | `c(2, 10)` | Min/max bubble radius |
+| `add_labels` | logical | `FALSE` | Add text labels |
+| `label_var` | bare name | `NULL` | Column of labels |
+| `label_size` | numeric | `3` | Label font size |
+| `point_alpha` | numeric | `0.7` | Bubble transparency |
+| `theme` | character/IqrTheme | `NULL` | Theme name or object; color scale resolved via `.iqr_aes()` |
+| `title`, `subtitle` | character | `NULL` | Plot titles |
+
+### plot_scatter_density()
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `data` | data.frame | — | Data frame |
+| `x_var`, `y_var` | bare name | — | Numeric columns |
+| `method` | character | `"alpha"` | `"alpha"`, `"jitter"`, `"bins"`, `"hex"`, `"density"` |
+| `point_alpha` | numeric | `0.5` | Transparency for alpha/jitter |
+| `point_size` | numeric | `2` | Point size for alpha/jitter |
+| `jitter_width` | numeric | `0.1` | Horizontal jitter amplitude |
+| `jitter_height` | numeric | `0.1` | Vertical jitter amplitude |
+| `bins` | integer | `30` | Bin count for `bins`/`hex` |
+| `color_low` | character | `NULL` | Low-density color; `NULL` uses theme `surface_soft` |
+| `color_high` | character | `NULL` | High-density color; `NULL` uses theme sequential scale |
+| `add_smooth` | logical | `FALSE` | Overlay smoother |
+| `smooth_method` | character | `"loess"` | Method passed to `geom_smooth` |
+| `theme` | character/IqrTheme | `NULL` | Theme name or object; sequential scale auto-applied for `bins`/`hex`/`density` |
+| `title`, `subtitle` | character | `NULL` | Plot titles |
+
+## 9. Summary
+
+* **plot_scatter_basic()** is the starting point: regression line,
+  confidence band, and a correlation coefficient in one call.
+* **plot_scatter_grouped()** exposes interactions between a continuous
+  predictor and a categorical factor that a pooled plot would hide.
+* **plot_scatter_bubble()** adds a third continuous variable without
+  faceting.
+* **plot_scatter_density()** remedies overplotting with five complementary
+  methods; choose `alpha` for moderate $n$, `hex` or `bins` for very
+  large $n$, and `density` for a smooth surface.
+* **Correlation is not causation.** Always read the plot alongside the
+  coefficient, and watch for non-linearity, heteroscedasticity, and
+  subgroup structure that a single number cannot summarise.
+
+## 10. Further Reading
+
+* Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*,
+  7th ed. Wiley. — Scatter-plot methods in process monitoring.
+* Tukey, J. W. (1977). *Exploratory Data Analysis*. Addison-Wesley. —
+  Origin of jittering, binning, and smoothing ideas.
+* Carr, D. B., et al. (1987). "Scatterplot Matrix Techniques for Large
+  N." *Journal of the American Statistical Association*. — Hexagonal
+  binning foundations.
+* Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*.
+  Springer. — `geom_smooth`, `geom_hex`, and density geoms.
+
+## References
+
+Carr, D. B., Littlefield, R. J., Nicholson, W. L., & Littlefield, J. S.
+(1987). Scatterplot matrix techniques for large N. *Journal of the
+American Statistical Association*, 82(398), 424–436.
+
+Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+(7th ed.). Hoboken, NJ: Wiley.
+
+Tukey, J. W. (1977). *Exploratory Data Analysis*. Reading, MA:
+Addison-Wesley.
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*.
+New York: Springer.

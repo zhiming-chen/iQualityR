@@ -1,0 +1,592 @@
+---
+title: "Pareto Charts for Defect Prioritization"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Pareto Charts for Defect Prioritization}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+
+library(iQualityR.core)
+
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+In industrial quality management, defect data is rarely homogeneous: a handful of
+defect modes typically account for the bulk of nonconformities, while a long tail of
+rare modes consumes disproportionate engineering attention. The **Pareto chart** is
+the canonical tool for exposing this imbalance. It couples a sorted bar chart of
+defect frequencies with a cumulative-percentage line, so that engineers can see at a
+glance which categories to attack first.
+
+The `iQualityR.plot` package provides a family of Pareto functions that go beyond the
+textbook recipe:
+
+* `plot_pareto_enhanced()` supports grouping, weighting, "Other" aggregation, and an
+  optional summary table.
+* `quick_pareto()` accepts data frames, lists, or named vectors for rapid analysis.
+* `plot_pareto_image_labels()` and `plot_pareto_emoji_labels()` replace plain axis
+  text with images or emoji, which is useful for shop-floor dashboards where defect
+  photographs are more recognizable than text labels.
+
+This vignette develops the theory, walks through each function, and finishes with a
+worked example from printed circuit board (PCB) manufacturing. Every function in
+the Pareto family accepts a `theme` argument (a theme name such as
+`"academic"` or an `IqrTheme` object) and resolves its bar fill, cumulative
+line, and table shading from the active theme through `.iqr_aes()`, so users
+rarely need to specify colors explicitly.
+
+## 2. Theory: The 80/20 Rule and Pareto Analysis
+
+### 2.1 The Pareto principle in quality management
+
+The Pareto principle, popularly known as the *80/20 rule*, states that roughly 80%
+of observed effects originate from 20% of the causes. The principle is named after
+the Italian economist Vilfredo Pareto, who observed that 80% of Italian land was
+owned by 20% of the population. Joseph M. Juran adapted the idea to quality
+improvement, coining the phrases *vital few* and *useful many*.
+
+For a defect dataset with $n$ categories, let $c_i$ be the count of the $i$-th
+category sorted in descending order. The total count is
+
+$$
+C = \sum_{i=1}^{n} c_i
+$$
+
+and the cumulative share of the top $k$ categories is
+
+$$
+P_k = \frac{1}{C}\sum_{i=1}^{k} c_i \times 100\%.
+$$
+
+The "vital few" are the smallest $k$ such that $P_k \ge 80\%$. The Pareto chart
+makes this cutoff visually obvious: the cumulative line crosses the 80% reference
+near the top of the sorted bars.
+
+### 2.2 Constructing a Pareto chart (cumulative percentage)
+
+A standard Pareto chart is built in four steps:
+
+1. **Tally** the count (or cost) of each defect category.
+2. **Sort** categories in descending order of count.
+3. **Plot** the sorted counts as a vertical bar chart with the left axis showing
+   the count.
+4. **Overlay** the cumulative percentage $P_k$ as a line on a secondary right axis
+   scaled from 0% to 100%.
+
+The dual-axis construction means that the engineer reads *frequency* from the bars
+and *coverage* from the line. A typical reading is: "the top three categories cover
+78% of all defects — fixing those three will eliminate almost four out of every
+five nonconformities."
+
+#### Aggregating the long tail
+
+When many small categories exist, the chart becomes cluttered and the cumulative
+line flattens prematurely. A common remedy is to collapse categories whose
+individual share is below a threshold $\tau$ into a single "Other" bar. In
+`iQualityR.plot` the threshold is controlled by the `threshold` argument (default
+`0.05`, i.e. 5%). Formally, a category $i$ is folded into "Other" when
+
+$$
+\frac{c_i}{C} < \tau.
+$$
+
+#### Weighted Pareto
+
+When defects carry different severity or cost, raw frequency can be misleading. A
+short-run defect that scraps a $500 board should not be ranked below a cosmetic
+scratch that affects thousands of cheap parts. A **weighted Pareto** replaces $c_i$
+with the impact score
+
+$$
+w_i = c_i \cdot s_i,
+$$
+
+where $s_i$ is the severity, cost, or any per-unit weight supplied by the engineer.
+The cumulative line is then computed on $w_i$ rather than $c_i$, prioritizing
+categories by *total impact* rather than by *count*.
+
+## 3. plot_pareto_enhanced() — with grouping and weights
+
+`plot_pareto_enhanced()` is the flagship Pareto function. It accepts a data frame,
+a list, or a named vector, and returns a `ggplot` object (or a `patchwork`
+composition when `show_table = TRUE`).
+
+```{r}
+str(plot_pareto_enhanced)
+```
+
+The key arguments are:
+
+| Argument       | Purpose                                                    |
+|----------------|------------------------------------------------------------|
+| `data`         | A data.frame, list, or named vector of counts.             |
+| `category_col` | Name of the category column.                               |
+| `count_col`    | Name of the count / value column.                          |
+| `group_col`    | Optional grouping column for facetting.                    |
+| `weight_col`   | Optional weight column for weighted Pareto.                |
+| `threshold`    | Share below which categories are folded into "Other".      |
+| `show_table`   | If `TRUE`, append a summary table below the chart.         |
+| `theme`        | Theme name (e.g. `"academic"`, `"economist"`, `"prism"`) or `IqrTheme` object; drives bar fill, cumulative line, and table shading. |
+| `title`        | Optional plot title.                                       |
+| `subtitle`     | Optional plot subtitle.                                    |
+
+### A minimal example
+
+We start with a small synthetic dataset of surface defects on a metal-stamping
+line.
+
+```{r}
+stamp_defects <- data.frame(
+  defect_type = c("Scratch", "Dent", "Burr", "Rust", "Crack", "Warpage"),
+  count = c(120, 86, 54, 30, 12, 8)
+)
+
+p <- plot_pareto_enhanced(
+  data         = stamp_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  title        = "Surface Defects on Stamping Line A",
+  subtitle     = "Single shift, n = 310 units inspected"
+)
+print(p)
+```
+
+The chart shows that the top two categories — `Scratch` and `Dent` — together
+account for the majority of defects, while `Warpage` and `Crack` fall below the
+5% threshold and would be folded into "Other" on a larger dataset.
+
+### Weighted Pareto with severity
+
+When severity scores are available, the `weight_col` argument re-ranks the bars by
+total impact.
+
+```{r}
+stamp_defects$severity <- c(3, 5, 4, 7, 9, 8)
+
+p_w <- plot_pareto_enhanced(
+  data         = stamp_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  weight_col   = "severity",
+  title        = "Weighted Pareto: Impact = Count x Severity",
+  subtitle     = "Severity on a 1-10 scale"
+)
+print(p_w)
+```
+
+Note how `Crack` (high severity, low count) climbs in the ranking once weights are
+applied — this is exactly the insight that a frequency-only chart hides.
+
+### Grouping with facets
+
+When the same defect taxonomy is observed across multiple lines, shifts, or
+products, the `group_col` argument produces a small-multiples layout.
+
+```{r}
+stamp_grouped <- data.frame(
+  defect_type = rep(c("Scratch", "Dent", "Burr", "Rust"), times = 2),
+  count       = c(120, 86, 54, 30, 70, 95, 40, 18),
+  line        = rep(c("Line A", "Line B"), each = 4)
+)
+
+p_g <- plot_pareto_enhanced(
+  data         = stamp_grouped,
+  category_col = "defect_type",
+  count_col    = "count",
+  group_col    = "line",
+  title        = "Pareto by Production Line",
+  subtitle     = "Top defect mode differs between lines"
+)
+print(p_g)
+```
+
+### Summary table
+
+Setting `show_table = TRUE` appends a formatted summary table — sorted counts,
+percentages, and cumulative percentages — beneath the chart. The return value
+becomes a `patchwork` object rather than a bare `ggplot`.
+
+```{r}
+pw <- plot_pareto_enhanced(
+  data         = stamp_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  show_table   = TRUE,
+  title        = "Pareto with Summary Table"
+)
+print(pw)
+```
+
+## 4. quick_pareto() — rapid input variants
+
+`quick_pareto()` is a thin wrapper that infers the input shape and forwards
+arguments to `plot_pareto_enhanced()`. It is useful for ad-hoc analysis at the
+console.
+
+```{r}
+str(quick_pareto)
+```
+
+### From a named vector
+
+```{r}
+defect_vec <- c(
+  Solder = 145,
+  Missing = 98,
+  Align = 72,
+  Short = 56,
+  Open = 38
+)
+
+quick_pareto(defect_vec, title = "Quick Pareto from Named Vector")
+```
+
+### From a list
+
+A list input must carry two parallel vectors: `category` (the defect names)
+and `count` (the corresponding frequencies).
+
+```{r}
+defect_list <- list(
+  category = c("Solder", "Missing", "Align", "Short", "Open"),
+  count    = c(145, 98, 72, 56, 38)
+)
+
+quick_pareto(defect_list, title = "Quick Pareto from List")
+```
+
+### From a data frame
+
+```{r}
+quick_pareto(
+  data         = stamp_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  title        = "Quick Pareto from Data Frame"
+)
+```
+
+## 5. plot_pareto_image_labels() / plot_pareto_emoji_labels() — visual labels
+
+On the shop floor, operators recognize defect photographs faster than they read
+text labels. Two convenience functions replace the X-axis text with images or
+emoji.
+
+### Emoji labels
+
+`plot_pareto_emoji_labels()` takes a named vector `emojis` that maps each category
+to an emoji glyph.
+
+```{r}
+defects_emoji <- data.frame(
+  defect_type = c("Solder Bridge", "Component Missing", "Misalignment", "Short Circuit"),
+  count = c(145, 98, 72, 56)
+)
+
+emoji_map <- c(
+  "Solder Bridge"     = "\U0001F527",
+  "Component Missing" = "\U0001F504",
+  "Misalignment"      = "\U0001F4D0",
+  "Short Circuit"     = "\U000026A1"
+)
+
+plot_pareto_emoji_labels(
+  data         = defects_emoji,
+  category_col = "defect_type",
+  count_col    = "count",
+  emojis       = emoji_map,
+  emoji_size   = 6,
+  title        = "Pareto with Emoji Labels",
+  subtitle     = "Useful for operator-facing dashboards"
+)
+```
+
+### Image labels
+
+`plot_pareto_image_labels()` accepts a named vector of file paths. In this vignette
+we point at placeholder paths; in production these would be photographs of the
+actual defect modes.
+
+```{r, eval = FALSE}
+image_map <- c(
+  "Solder Bridge"     = "images/solder_bridge.png",
+  "Component Missing" = "images/component_missing.png",
+  "Misalignment"      = "images/misalignment.png",
+  "Short Circuit"     = "images/short_circuit.png"
+)
+
+plot_pareto_image_labels(
+  data         = defects_emoji,
+  category_col = "defect_type",
+  count_col    = "count",
+  image_paths  = image_map,
+  image_size   = 22,
+  title        = "Pareto with Image Labels"
+)
+```
+
+The `image_size` and `emoji_size` arguments control the glyph / image size in
+points; tune them together with `fig.width` so the labels do not overlap.
+
+## 6. Quality Scenario: defect types in PCB manufacturing
+
+We now bring the tools together on a realistic dataset from a PCB assembly line.
+The line records eight defect modes and a 1-10 severity score per mode.
+
+```{r}
+pcb_defects <- data.frame(
+  defect_type = c("Solder Bridge", "Component Missing", "Misalignment",
+                   "Short Circuit", "Open Circuit", "Wrong Component",
+                   "Cold Solder", "Solder Ball"),
+  count = c(145, 98, 72, 56, 38, 22, 15, 8),
+  severity = c(8, 7, 5, 9, 8, 6, 4, 3)  # 1-10 severity scale
+)
+
+# Total defect count and basic summary
+total_defects <- sum(pcb_defects$count)
+total_impact  <- sum(pcb_defects$count * pcb_defects$severity)
+
+cat("Total defects inspected :", total_defects, "\n")
+cat("Total weighted impact   :", total_impact, "\n")
+```
+
+### Step 1 — Frequency Pareto
+
+The frequency Pareto reveals which defect modes occur most often, regardless of
+severity.
+
+```{r}
+p_freq <- plot_pareto_enhanced(
+  data         = pcb_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  threshold    = 0.05,
+  title        = "PCB Defect Frequency Pareto",
+  subtitle     = paste0("n = ", total_defects, " defects inspected")
+)
+print(p_freq)
+```
+
+Reading the chart: `Solder Bridge` and `Component Missing` together cover roughly
+half of all defects. The bottom three modes (`Cold Solder`, `Solder Ball`, and
+`Wrong Component`) each contribute less than 5% and would be aggregated into
+"Other" by the default threshold.
+
+### Step 2 — Weighted Pareto by severity
+
+Severity reshuffles the priorities. `Short Circuit` carries severity 9, so even
+though it is only the fourth-most-frequent mode, its total impact climbs near the
+top.
+
+```{r}
+p_impact <- plot_pareto_enhanced(
+  data         = pcb_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  weight_col   = "severity",
+  threshold    = 0.05,
+  title        = "PCB Defect Impact Pareto (Count x Severity)",
+  subtitle     = "Severity reorders the vital few"
+)
+print(p_impact)
+```
+
+### Step 3 — Pareto with summary table
+
+For the quality team's weekly report, we attach the summary table.
+
+```{r}
+p_tbl <- plot_pareto_enhanced(
+  data         = pcb_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  weight_col   = "severity",
+  show_table   = TRUE,
+  title        = "PCB Defect Pareto with Summary Table"
+)
+print(p_tbl)
+```
+
+### Step 4 — Operator-facing emoji variant
+
+For the line-side display board we switch to emoji labels.
+
+```{r}
+pcb_emoji <- c(
+  "Solder Bridge"     = "\U0001F527",
+  "Component Missing" = "\U0001F504",
+  "Misalignment"      = "\U0001F4D0",
+  "Short Circuit"     = "\U000026A1",
+  "Open Circuit"      = "\U0001F50C",
+  "Wrong Component"   = "\U00002757",
+  "Cold Solder"       = "\U00002744",
+  "Solder Ball"       = "\U0001F7E2"
+)
+
+plot_pareto_emoji_labels(
+  data         = pcb_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  emojis       = pcb_emoji,
+  emoji_size   = 5,
+  title        = "PCB Defect Pareto for Operator Display",
+  subtitle     = "Top 8 modes with severity-coded emoji"
+)
+```
+
+### Step 5 — Theme-driven coloring
+
+The Pareto family resolves its bar fill, cumulative line, and table
+shading from the active `IqrTheme`. Switching `theme` repaints the
+chart and the optional summary table in one stroke — no per-call color
+arguments are required:
+
+```{r, fig.show="hold", out.width="50%"}
+plot_pareto_enhanced(
+  data         = pcb_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  weight_col   = "severity",
+  theme        = "economist",
+  title        = "Impact Pareto — economist"
+)
+
+plot_pareto_enhanced(
+  data         = pcb_defects,
+  category_col = "defect_type",
+  count_col    = "count",
+  weight_col   = "severity",
+  show_table   = TRUE,
+  theme        = "prism",
+  title        = "Impact Pareto + table — prism"
+)
+```
+
+### Interpretation
+
+The frequency Pareto would lead the team to attack `Solder Bridge` first. The
+weighted Pareto tells a more nuanced story: `Short Circuit` is rarer but more
+severe, and its impact rivals `Component Missing`. A balanced improvement plan
+should target the top three modes of *each* ranking — `Solder Bridge`,
+`Component Missing`, and `Short Circuit` — because together they dominate both
+frequency and impact.
+
+## 7. Parameter Reference
+
+The table below consolidates the arguments used across the Pareto family.
+
+| Function                       | Argument        | Type / Default     | Description                                          |
+|--------------------------------|-----------------|--------------------|------------------------------------------------------|
+| `plot_pareto_enhanced`         | `data`          | data.frame / list  | Input data.                                          |
+| `plot_pareto_enhanced`         | `category_col`  | `NULL`             | Category column name.                                |
+| `plot_pareto_enhanced`         | `count_col`     | `NULL`             | Count / value column name.                           |
+| `plot_pareto_enhanced`         | `group_col`     | `NULL`             | Grouping column for facetting.                       |
+| `plot_pareto_enhanced`         | `weight_col`    | `NULL`             | Weight column for weighted Pareto.                   |
+| `plot_pareto_enhanced`         | `threshold`     | `0.05`             | Share below which categories fold into "Other".      |
+| `plot_pareto_enhanced`         | `show_table`    | `FALSE`            | Append summary table.                                |
+| `plot_pareto_enhanced`         | `theme`         | `"academic"`       | Theme name or `IqrTheme` object; drives bar fill, cumulative line, and table shading via `.iqr_aes()`. |
+| `plot_pareto_enhanced`         | `title`         | `NULL`             | Plot title.                                          |
+| `plot_pareto_enhanced`         | `subtitle`      | `NULL`             | Plot subtitle.                                       |
+| `quick_pareto`                 | `data`          | data.frame / list  | Input data.                                          |
+| `quick_pareto`                 | `category_col`  | `NULL`             | Category column name.                                |
+| `quick_pareto`                 | `count_col`     | `NULL`             | Count / value column name.                           |
+| `quick_pareto`                 | `...`           |                    | Forwarded to `plot_pareto_enhanced` (including `theme`). |
+| `plot_pareto_image_labels`     | `image_paths`   | named vector       | Category -> image file path.                         |
+| `plot_pareto_image_labels`     | `image_size`    | `20`               | Image size in points.                                |
+| `plot_pareto_image_labels`     | `theme`         | `"academic"`       | Theme name or `IqrTheme` object.                     |
+| `plot_pareto_emoji_labels`     | `emojis`        | named vector       | Category -> emoji.                                   |
+| `plot_pareto_emoji_labels`     | `emoji_size`    | `5`                | Emoji size in points.                                |
+| `plot_pareto_emoji_labels`     | `theme`         | `"academic"`       | Theme name or `IqrTheme` object.                     |
+
+### Return values
+
+* `plot_pareto_enhanced()` returns a `ggplot` object by default, or a `patchwork`
+  object when `show_table = TRUE`.
+* `quick_pareto()` inherits the return type of `plot_pareto_enhanced()`.
+* `plot_pareto_image_labels()` and `plot_pareto_emoji_labels()` return `ggplot`
+  objects.
+
+Because the return values are ggplot / patchwork objects, they can be composed
+with other layers or saved with `ggplot2::ggsave()`.
+
+```{r, eval = FALSE}
+# Example: saving a Pareto chart to PNG
+ggplot2::ggsave(
+  filename = "pcb_pareto.png",
+  plot     = p_freq,
+  width    = 8,
+  height   = 5,
+  dpi      = 300
+)
+```
+
+## 8. Summary
+
+A Pareto chart is the first diagnostic a quality engineer should reach for when
+faced with a stream of defect data. The `iQualityR.plot` Pareto family supports
+the full workflow:
+
+1. **Triage** with `quick_pareto()` from any input shape.
+2. **Deep-dive** with `plot_pareto_enhanced()` for grouping, weighting, and the
+   summary table.
+3. **Communicate** with `plot_pareto_image_labels()` or
+   `plot_pareto_emoji_labels()` for operator-facing displays.
+
+The weighted variant is especially important: severity-aware prioritization
+prevents the team from over-investing in frequent-but-cheap defects while ignoring
+rare-but-expensive ones.
+
+## 9. Further Reading
+
+* Juran, J. M. (1951). *Quality Control Handbook*. McGraw-Hill. — Original
+  articulation of the *vital few* / *useful many* concepts.
+* Pareto, V. (1896). *Cours d'Economie Politique*. — The economic observation
+  that inspired the principle.
+* ISO 2859-1:1999. *Sampling procedures for inspection by attributes*. — Acceptance
+  sampling context in which Pareto analysis is often applied.
+* Pyzdek, T., & Keller, P. A. (2018). *The Six Sigma Handbook* (5th ed.).
+  McGraw-Hill. — Modern treatment of Pareto analysis within DMAIC.
+* `ggplot2` documentation on secondary axes and `patchwork` for composing charts
+  with tables.
+
+## References
+
+Pareto, V. (1896). *Cours d'Economie Politique*. Lausanne: F. Rouge.
+
+Juran, J. M. (1951). *Quality Control Handbook*. New York: McGraw-Hill.
+
+Juran, J. M., & Godfrey, A. B. (1999). *Juran's Quality Handbook* (5th ed.).
+New York: McGraw-Hill.
+
+International Organization for Standardization. (1999). *ISO 2859-1:1999 —
+Sampling procedures for inspection by attributes — Part 1*. Geneva: ISO.
+
+Pyzdek, T., & Keller, P. A. (2018). *The Six Sigma Handbook* (5th ed.). New York:
+McGraw-Hill.
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*. New York:
+Springer.

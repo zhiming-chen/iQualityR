@@ -7,6 +7,7 @@
 layers_qq(
   distribution = "norm",
   dparams = list(),
+  theme = NULL,
   ...,
   qq_args = list(),
   line_args = list()
@@ -16,6 +17,10 @@ layers_qq(
 \item{distribution}{Distribution function name (e.g. "norm").}
 
 \item{dparams}{Parameters for the distribution function as a list.}
+
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Currently
+not used for color resolution; accepted for API consistency with the
+other \code{layers_*} functions.}
 
 \item{...}{Common arguments passed to stat_qq and stat_qq_line.}
 

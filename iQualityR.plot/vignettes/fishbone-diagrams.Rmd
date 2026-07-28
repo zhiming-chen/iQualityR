@@ -1,0 +1,586 @@
+---
+title: "Ishikawa Fishbone Diagrams for Root Cause Analysis"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Ishikawa Fishbone Diagrams for Root Cause Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+When a process goes out of control, the first question is *what* changed; the
+second, harder question is *why*. **Root cause analysis (RCA)** is the structured
+discipline of moving from the observed symptom to the underlying cause. Among the
+graphical tools available to RCA, the **Ishikawa diagram** — also called the
+**fishbone diagram** — is the most widely used. It was developed by Kaoru
+Ishikawa in the 1950s at Kawasaki Steel and popularized in the postwar Japanese
+quality movement.
+
+The diagram's strength is that it forces a team to brainstorm causes within
+predefined major categories, ensuring broad coverage rather than a fixation on the
+first plausible explanation. The `iQualityR.plot` package provides three
+functions that cover the common variants:
+
+* `plot_fishbone_basic()` — the classic unweighted diagram.
+* `plot_fishbone_weighted()` — line width encodes a numeric weight, color encodes
+  importance, so the team can triage causes visually.
+* `plot_fishbone_faceted()` — small-multiples layout for comparing cause
+  structures across strata (departments, shifts, plants).
+
+This vignette covers the theory, the functions, and a worked example from a
+plating line.
+
+## 2. Theory: Cause-and-Effect Analysis
+
+### 2.1 The 5M1E framework (Man/Machine/Material/Method/Measurement/Environment)
+
+Ishikawa's original template organized causes into six categories, all beginning
+with the letter **M** in English (or with the corresponding Japanese terms):
+
+| Category     | Typical causes                                              |
+|--------------|------------------------------------------------------------|
+| Man          | Skills, training, fatigue, motivation, turnover.           |
+| Machine      | Equipment age, calibration, tooling wear, maintenance.     |
+| Material     | Raw-material variability, supplier changes, storage.       |
+| Method       | Procedures, work instructions, setup parameters.           |
+| Measurement  | Inspection method, gage R&R, sampling plan.                |
+| Environment  | Temperature, humidity, lighting, cleanliness, vibration.   |
+
+In practice, **Measurement** is frequently folded into **Method** because the two
+are tightly coupled: a measurement procedure *is* a method. The `iQualityR.plot`
+package follows this convention. When `industry = "manufacturing"` is selected,
+the template exposes five bones — Man, Machine, Material, Method, Environment —
+which is the classic 5M1E layout used in automotive and electronics quality
+manuals.
+
+### 2.2 The 5P framework for service industries
+
+Service processes do not have raw materials or machines in the manufacturing
+sense. The **5P** framework adapts the categories:
+
+| Category         | Typical causes                                          |
+|------------------|---------------------------------------------------------|
+| People           | Staff skills, training, scheduling, morale.             |
+| Policies         | Rules, authorization limits, pricing.                   |
+| Procedures       | Workflows, scripts, checklists.                         |
+| Place            | Branch layout, signage, queue design.                   |
+| Product/Service  | Service catalogue design, IT systems, physical product. |
+
+Select `industry = "service"` in any of the fishbone functions to load the 5P
+template. The two templates are otherwise structurally identical, which keeps
+training overhead low when an organization spans both manufacturing and service
+operations.
+
+### 2.3 Weighting and importance coding
+
+A fishbone diagram produced in a one-hour brainstorming session may list twenty
+candidate causes. Acting on all twenty is rarely feasible, so the team needs a
+triage mechanism. `plot_fishbone_weighted()` and `plot_fishbone_faceted()`
+support two complementary encodings:
+
+**Weight (numeric).** Each sub-cause carries a numeric weight, typically on a 1-3
+or 1-5 scale, that reflects the team's collective belief about how likely the
+cause is to be a true driver of the problem. The weight is mapped to **line
+thickness** through
+
+$$
+\ell_i = \ell_{\min} + \frac{w_i - w_{\min}}{w_{\max} - w_{\min}} \cdot (\ell_{\max} - \ell_{\min}),
+$$
+
+where $[\ell_{\min}, \ell_{\max}]$ is the `weight_range` argument. Higher weight
+$\Rightarrow$ thicker bone $\Rightarrow$ more probable cause.
+
+**Importance (categorical).** Each sub-cause is tagged as `"critical"`,
+`"important"`, or `"normal"`. The mapping is resolved from the active
+`IqrTheme` semantic palette:
+
+| Importance  | Theme semantic | Default academic look | Meaning                                  |
+|-------------|----------------|-----------------------|------------------------------------------|
+| `critical`  | `fail`         | red                   | Must be investigated; high confirmed impact. |
+| `important` | `watch`        | orange/amber          | Likely contributor; needs verification.      |
+| `normal`    | `neutral`      | gray                  | Plausible but lower priority.                 |
+
+Switching the `theme` argument repaints every bone in one stroke, so
+the diagram always matches the surrounding report's color system.
+
+The two encodings are orthogonal: a cause can be thick-lined (high weight) and
+gray (low importance) if the team suspects it strongly but has not yet gathered
+evidence. Conversely, a thin red line marks a cause with confirmed impact but
+narrow scope. The combination lets a facilitator steer the team's attention
+without discarding hypotheses prematurely.
+
+### Ishikawa's principle
+
+Ishikawa's central insight was that *structure improves brainstorming*. An
+unstructured brainstorm gravitates toward the loudest voice in the room; a
+fishbone forces the team to consider, in turn, whether each major category could
+harbor a cause. The diagram is therefore as much a *process* artifact — a record
+of disciplined thinking — as it is a *communication* artifact.
+
+## 3. plot_fishbone_basic() — standard Ishikawa diagram
+
+`plot_fishbone_basic()` draws the classic diagram without weight or importance
+encoding. It is the right starting point for a first-pass brainstorm.
+
+```{r}
+str(plot_fishbone_basic)
+```
+
+Key arguments:
+
+| Argument      | Purpose                                                       |
+|---------------|---------------------------------------------------------------|
+| `problem`     | Problem statement; rendered at the fish head.                 |
+| `categories`  | Named list of sub-causes per main bone. `NULL` loads template.|
+| `industry`    | `"manufacturing"` (5M1E) or `"service"` (5P).                 |
+| `font_size`   | Base font size for labels.                                    |
+| `title`       | Optional plot title.                                          |
+| `subtitle`    | Optional plot subtitle.                                       |
+| `theme`       | Optional theme override.                                      |
+
+### Default manufacturing template
+
+With `categories = NULL`, the function emits a blank 5M1E skeleton that the team
+can use as a worksheet.
+
+```{r, fig.height = 5.5}
+plot_fishbone_basic(
+  problem   = "Excessive variation in plating thickness",
+  industry  = "manufacturing",
+  font_size = 10,
+  title     = "5M1E Skeleton for Plating Variation"
+)
+```
+
+### Custom categories
+
+Once the brainstorm is complete, supply the named list to render the populated
+diagram.
+
+```{r, fig.height = 5.5}
+plating_basic <- list(
+  Man = c("Insufficient training", "Fatigue on night shift"),
+  Machine = c("Anode wear", "Bath temperature drift"),
+  Material = c("Contaminated electrolyte", "Inconsistent substrate"),
+  Method = c("Outdated plating procedure", "Inadequate rinsing step"),
+  Environment = c("High humidity in plating room")
+)
+
+plot_fishbone_basic(
+  problem    = "Plating defects on Line 3",
+  categories = plating_basic,
+  industry   = "manufacturing",
+  font_size  = 10,
+  title      = "Plating Defects — Initial Brainstorm",
+  subtitle   = "Five-bone 5M1E layout"
+)
+```
+
+### Service template
+
+Switching to `industry = "service"` loads the 5P skeleton.
+
+```{r, fig.height = 5.5}
+service_basic <- list(
+  People = c("New teller training gaps", "High turnover"),
+  Policies = c("Authorization threshold too low"),
+  Procedures = c("Manual reconciliation step", "No dual-control check"),
+  Place = c("Counter layout forces multitasking"),
+  Product = c("Core banking system latency")
+)
+
+plot_fishbone_basic(
+  problem    = "Deposit posting errors at Branch 12",
+  categories = service_basic,
+  industry   = "service",
+  font_size  = 10,
+  title      = "Service 5P Fishbone for Posting Errors"
+)
+```
+
+## 4. plot_fishbone_weighted() — line width = weight, color = importance
+
+`plot_fishbone_weighted()` adds the two visual encodings described in Section
+2.3. The `categories` argument changes shape: each sub-cause is now a list with
+elements `name`, `weight`, and `importance`, plus an optional
+`sub_categories` for a third level of detail.
+
+```{r}
+str(plot_fishbone_weighted)
+```
+
+| Argument             | Purpose                                                        |
+|----------------------|----------------------------------------------------------------|
+| `problem`            | Problem statement.                                             |
+| `categories`         | Named list of bones; each sub-cause is a list.                 |
+| `industry`           | `"manufacturing"` or `"service"`.                              |
+| `weight_range`       | Numeric range mapped to line thickness.                        |
+| `importance_colors`  | Named vector of colors; `NULL` resolves to theme `fail`/`watch`/`neutral` semantics. |
+| `show_weights`       | Print weight numbers next to bones.                            |
+| `show_importance`    | Print importance label next to bones.                          |
+| `font_size`          | Base font size.                                                |
+| `theme`              | Theme name or `IqrTheme` object; drives the default `importance_colors`. |
+| `title`, `subtitle`  | Optional plot annotations.                                     |
+
+### Worked example with weights
+
+We use the plating scenario with weights on a 0.5-3.5 scale.
+
+```{r, fig.height = 6, fig.width = 9}
+plating_causes <- list(
+  Man = list(
+    list(name = "Insufficient training", weight = 2.5, importance = "critical"),
+    list(name = "Fatigue on night shift", weight = 1.5, importance = "important")
+  ),
+  Machine = list(
+    list(name = "Anode wear", weight = 3.0, importance = "critical"),
+    list(name = "Bath temperature drift", weight = 2.0, importance = "important")
+  ),
+  Material = list(
+    list(name = "Contaminated electrolyte", weight = 2.8, importance = "critical"),
+    list(name = "Inconsistent substrate quality", weight = 1.2, importance = "normal")
+  ),
+  Method = list(
+    list(name = "Outdated plating procedure", weight = 1.8, importance = "important"),
+    list(name = "Inadequate rinsing step", weight = 1.0, importance = "normal")
+  ),
+  Environment = list(
+    list(name = "High humidity in plating room", weight = 0.9, importance = "normal")
+  )
+)
+
+plot_fishbone_weighted(
+  problem         = "Plating defects on Line 3",
+  categories      = plating_causes,
+  industry        = "manufacturing",
+  weight_range    = c(0.8, 3.5),
+  show_weights    = TRUE,
+  show_importance = TRUE,
+  font_size       = 11,
+  title           = "Weighted Fishbone: Plating Defects",
+  subtitle        = "Line width = weight, color = importance"
+)
+```
+
+### Reading the weighted chart
+
+* The thickest bones are `Anode wear` (weight 3.0) and `Contaminated electrolyte`
+  (2.8) — both also tagged `critical`. These are the team's first-priority
+  hypotheses.
+* `Bath temperature drift` (2.0, important) and `Outdated plating procedure`
+  (1.8, important) form a second tier.
+* The thinnest bones (`High humidity`, `Inadequate rinsing`) are kept on the
+  diagram for completeness but visually de-emphasized.
+
+### Custom importance colors
+
+The default color scheme resolves from the active theme's semantic
+palette: `critical` uses the `fail` semantic, `important` uses the
+`watch` semantic, and `normal` uses the `neutral` semantic. Switching
+`theme` therefore repaints every bone in one stroke — no per-call color
+arguments are required:
+
+```{r, fig.height = 6, fig.width = 9}
+plot_fishbone_weighted(
+  problem         = "Plating defects on Line 3",
+  categories      = plating_causes,
+  industry        = "manufacturing",
+  weight_range    = c(0.8, 3.5),
+  theme           = "economist",
+  show_weights    = TRUE,
+  show_importance = TRUE,
+  font_size       = 11,
+  title           = "Theme-driven importance colors (economist)",
+  subtitle        = "critical = fail semantic, important = watch, normal = neutral"
+)
+```
+
+For accessibility (e.g., color-blind-safe palettes) or for matching
+corporate brand guidelines, `importance_colors` can override the
+theme-derived defaults. To keep the override consistent with the active
+theme, build the vector from the `IqrTheme` object retrieved via
+`attr()` on a seed plot:
+
+```{r, fig.height = 6, fig.width = 9}
+p_seed <- base_plot(data.frame(x = 1), ggplot2::aes(x = .data$x),
+                    theme = "solarized")
+c_sol <- attr(p_seed, "iqr_theme")
+sem <- c_sol$get_pal("semantic")
+
+plot_fishbone_weighted(
+  problem            = "Plating defects on Line 3",
+  categories         = plating_causes,
+  industry           = "manufacturing",
+  weight_range       = c(0.8, 3.5),
+  theme              = "solarized",
+  importance_colors  = c(critical = sem[["fail"]],
+                         important = sem[["watch"]],
+                         normal    = sem[["neutral"]]),
+  show_weights       = TRUE,
+  show_importance    = FALSE,
+  font_size          = 11,
+  title              = "Override built from theme semantics (solarized)"
+)
+```
+
+## 5. plot_fishbone_faceted() — comparing across departments/shifts
+
+When the same problem manifests differently across strata — different shifts,
+lines, or plants — a single fishbone hides the contrast. `plot_fishbone_faceted()`
+produces one small fishbone per stratum and arranges them in a grid via
+`patchwork`.
+
+```{r}
+str(plot_fishbone_faceted)
+```
+
+The `strata_data` argument is a data frame with columns `stratum`, `category`,
+`sub_category`, `weight`, and `importance`. Each row is one sub-cause within one
+stratum.
+
+### Example: two-shift comparison
+
+Suppose the plating line runs a day shift and a night shift, and the quality team
+suspects that the cause profile differs.
+
+```{r, fig.height = 7, fig.width = 10}
+strata_df <- data.frame(
+  stratum = rep(c("Day shift", "Night shift"), each = 8),
+  category = rep(c("Man", "Machine", "Material", "Method"), times = 4),
+  sub_category = rep(
+    c("Training", "Anode wear", "Electrolyte", "Procedure",
+      "Fatigue", "Temp drift", "Substrate", "Rinsing"),
+    times = 2
+  ),
+  weight = c(1.0, 2.5, 2.0, 1.2,
+             2.8, 1.8, 1.5, 2.2),
+  importance = rep(
+    c("normal", "critical", "important", "normal",
+      "critical", "important", "important", "important"),
+    times = 2
+  )
+)
+
+# Make the night shift slightly different: bump fatigue and reduce training
+strata_df$weight[strata_df$stratum == "Night shift" &
+                   strata_df$sub_category == "Fatigue"] <- 3.2
+strata_df$weight[strata_df$stratum == "Night shift" &
+                   strata_df$sub_category == "Training"] <- 0.6
+strata_df$weight[strata_df$stratum == "Day shift" &
+                   strata_df$sub_category == "Fatigue"] <- 1.2
+
+plot_fishbone_faceted(
+  problem     = "Plating defects across shifts",
+  strata_data = strata_df,
+  industry    = "manufacturing",
+  weight_range = c(0.5, 3),
+  ncol        = 2,
+  show_weights = TRUE,
+  font_size   = 8,
+  title       = "Faceted Fishbone: Day vs Night Shift",
+  subtitle    = "Fatigue dominates the night-shift diagram"
+)
+```
+
+The faceted view makes the contrast obvious: on the day shift, `Anode wear` and
+`Electrolyte` are the leading causes; on the night shift, `Fatigue` becomes the
+thickest bone. The team can then design shift-specific countermeasures rather
+than a single one-size-fits-all action plan.
+
+## 6. Quality Scenario: root cause analysis of plating defects
+
+We now assemble the full workflow on the plating scenario.
+
+### Step 1 — Frame the problem
+
+The line has reported an increase in plating defects (nodules, thin spots,
+adhesion failures) over the past two weeks. The problem statement should be
+specific and measurable:
+
+> "Plating defect rate on Line 3 rose from 1.2% to 3.8% between 2026-07-01 and
+> 2026-07-15, primarily as nodules and adhesion failures."
+
+### Step 2 — Initial brainstorm (basic fishbone)
+
+The cross-functional team meets for 30 minutes and populates a 5M1E skeleton.
+
+```{r, fig.height = 5.5}
+plot_fishbone_basic(
+  problem    = "Plating defect rate 1.2% -> 3.8% on Line 3",
+  categories = plating_basic,
+  industry   = "manufacturing",
+  font_size  = 10,
+  title      = "Step 2: Initial Brainstorm"
+)
+```
+
+### Step 3 — Weighted triage
+
+The team then votes on each cause using a 1-3 scale and tags importance based on
+historical evidence.
+
+```{r, fig.height = 6, fig.width = 9}
+plot_fishbone_weighted(
+  problem         = "Plating defect rate 1.2% -> 3.8% on Line 3",
+  categories      = plating_causes,
+  industry        = "manufacturing",
+  weight_range    = c(0.8, 3.5),
+  show_weights    = TRUE,
+  show_importance = TRUE,
+  font_size       = 11,
+  title           = "Step 3: Weighted Triage",
+  subtitle        = "Top-priority causes in red"
+)
+```
+
+### Step 4 — Stratum comparison
+
+Maintenance records reveal that the defect spike is concentrated on the night
+shift. The team builds a faceted fishbone to confirm the shift effect.
+
+```{r, fig.height = 7, fig.width = 10}
+plot_fishbone_faceted(
+  problem      = "Plating defect rate spike",
+  strata_data  = strata_df,
+  industry     = "manufacturing",
+  weight_range = c(0.5, 3),
+  ncol         = 2,
+  show_weights = TRUE,
+  font_size    = 8,
+  title        = "Step 4: Shift-stratified Comparison",
+  subtitle     = "Night-shift fatigue emerges as the leading cause"
+)
+```
+
+### Step 5 — Action plan
+
+Based on the weighted and faceted diagrams, the team defines three
+countermeasures, prioritized by weight and importance:
+
+| Priority | Cause                       | Action                                          | Owner        | Due       |
+|----------|-----------------------------|-------------------------------------------------|--------------|-----------|
+| 1        | Anode wear (Machine)        | Replace anode; tighten PM interval to 2 weeks.  | Maintenance  | 2026-08-05|
+| 2        | Contaminated electrolyte    | Drain and refill bath; add filtration step.     | Process Eng. | 2026-08-01|
+| 3        | Night-shift fatigue (Man)   | Add second break; rotate tasks every 2 hours.   | HR / Superv. | 2026-08-10|
+
+After implementation, the team re-runs the data collection and rebuilds the
+weighted fishbone to confirm that the previously critical bones have shrunk.
+
+## 7. Parameter Reference
+
+| Function                  | Argument             | Type / Default                | Description                                      |
+|---------------------------|----------------------|-------------------------------|--------------------------------------------------|
+| `plot_fishbone_basic`     | `problem`            | character                     | Problem statement at fish head.                  |
+| `plot_fishbone_basic`     | `categories`         | `NULL`                        | Named list of sub-causes; `NULL` loads template. |
+| `plot_fishbone_basic`     | `industry`           | `"manufacturing"`             | `"manufacturing"` (5M1E) or `"service"` (5P).    |
+| `plot_fishbone_basic`     | `font_size`          | `10`                          | Base font size.                                  |
+| `plot_fishbone_basic`     | `title` / `subtitle` | `NULL`                        | Optional annotations.                            |
+| `plot_fishbone_basic`     | `theme`              | `NULL`                        | Theme name or `IqrTheme` object; forwarded to `plot_fishbone_weighted()`. |
+| `plot_fishbone_weighted`  | `categories`         | `NULL`                        | Named list; sub-causes are lists.                |
+| `plot_fishbone_weighted`  | `weight_range`       | `c(0.8, 3.5)`                 | Line-thickness range.                            |
+| `plot_fishbone_weighted`  | `importance_colors`  | `NULL`                        | Custom color map; `NULL` resolves `critical`/`important`/`normal` to theme `fail`/`watch`/`neutral` semantics. |
+| `plot_fishbone_weighted`  | `show_weights`       | `TRUE`                        | Print weight values next to bones.               |
+| `plot_fishbone_weighted`  | `show_importance`    | `TRUE`                        | Print importance tags next to bones.             |
+| `plot_fishbone_weighted`  | `theme`              | `NULL`                        | Theme name or `IqrTheme` object; drives semantic colors via `.iqr_aes()`. |
+| `plot_fishbone_faceted`   | `strata_data`        | data.frame                    | Columns: stratum, category, sub_category, weight, importance. |
+| `plot_fishbone_faceted`   | `ncol`               | `2`                           | Number of facet columns.                         |
+| `plot_fishbone_faceted`   | `show_weights`       | `FALSE`                       | Print weight values.                             |
+| `plot_fishbone_faceted`   | `show_importance`    | `FALSE`                       | Print importance tags.                           |
+| `plot_fishbone_faceted`   | `theme`              | `NULL`                        | Theme name or `IqrTheme` object propagated to every facet. |
+
+### Return values
+
+* `plot_fishbone_basic()` and `plot_fishbone_weighted()` return `ggplot` objects.
+* `plot_fishbone_faceted()` returns a `patchwork` composition.
+
+Because the basic and weighted variants return `ggplot` objects, additional
+layers (annotations, highlighted rectangles) can be added with the `+` operator
+familiar from `ggplot2`.
+
+```{r, eval = FALSE}
+# Example: save the weighted fishbone to PDF for the CAPA report
+ggplot2::ggsave(
+  filename = "plating_fishbone_weighted.pdf",
+  plot     = plot_fishbone_weighted(
+    problem    = "Plating defects on Line 3",
+    categories = plating_causes,
+    industry   = "manufacturing"
+  ),
+  width    = 10,
+  height   = 6
+)
+```
+
+## 8. Summary
+
+The fishbone diagram remains one of the most effective RCA tools because it
+combines structure with brevity. The `iQualityR.plot` fishbone family supports
+the full RCA workflow:
+
+1. **Frame** the problem with a measurable, specific problem statement.
+2. **Brainstorm** with `plot_fishbone_basic()` and the 5M1E or 5P template.
+3. **Triage** with `plot_fishbone_weighted()` using weight and importance
+   encodings.
+4. **Stratify** with `plot_fishbone_faceted()` when the problem profile differs
+   across subgroups.
+
+The discipline of producing the diagram — not the diagram itself — is what drives
+improvement. A team that debates each weight and importance tag has already begun
+to converge on the true root cause.
+
+## 9. Further Reading
+
+* Ishikawa, K. (1968). *Guide to Quality Control*. Tokyo: JUSE. — The original
+  textbook treatment of the cause-and-effect diagram.
+* ISO 9001:2015, Clause 10.2 (Nonconformity and corrective action). — Positions
+  RCA within the broader QMS.
+* Custer, J. W., et al. (2015). "Root cause analysis using the Ishikawa fishbone
+  diagram in healthcare." *BMJ Quality & Safety*. — Service-industry adaptation.
+* Wilson, P. F., Dell, L. D., & Anderson, G. F. (1993). *Root Cause Analysis: A
+  Tool for Total Quality Management*. ASQC Quality Press. — Compares fishbone,
+  FMEA, and fault-tree analysis.
+* `patchwork` package documentation for composing faceted fishbone layouts.
+
+## References
+
+Ishikawa, K. (1968). *Guide to Quality Control*. Tokyo: Japanese Standards
+Association / JUSE.
+
+Ishikawa, K. (1985). *What Is Total Quality Control? The Japanese Way*
+(D. J. Lu, Trans.). Englewood Cliffs, NJ: Prentice-Hall.
+
+International Organization for Standardization. (2015). *ISO 9001:2015 — Quality
+management systems — Requirements*. Geneva: ISO.
+
+Wilson, P. F., Dell, L. D., & Anderson, G. F. (1993). *Root Cause Analysis: A
+Tool for Total Quality Management*. Milwaukee, WI: ASQC Quality Press.
+
+Custer, J. W., et al. (2015). Root cause analysis using the Ishikawa fishbone
+diagram in healthcare. *BMJ Quality & Safety*, 24(suppl 1), i37-i44.
+
+Pedersen, T. L. (2024). *patchwork: The Composer of Plots*. R package version
+1.2.0.

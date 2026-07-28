@@ -34,6 +34,15 @@
 *_cache/
 *_files/
 
+# ---- knitr 渲染中间产物（不入库，由 rmarkdown::render 重新生成）----
+**/vignettes/*.knit.md
+**/vignettes/figure/
+**/figure/
+
+# ---- 调研草稿 / 开发笔记（本地参考用，不入库）----
+**/调研现状草稿.txt
+**/调研*.txt
+
 # ---- R 会话/工作区状态 ----
 .Rhistory
 .RData

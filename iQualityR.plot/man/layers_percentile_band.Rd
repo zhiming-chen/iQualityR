@@ -4,9 +4,18 @@
 \alias{layers_percentile_band}
 \title{Create Layers for Percentile Band (Forest Plot)}
 \usage{
-layers_percentile_band(..., errorbar_args = list(), point_args = list())
+layers_percentile_band(
+  theme = NULL,
+  ...,
+  errorbar_args = list(),
+  point_args = list()
+)
 }
 \arguments{
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Used to
+resolve the default point \code{fill} from the theme's \code{"surface"}
+UI slot so the point center follows the active theme background.}
+
 \item{...}{Common arguments passed to geom_errorbar and geom_point.}
 
 \item{errorbar_args}{List of arguments passed to geom_errorbar.}

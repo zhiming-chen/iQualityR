@@ -6,19 +6,33 @@
 \usage{
 layers_control_chart(
   data,
-  ucl_color = "red",
-  cl_color = "blue",
-  data_color = "black"
+  theme = NULL,
+  ucl_color = NULL,
+  cl_color = NULL,
+  data_color = NULL
 )
 }
 \arguments{
 \item{data}{A data.frame with columns x, y, cl, lcl, ucl.}
 
-\item{ucl_color}{Color for UCL/LCL lines.}
+\item{theme}{Theme spec (NULL / string / function / IqrTheme). Used to
+resolve any of \code{ucl_color}, \code{cl_color}, \code{data_color}
+that are NULL. Colors are taken from the theme's semantic and discrete
+palettes:
+\itemize{
+\item \code{ucl_color} / \code{lcl_color} <- semantic "fail"
+\item \code{cl_color} <- semantic "neutral"
+\item \code{data_color} <- discrete palette, first color
+}}
 
-\item{cl_color}{Color for center line.}
+\item{ucl_color}{Color for UCL/LCL lines. If NULL (default), resolved
+from \code{theme}. Pass an explicit color to override.}
 
-\item{data_color}{Color for data points and line.}
+\item{cl_color}{Color for center line. If NULL (default), resolved from
+\code{theme}.}
+
+\item{data_color}{Color for data points and line. If NULL (default),
+resolved from \code{theme}.}
 }
 \value{
 A list of ggplot2 layers.

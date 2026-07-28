@@ -1,80 +1,806 @@
 ---
-title: "iQualityR: An Integrated Quality Engineering Framework"
-author: "Chen Zhiming"
+title: "The iQualityR Framework: A Unified Methodology for Quality Engineering"
+author: "iQualityR Team"
 date: "`r Sys.Date()`"
-output: rmarkdown::html_vignette
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
 vignette: >
-  %\VignetteIndexEntry{iQualityR: An Integrated Quality Engineering Framework}
+  %\VignetteIndexEntry{The iQualityR Framework: A Unified Methodology for Quality Engineering}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r setup, include=FALSE}
-library(iQualityR)
-knitr::opts_chunk$set(fig.width = 6, fig.height = 4)
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
 ```
 
-# Overview
-
-`iQualityR` is a meta-package that installs and loads a coordinated set of R
-packages for quality engineering. It follows the `tidyverse` convention: one
-call to `library(iQualityR)` attaches all member packages so their APIs are
-immediately available in the current session.
-
-The framework is organized in four dependency layers:
-
-| Layer | Package(s) | Responsibility |
-|:------|:-----------|:---------------|
-| Foundation | `iQualityR.core` | R6 abstract bases, themes, Excel export, i18n |
-| Generic | `iQualityR.plot`, `iQualityR.doe`, `iQualityR.sampling`, `iQualityR.predict` | Visualization, design of experiments, acceptance sampling, predictive modeling |
-| Statistical | `iQualityR.stat` | Distributions, SPC constants, hypothesis tests, normality, outliers |
-| Business | `iQualityR.msa`, `iQualityR.capa`, `iQualityR.reliability`, `iQualityR.spc` | Measurement system analysis, process capability, reliability/survival, statistical process control |
-
-# Quick Start
-
-```{r}
-# Attach the entire framework
+```{r, eval = FALSE}
 library(iQualityR)
+library(ggplot2)
 
-# Inspect member packages
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+# 1. Introduction
+
+## 1.1 Why iQualityR? The fragmented landscape of quality tools
+
+Quality engineering has long relied on a mature statistical methodology whose
+canonical tools — Shewhart control charts, ANOVA, gage R&R, process capability
+indices, response surface methodology — were codified between the 1930s and
+1980s. Commercial software such as Minitab and JMP made these methods
+accessible to a generation of practitioners. Yet the modern data landscape has
+changed in three fundamental ways:
+
+1. **Volume and velocity.** High-frequency sensors, inline metrology, and
+   IoT-enabled processes generate streams that dwarf the subgroups of the
+   Shewhart era. A modern semiconductor tool logs thousands of measurements
+   per wafer; a traditional X-bar/R chart designed for 5 samples per hour is
+   not the right tool.
+
+2. **Model diversity.** Classical quality statistics is overwhelmingly linear
+   and Gaussian. Real processes exhibit non-linearity, interactions, drift,
+   and multi-modal distributions that a single distributional assumption
+   cannot capture. Machine learning has matured to address precisely these
+   cases — but it has lived outside the quality toolkit, in separate
+   notebooks, used by different teams, with results that quality engineers
+   cannot easily audit.
+
+3. **Explainability mandate.** In regulated industries (pharmaceutical,
+   automotive, medical devices), a black-box anomaly score is not actionable.
+   The ICH Q9 (Quality Risk Management) and AIAG MSA frameworks demand
+   *evidence-driven* decisions. If a model flags a process as out-of-control,
+   the engineer must be able to trace *why*.
+
+The R ecosystem already contains excellent individual packages — `spc`,
+`qcc`, `survival`, `car`, `MASS` — but they are **disconnected**. There is no
+shared task object that lets you run SPC, capability, and MSA on the same
+data with a consistent theme, consistent result structure, and a consistent
+report. Practitioners end up stitching scripts, copy-pasting data between
+tools, and rebuilding the same report template in every project.
+
+**iQualityR closes this gap.** It is not "Minitab rewritten in R". It is a
+framework that *preserves* the classical methodology while *extending* it with
+machine learning, explainable AI, and a software-engineering backbone
+(R6 task objects, 9-slot result contracts, i18n, themeable visualizations)
+that the AI era demands.
+
+## 1.2 Design philosophy: one workflow, ten modules
+
+The framework is organised around a single methodology — **Plan → Task →
+Analysis → Summary/Plot → Report** — that recurs in every member package. A
+practitioner who has learned the workflow for gage R&R already knows the
+workflow for SPC, capability, and DOE. This consistency is the framework's
+core design principle and is detailed in Section 2.
+
+The ten member packages are layered by dependency and domain:
+
+| Layer | Package | Responsibility |
+|:------|:--------|:---------------|
+| Foundation | `iQualityR.core` | R6 base classes, theme system, Excel export, i18n, result contract |
+| Visualization | `iQualityR.plot` | `base_plot`, composable layers, quality-specific charts |
+| Statistical | `iQualityR.stat` | Distributions, SPC constants, hypothesis tests, normality, outliers, transforms |
+| Measurement | `iQualityR.msa` | Type 1, Linearity, Gage R&R (crossed/nested), Attribute agreement |
+| Capability | `iQualityR.capa` | Normal / non-normal / non-parametric capability |
+| Experimentation | `iQualityR.doe` | Factorial, RSM, Taguchi, Bayesian optimization, surrogate models |
+| Sampling | `iQualityR.sampling` | Single / double / multiple sampling, OC curves |
+| Reliability | `iQualityR.reliability` | Weibull, Kaplan-Meier, Cox proportional hazards |
+| Prediction | `iQualityR.predict` | 7-algorithm trainer, SHAP explainability, diagnostics |
+| Process control | `iQualityR.spc` | Shewhart through LSTM autoencoders, with SHAP attribution |
+
+## 1.3 Why "i" — the fourfold meaning of the prefix
+
+The package is not called `QualityR`. The lowercase `i` carries four layers
+of meaning, each grounded in concrete code rather than marketing language.
+
+### i = Intelligent (algorithm auto-selection)
+
+Classical tools force the practitioner to choose the method: pick a
+distribution, pick a transform, pick an algorithm. iQualityR shifts this
+burden to the framework through a family of `auto_*` entry points:
+
+- `iQualityR.stat::auto_fit_distribution()` — fits 11 candidate distributions
+  and returns the best by AIC/BIC/KS.
+- `iQualityR.stat::auto_transform()` — selects among Box-Cox, Yeo-Johnson,
+  and Johnson (SU/SB/SL) and reports normality before/after.
+- `iQualityR.stat::normality_test(method = "auto")` — picks Anderson-Darling,
+  Shapiro-Filk, or Cramer-von Mises based on sample size.
+- `iQualityR.capa::capability_nonnormal(distribution = "auto")` — selects
+  among 6 non-normal distributions automatically.
+- `iQualityR.predict::ModelTrainer$train_auto()` — chooses among linear,
+  ridge, elastic net, random forest, XGBoost, SVM, and PLS based on data
+  characteristics (`n_obs`, `n_factors`, `VIF`).
+- `iQualityR.doe::AutoDOECopilot$recommend()` — recommends a design strategy
+  (Plackett-Burman, fractional factorial, CCD, Taguchi) based on the number
+  of factors, goal, budget, and industry.
+
+This is *intelligence in service of the practitioner*: the methods remain
+explicit and auditable, but the framework shoulders the cognitive load of
+"which method should I use?".
+
+### i = Interpretable (explainable AI)
+
+Machine learning models are powerful but opaque. In quality engineering, an
+opaque prediction is not actionable. iQualityR embeds explainability as a
+first-class concern:
+
+- `iQualityR.predict::ExplainabilityEngine$explain()` — computes feature
+  importance, SHAP values, and partial dependence plots for any supported
+  model, and translates ML terminology into quality-domain language
+  ("Feature Importance" → "Factor Influence").
+- `iQualityR.spc::run_spc_shap()` — post-hoc SHAP attribution for ML-enhanced
+  control charts. When an autoencoder flags a wafer as anomalous, the engineer
+  sees *which sensor features contributed* to the anomaly score.
+- `iQualityR.predict::DiagnosticAnalyzer$analyze()` — residual analysis,
+  heteroscedasticity tests, VIF, Cook's distance, with auto-generated
+  quality-domain interpretations.
+- Every ML-enhanced SPC method outputs a standardised `ai_diagnostic` slot
+  containing `method`, `anomaly_score`, `shap_values`, `rule_attribution`,
+  and `confidence` — so the AI decision is always traceable.
+
+### i = Integrated (cross-package closed loop)
+
+The ten packages are not a bundle of independent tools. They share:
+
+- A unified `IqrTaskBase` orchestrator — every analysis follows
+  `$new() → $run() → $plot() → $report() → $summary()`.
+- A unified `app_result()` 9-slot contract (`ok`, `code`, `message`, `data`,
+  `tables`, `plots`, `files`, `warnings`, `metadata`) — the same structure
+  flows from R to a Spring Boot backend to a Vue/Plotly frontend.
+- A unified `IqrTheme` four-class palette system (discrete, sequential,
+  diverging, semantic) — switching theme once recolours every plot.
+- Genuine cross-package reuse: `iQualityR.spc::run_spc_arima_resid` calls
+  `iQualityR.stat::sigma_estimate`; `iQualityR.doe::AutoDOECopilot` detects
+  historical data and recommends `MultiFidelityOptimizer`; capability
+  results feed SPC baselines.
+
+This integration enables a **closed-loop quality workflow**: SPC detects a
+drift → DOE designs a screening experiment → prediction models the response
+→ capability validates the improvement → sampling adjusts the inspection plan.
+
+### i = Intelligent for the AI/ML era
+
+Finally, `i` signals that the framework is built *for the AI/ML era*, not
+merely ported into it. Across all ten member packages, the framework
+upgrades classical quality methods with modern statistical learning —
+each upgrade grounded in shipped code, not roadmap promises.
+
+**Statistical foundations (iQualityR.stat).**
+- *From grid-search Box-Cox to numerical lambda optimisation.*
+  `auto_transform()` maximises the normality P-value via `stats::optimize()`
+  across Box-Cox, Yeo-Johnson and Johnson (SU/SB/SL) — replacing the
+  classical grid-search lambda plot.
+- *From one-distribution-at-a-time to AIC-ranked multi-fit.*
+  `auto_fit_distribution()` fits 11 candidates and ranks by AIC/BIC/KS.
+- *From hardcoded distribution sets to a runtime registry.*
+  `DIST_REGISTRY` (17 distributions) is user-extensible via
+  `register_dist()` / `unregister_dist()` — a closed set in Minitab.
+- *From ANOVA to mixed-effects + emmeans.* `.anova_mixed()` fits
+  `lmerTest::lmer` with `VarCorr` random effects and `emmeans` post-hoc,
+  unifying fixed, mixed, and MANOVA in one analyzer.
+
+**Measurement systems (iQualityR.msa).**
+- *From manual design declaration to auto-inferred crossed/nested.*
+  `infer_msa_plan()` inspects cell coverage and decides "crossed" vs
+  "nested" — Minitab forces the user to declare it.
+- *From Cohen-only to three kappa methods + diagnostic metrics.*
+  `KappaAnalyzer` dispatches to Cohen/Fleiss/Wagner with 1-way/2-way
+  modes; `DetectionAnalyzer` adds Youden index, LR±, and
+  Clopper-Pearson CIs — a diagnostic-test suite absent from classical MSA.
+
+**Process capability (iQualityR.capa).**
+- *From analytic CIs to bootstrap CIs for non-normal / non-parametric
+  indices.* Three `.bootstrap_*_ci()` variants re-fit the distribution
+  per resample — Minitab only provides normal-approx CIs.
+- *From normal-only Sixpack to non-normal / non-parametric Sixpack.*
+  `.prepare_nonnormal_sixpack_data()` and `.prepare_nonparametric_sixpack_data()`
+  extend the canonical 6-panel diagnostic to all three statistical regimes.
+
+**Statistical process control (iQualityR.spc) — the AI frontier.**
+- *From Shewhart to self-supervised learning.* `run_spc_autoencoder()`
+  uses a keras/tensorflow autoencoder (with a PCA fallback) to detect
+  multivariate anomalies via reconstruction error.
+- *From CUSUM to Bayesian online learning.* `run_spc_bocpd()`
+  implements the Adams & MacKay (2007) Bayesian online change-point
+  detection algorithm — a streaming, probabilistic alternative to CUSUM,
+  with a full run-length posterior matrix in pure R.
+- *From Hotelling T² to Isolation Forest.* `run_spc_iforest()` isolates
+  multivariate anomalies via random splits (isotree backend, pure-R fallback).
+- *From EWMA to LSTM forecasting.* `run_spc_lstm()` predicts the next
+  value with a keras LSTM autoencoder (ARIMA+EWMA fallback).
+- *From fixed limits to adaptive / non-parametric limits.*
+  `run_spc_adaptive()` uses rolling-window recomputation; `run_spc_kde()`
+  builds control limits from the empirical density — bypassing the Gaussian
+  assumption entirely.
+- *From black-box anomaly to explainable AI.* `run_spc_shap()` and the
+  standardised `ai_diagnostic` slot (method / anomaly_score / shap_values /
+  rule_attribution / confidence) make every ML chart auditable.
+
+**Quality prediction (iQualityR.predict).**
+- *From linear regression to a 7-algorithm trainer with auto-selection.*
+  `ModelTrainer$train_auto()` picks among linear / ridge / elastic net /
+  random forest / XGBoost / SVM / PLS based on `n_obs`, `n_factors`, VIF.
+- *From coefficient tables to SHAP explainability.*
+  `ExplainabilityEngine` computes feature importance, SHAP (via shapviz,
+  with exact linear-model SHAP), PDP, and translates ML terms into
+  quality-domain language ("Feature Importance" → "Factor Influence").
+- *From residual plots to a full diagnostic battery.*
+  `DiagnosticAnalyzer` runs VIF, Cook's D, DFFITS, Breusch-Pagan, with
+  auto-generated engineering interpretations and a 5-star quality rating.
+
+**Design of experiments (iQualityR.doe).**
+- *From RSM to Bayesian optimisation.* `BayesianOptimizer` performs
+  sequential experiment selection via Gaussian-process surrogates and
+  Expected Improvement — the same algorithm family that powers modern
+  hyperparameter tuning.
+- *From single-fidelity to multi-fidelity transfer learning.*
+  `MultiFidelityOptimizer` fuses historical data with new experiments via
+  bias-corrected prediction and bootstrap augmentation, reducing physical
+  trials by 30-50%.
+- *From Derringer desirability to Pareto + TOPSIS.* `MultiResponseOptimizer`
+  adds non-dominated-sort Pareto frontiers and Hwang & Yoon (1981) TOPSIS
+  multi-criteria ranking.
+- *From D-optimal only to D/A/I coordinate-exchange.* `create_optimal_design()`
+  implements Meyer & Nachtsheim (1995) with multi-start restarts.
+- *From manual planning to a predictive DOE flywheel.* `predictive_doe_flywheel()`
+  closes the loop: MES historical data → surrogate fit → AutoDOECopilot
+  recommendation → LHS design with surrogate predictions.
+
+**Reliability (iQualityR.reliability).**
+- *From MLE Weibull to Cox PH with auto risk classification.*
+  `.analyze_cox()` runs `survival::coxph` with `cox.zph` PH-assumption
+  testing, then `.generate_cox_recommendations()` auto-classifies
+  covariates into risk-increasing (HR>1, p<0.05) vs protective (HR<1,
+  p<0.05) factors — a narrative layer Minitab does not provide.
+- *From shape parameter to maintenance guidance.*
+  `.generate_parametric_recommendations()` translates the Weibull shape
+  (`<1` early-life, `~1` random, `>1` wear-out) into actionable
+  maintenance strategy.
+
+**Cross-cutting infrastructure (iQualityR.core, iQualityR.plot).**
+- *From fixed UI strings to a real i18n layer.* `iqr_t()` / `iqr_set_locale()`
+  with on-disk CSV dictionaries and `{placeholder}` interpolation — the
+  framework is bilingual (en-US, zh-CN) and extensible to any locale.
+- *From ad-hoc colors to a WCAG-aware four-class palette system.*
+  `IqrTheme` ships 10 coordinated presets (3 built-in + 7 external) with
+  discrete / sequential / diverging / semantic palettes; `contrast_ratio()`
+  and `is_dark()` enforce WCAG 2.x relative-luminance math for text-on-color.
+- *From static scatter to 2D-KDE / hex-binning / bootstrap-AUC ROC.*
+  `iQualityR.plot` adds `MASS::kde2d` density overlays, `hexbin` for
+  large-N overplotting, and `pROC` bootstrap AUC CIs.
+
+Crucially, all ML capabilities use `requireNamespace()` soft dependencies
+with deterministic fallbacks — the package passes `R CMD check --as-cran`
+with zero hard ML dependencies, yet activates deep learning when the user
+installs the optional packages. This is **engineering-grade AI**:
+transparent, auditable, CRAN-compliant.
+
+## 1.4 Who should read this book
+
+This vignette (and the book it opens) is written for:
+
+- **Quality engineers** moving from Minitab/JMP to R who want a familiar
+  methodology with modern extensions.
+- **Data scientists** working in manufacturing or regulated industries who
+  need statistical rigour and explainability alongside ML.
+- **Students and researchers** in quality engineering who want a unified,
+  code-first reference for the classical theory and its AI-era extensions.
+
+# 2. The Unified Methodology: Plan → Task → Analysis → Summary/Plot → Report
+
+Every analysis in iQualityR — whether a gage R&R study, a capability
+analysis, or a Bayesian optimisation — follows the same five-stage
+lifecycle. This is the framework's design essence.
+
+## 2.1 Plan — capturing 4M1E context
+
+An `IqrPlan` object captures the study context using the classical **4M1E**
+cause-classification from Ishikawa: Man, Machine, Material, Method,
+Environment. This metadata is not decorative — it flows into reports, is
+versioned with the data, and enables traceability required by ICH Q9 and
+ISO 9001.
+
+```{r, eval = FALSE}
+plan <- IqrPlanBase$new(
+  operator = "Shift A",
+  machine  = "CNC-007",
+  material = "Al6061-T6 Lot 2026-04",
+  method   = "Subgroup n=5, hourly",
+  environment = list(temp = 22, humidity = 45)
+)
+```
+
+## 2.2 Task — the orchestrating object
+
+`IqrTaskBase` is the R6 class that ties everything together. Each domain
+package provides a concrete subclass (`IqrMsaTask`, `IqrCapabilityTask`,
+`IqrSpcTask`, `IqrDoeTask`, `IqrPredictiveTask`, `IqrReliabilityTask`,
+`IqrSamplingTask`). The task holds the data, the plan, the theme, and the
+registered analyzer/plotter/reporter trio.
+
+```{r, eval = FALSE}
+task <- IqrCapabilityTask$new(
+  data = bearing_diameter,
+  plan = plan,
+  lsl = 9.95, usl = 10.05
+)
+```
+
+## 2.3 Analysis — the compute engine
+
+`IqrAnalyzerBase` defines the `analyze()` contract. The task's `$run()`
+method delegates to its analyzer, which returns a standardised result list.
+The contract is enforced: every analyzer returns a list with predictable
+slots, so downstream plotters and reporters never need to special-case.
+
+## 2.4 Summary/Plot — the visualisation engine
+
+`IqrPlotterBase` provides the `render()` contract and the colour toolbox
+(`.pal_discrete()`, `.pal_sequential()`, `.pal_diverging()`,
+`.pal_semantic()`, `.scale_*()`). Every plotter subclass inherits these,
+so a single theme switch recolours the entire visualisation layer
+consistently — discrete palettes auto-extend via `colorRampPalette`,
+semantic palettes carry pass/fail/watch semantics, and WCAG contrast is
+enforced for text on coloured backgrounds.
+
+## 2.5 Report — the export engine
+
+`IqrReporter` dispatches to format-specific exporters (Rmd, HTML, PDF);
+`ExcelExporter` produces themed multi-sheet workbooks. Reporters consume
+the same result list that plotters consume, guaranteeing that "what you
+see is what you export".
+
+## 2.6 How the five stages flow together
+
+```
+IqrPlan ─┐
+         ├──> IqrTask ──> $run() ──> analyzer ──> result list
+data ────┘                                │
+                                          ├──> $plot() ──> plotter ──> ggplot
+                                          └──> $report() ─> reporter ─> Rmd/xlsx
+```
+
+The same `result` object feeds both visualisation and reporting. This
+decouples computation from presentation and is the reason a theme change
+or a format change never requires re-running the analysis.
+
+# 3. Package Architecture
+
+## 3.1 The dependency graph
+
+```
+iQualityR.core ──> iQualityR.plot ──> iQualityR.stat
+                                          │
+       ┌──────────────────────────────────┼───────────────────────┐
+       v                  v               v                       v
+iQualityR.msa     iQualityR.capa    iQualityR.doe          iQualityR.spc
+       │                  │               │                       │
+       v                  v               v                       v
+iQualityR.sampling  iQualityR.reliability  iQualityR.predict
+```
+
+The meta-package `iQualityR` attaches all ten in dependency order via
+`.onAttach()`, mirroring the tidyverse convention.
+
+## 3.2 Member package index
+
+```{r, eval = FALSE}
 iQualityR_packages()
 ```
 
-Once attached, every member API is callable without a namespace prefix:
+## 3.3 The 4M1E metadata model shared across all packages
 
-```{r, eval=FALSE}
-# Statistical foundations
-iqr_prob$new(type = "norm", params = list(mean = 100, sd = 5))$calc(values = 108)
+The `IqrPlanBase` 4M1E slots are inherited by every domain plan subclass.
+This means a gage R&R study and a capability study and a DOE all carry the
+same contextual metadata, enabling cross-analysis traceability — a
+requirement in regulated environments that ad-hoc R scripts cannot meet.
 
-# Process capability
-capability_normal(x = rnorm(100, 50, 1), lsl = 47, usl = 53)
+# 4. Installation and Quick Start
 
-# Measurement system analysis
-iqr_msa(data = my_msa_data, part = "part", operator = "op", measurement = "y")
+## 4.1 Installing the meta-package
 
-# Design of experiments
-factorial_design(factors = list(A = c(-1, 1), B = c(-1, 1)))
+```{r, eval = FALSE}
+# From GitHub (development)
+# pak::pkg_install("zhiming-chen/iQualityR/iQualityR")
+
+# Or install all member packages explicitly
+install.packages(c(
+  "iQualityR.core", "iQualityR.plot", "iQualityR.stat",
+  "iQualityR.msa", "iQualityR.capa", "iQualityR.doe",
+  "iQualityR.sampling", "iQualityR.reliability",
+  "iQualityR.predict", "iQualityR.spc"
+))
 ```
 
-# Member Packages
+## 4.2 Attaching the framework
 
-Use `iQualityR_packages()` to enumerate the currently attached members:
-
-```{r}
-iQualityR_packages()
+```{r, eval = FALSE}
+library(iQualityR)
 ```
 
-To detach a specific member package without unloading the framework, use
-`detach()` as usual.
+One call attaches every member package in dependency order. The startup
+message confirms the framework version.
 
-# Design Rationale
+## 4.3 A 5-minute walkthrough: capability analysis end-to-end
 
-The meta-package intentionally does **not** re-export member functions.
-Keeping the public API in each member package preserves clear ownership of
-documentation and behaviour, avoids name collisions, and ensures that
-`iQualityR.msa::iqr_msa` and `iQualityR::iqr_msa` (after attach) refer to the
-same object without duplication.
+This walkthrough uses a bearing-diameter scenario (a canonical quality
+case) to show the full Plan → Task → Analysis → Plot → Report cycle.
 
-*End of Vignette*
+```{r, eval = FALSE}
+# 1. Plan — capture 4M1E context
+plan <- IqrPlanBase$new(
+  operator = "Shift A",
+  machine  = "Grinder-04",
+  material = "Bearing Steel SUJ2 Lot 26-07",
+  method   = "Subgroup n=5, hourly sampling",
+  environment = list(temp_C = 22, humidity_pct = 45)
+)
+
+# 2. Task — create the capability task
+task <- IqrCapabilityTask$new(
+  data = bearing_diameter,
+  plan = plan,
+  lsl  = 9.95,
+  usl  = 10.05,
+  target = 10.00
+)
+
+# 3. Analysis — run the capability calculation
+task$run()
+
+# 4. Summary — console output
+task$summary()
+
+# 5. Plot — visualise the capability
+task$plot()
+
+# 6. Report — export to Excel
+task$report(file = "bearing_capability.xlsx")
 ```
 
+The same six-step pattern applies to every domain: swap `IqrCapabilityTask`
+for `IqrSpcTask`, `IqrMsaTask`, `IqrDoeTask`, etc., and the workflow is
+identical. This uniformity is intentional and is the framework's pedagogical
+lever — learn once, apply everywhere.
+
+# 5. The Innovation Landscape: From Classical to AI-Enhanced
+
+This section maps the framework's innovations against the classical
+baseline, organised by member package. The intent is to show *where*
+iQualityR preserves tradition and *where* it extends it.
+
+## 5.1 iQualityR.stat — statistical foundations
+
+| Capability | Classical (Minitab/JMP) | iQualityR extension |
+|:-----------|:------------------------|:--------------------|
+| Sigma estimation | R-bar, S-bar, pooled | 7 methods + `sigma_decomposition` into within/between/total |
+| Distribution fitting | Manual selection | `auto_fit_distribution` over 11 distributions, AIC/BIC/KS ranked |
+| Data transformation | Box-Cox | Box-Cox + Yeo-Johnson + Johnson (SU/SB/SL) + `auto_transform` |
+| Outlier detection | Grubbs / Dixon | 5 methods + Mahalanobis (multivariate) + `detect_outliers_all` voting |
+| Normality testing | Manual AD/SW choice | `method = "auto"` selects based on sample size |
+| SPC constants | Tables | Programmatic `get_d2/d3/d4/c4/A2/A3/D3/D4/B3/B4/E2` |
+
+The `sigma_decomposition` function is particularly noteworthy: it partitions
+total variation into within-subgroup, between-subgroup, and their combination
+— a decomposition that Minitab requires manual GLM scripting to achieve and
+that is essential for correctly distinguishing Cpk (potential) from Ppk
+(performance).
+
+## 5.2 iQualityR.msa — measurement system analysis
+
+| Capability | Classical (AIAG MSA 4th) | iQualityR extension |
+|:-----------|:------------------------|:--------------------|
+| Type 1 gage study | Bias + Cgk | + VDA 5 uncertainty budget + run-chart stability diagnostics |
+| Linearity & bias | Per-reference mean regression | **Individual-bias regression** (preserves within-reference variation) |
+| Attribute agreement | Cohen/Fleiss kappa | + Wagner kappa + Kendall W/tau for ordinal data |
+| Detection analysis | Not available | `DetectionAnalyzer` — false-negative rate with Clopper-Pearson CI |
+| Data interoperability | Manual export | Built-in Minitab `.MWX` parser (`parse_minitab_mwx`) |
+
+The individual-bias regression in `Type1LinearityAnalyzer` is a correctness
+fix: regressing on per-reference mean bias (as some implementations do)
+discards within-reference variation and inflates R-squared. iQualityR
+regresses on individual bias values, matching the AIAG MSA 4th edition
+formula and producing correct t-tests and p-values.
+
+## 5.3 iQualityR.capa — process capability
+
+| Capability | Classical | iQualityR extension |
+|:-----------|:----------|:--------------------|
+| Non-normal capability | 6 distributions | 7 distributions + `"auto"` selection + non-parametric KDE |
+| Confidence intervals | Analytic only | Bootstrap CI (`use_bootstrap = TRUE`) |
+| Report | Fixed | Dynamic summary by analysis type + small-sample warning |
+
+## 5.4 iQualityR.spc — the AI/ML frontier in process control
+
+This is where the framework's AI-era ambition is most visible. iQualityR.spc
+implements the complete classical control chart family (Shewhart variables
+and attributes, Laney P'/U' for overdispersed data, G and T charts for rare
+events, EWMA, CUSUM, MA, Hotelling T2, MEWMA, ARIMA-residual) **and** a
+suite of ML-enhanced charts that have no equivalent in Minitab or JMP:
+
+| ML method | Function | What it does | Fallback |
+|:----------|:---------|:-------------|:---------|
+| Autoencoder | `run_spc_autoencoder()` | Reconstructs multivariate normal patterns; flags high reconstruction error | PCA via SVD |
+| Isolation Forest | `run_spc_iforest()` | Isolates anomalies via random splits; multivariate outlier score | Native R iForest |
+| LSTM | `run_spc_lstm()` | Predicts next value; flags large prediction error | ARIMA → AR(1) → EWMA |
+| Bayesian Online CPD | `run_spc_bocpd()` | Streaming posterior over run-length; probabilistic change-point | None (pure R) |
+| SHAP attribution | `run_spc_shap()` | Post-hoc feature attribution for any ML chart above | Feature ablation |
+
+Every ML method outputs a standardised `ai_diagnostic` slot with `method`,
+`anomaly_score`, `shap_values`, `rule_attribution`, and `confidence`. The
+`backend` field transparently discloses whether keras or the fallback was
+used — a critical auditability feature.
+
+Additionally, `run_spc_adaptive()` implements rolling-window control limits
+that track natural process drift (tool wear, seasonality), and
+`run_spc_kde()` constructs non-parametric control limits from the empirical
+distribution — bypassing the Gaussian assumption entirely.
+
+## 5.5 iQualityR.predict — quality prediction with explainability
+
+| Capability | Classical regression | iQualityR extension |
+|:-----------|:---------------------|:--------------------|
+| Algorithms | Linear / logistic | 7 algorithms + `train_auto` selection + tidymodels/mlr3 expert mode |
+| Explainability | Coefficient table | `ExplainabilityEngine` — SHAP, PDP, feature importance, quality-domain translation |
+| Diagnostics | Residual plots | `DiagnosticAnalyzer` — VIF, Cook's D, DFFITS, Breusch-Pagan, auto-generated interpretations |
+| Model rating | None | Five-star quality-domain rating with engineering-language explanation |
+| Soft dependencies | N/A | xgboost → randomForest → linear degradation chain |
+
+## 5.6 iQualityR.doe — experimentation in the ML era
+
+| Capability | Classical RSM/Taguchi | iQualityR extension |
+|:-----------|:----------------------|:--------------------|
+| Sequential optimisation | None | `BayesianOptimizer` — GP surrogate + Expected Improvement + multi-start L-BFGS-B |
+| Design recommendation | Manual | `AutoDOECopilot` — rule-based expert system; distinguishes manufacturing vs service DOE |
+| Surrogate models | None | `SurrogateModeler` — parametric response surface, GP, digital-twin virtual DOE |
+| Multi-fidelity | None | `MultiFidelityOptimizer` — bias-corrected prediction + data augmentation |
+| Multi-response | Derringer desirability | + Pareto frontier + TOPSIS multi-criteria decision |
+| Stability (ICH Q1E) | Manual regression | `TimeEffectModeler` — 4 decay models + Arrhenius + shelf-life with one-sided z=1.645 |
+
+## 5.7 Cross-cutting infrastructure (iQualityR.core, iQualityR.plot)
+
+The foundation packages do not themselves implement quality methods —
+they implement the *substrate* on which every quality method runs. Their
+innovations are therefore architectural rather than statistical.
+
+| Capability | Classical R / Minitab | iQualityR extension |
+|:-----------|:----------------------|:--------------------|
+| Result envelope | Files / ad-hoc lists | `app_result()` 9-slot JSON contract (`ok/code/message/data/tables/plots/files/warnings/metadata`) |
+| Task orchestrator | None | `IqrTaskBase` + `IqrAnalyzerBase` (4-slot) + `IqrPlotterBase` + `IqrReporter` R6 matrix |
+| Study plan | Free metadata | `IqrPlanBase` with 4M1E (Man/Machine/Material/Method/Environment) slots |
+| Palette | Hand-picked hex | `IqrTheme` 10 coordinated presets × 4 palette classes (discrete/sequential/diverging/semantic) |
+| Colour math | None | `lighten/darken/mix/is_dark/contrast_ratio` with WCAG 2.x relative luminance |
+| CJK rendering | Manual `theme(text=)` | Auto-detection of `Microsoft YaHei / SimHei / Noto Sans SC` via `systemfonts/showtext` |
+| Internationalisation | Fixed English UI | `iqr_t()` / `iqr_set_locale()` with on-disk CSV dictionaries + `{placeholder}` interpolation |
+| Large-N scatter | Overplotted points | `MASS::kde2d` 2D-density overlay + `hexbin` hexagonal binning |
+| ROC AUC CI | None | Bootstrap AUC CI via `pROC` |
+| Pareto chart | Flat bar | Grouped / weighted / "Other"-aggregated Pareto + emoji/image X-axis labels |
+
+The 9-slot `app_result` contract is the keystone of the framework's
+software-engineering backbone. It is what allows the same R analyzer to
+feed a console session, a Spring Boot backend, a Vue/Plotly frontend, and
+an Excel workbook — all from one serialisable result object. Minitab
+exports files; iQualityR exports structured data.
+
+## 5.8 iQualityR.reliability — survival with narrative intelligence
+
+| Capability | Classical (Minitab) | iQualityR extension |
+|:-----------|:---------------------|:--------------------|
+| Parametric fitting | Weibull / lognormal / exp | + logistic + closed-form MTTF / B10 / B50 per distribution |
+| Distribution selection | Manual | Delegates to `iQualityR.stat::fit_distribution` (cross-package reuse) |
+| Kaplan-Meier | Yes | `survival::survfit` with soft dependency |
+| Cox PH | Yes | + `cox.zph` PH-assumption test + auto risk/protective factor classification |
+| Covariate interpretation | Coefficient table | Auto-generated narrative ("Factor X is risk-increasing (HR=2.3, p<0.001)") |
+| Weibull shape | Numeric estimate | Translated to maintenance strategy (early-life / random / wear-out) |
+| Cross-package reuse | None | `iQualityR.stat::fit_distribution` for MLE + AIC/BIC + KS + Hessian SE |
+
+The `.generate_cox_recommendations()` method is the innovation worth
+highlighting: it does not stop at the hazard-ratio table but partitions
+covariates into risk-increasing (HR>1, p<0.05) and protective (HR<1,
+p<0.05) groups, then emits engineering-language recommendations. This
+closes the gap between a statistical fit and an actionable maintenance
+decision — a gap that classical reliability tools leave to the engineer.
+
+## 5.9 iQualityR.sampling — classical methods, integrated workflow
+
+The sampling package is candidly the most classical of the ten. It does
+not introduce ML or Bayesian methods. Its innovations are therefore
+workflow-level rather than algorithmic:
+
+| Capability | Classical (Minitab) | iQualityR extension |
+|:-----------|:---------------------|:--------------------|
+| Plan types | Separate menus | Unified `single/double/multiple/sequential` dispatch on one `SamplingPlan` |
+| OC curve | Per-plan | `.calculate_oc_curve()` dispatches by plan type; producer + consumer risk in one call |
+| Power curve | Manual lookup | `.calculate_power()` + `.find_required_n()` auto-searches n for 80% power at RQL |
+| ASN | Manual formula | `.calculate_asn_curve()` for double/multiple (simplified approximation) |
+| Validation | External | `.perform_actual_sampling()` runs the plan against a `quality_status` column and returns accept/reject |
+
+The package's honesty about its own scope is itself a design principle:
+the framework does not retrofit AI where classical theory suffices. The
+future-directions section below notes where Bayesian sequential sampling
+could extend this package without compromising its current correctness.
+
+# 6. Future Directions: The AI-Era Trajectory
+
+The innovations catalogued in Section 5 are not endpoints. Each is a
+beachhead for a deeper AI-era extension. This section maps the trajectory,
+package by package, distinguishing work that is already shipped from work
+that is on the roadmap.
+
+## 6.1 iQualityR.stat — from auto-selection to Bayesian foundations
+
+- **Shipped:** `auto_fit_distribution`, `auto_transform`, `auto` normality,
+  mixed-effects ANOVA, runtime `DIST_REGISTRY`.
+- **Trajectory:** Bayesian hierarchical distributions with informative
+  priors (replacing flat-prior MLE); robust M-estimators for contaminated
+  subgroups; streaming normality for high-frequency data. The
+  `DIST_REGISTRY` extension mechanism is the architectural hook: a
+  Bayesian distribution is just another registered `d/p/q` triplet.
+
+## 6.2 iQualityR.msa — from gage R&R to Bayesian measurement uncertainty
+
+- **Shipped:** Auto-inferred crossed/nested design, three kappa methods,
+  diagnostic-test metrics, AIAG-faithful individual-bias linearity.
+- **Trajectory:** Bayesian Gage R&R with prior information from historical
+  studies (reducing required part count); attribute MSA with ML-assisted
+  reference grading; VDA 5 uncertainty propagation fused with Type 1 gage
+  results. The `infer_msa_plan()` auto-inference engine is the natural
+  entry point for a Bayesian prior.
+
+## 6.3 iQualityR.capa — from index reporting to predictive capability
+
+- **Shipped:** Bootstrap CIs for non-normal / non-parametric indices,
+  `fit_auto` distribution selection, non-normal Sixpack, rule-based advice.
+- **Trajectory:** Bayesian capability indices with prior on the process
+  sigma; time-varying capability (Cpk-as-a-time-series); capability
+  prediction from upstream SPC drift signals. The `.generate_advice()`
+  rule base is the natural hook for an LLM-assisted narrative layer.
+
+## 6.4 iQualityR.spc — from chart libraries to self-adapting control
+
+- **Shipped:** Autoencoder, LSTM, Isolation Forest, BOCPD, SHAP
+  attribution, KDE limits, adaptive EWMA, hybrid T²+MEWMA, ARIMA-residual.
+- **Trajectory:** Online continual learning (charts that update their own
+  baselines); federated SPC across multi-site processes without sharing
+  raw data; causal SPC (distinguishing common-cause drift from
+  intervention effects via do-calculus); foundation-model time-series
+  anomaly detection. The `ai_diagnostic` slot is the architectural
+  contract that makes any of these pluggable — a new ML method just needs
+  to populate the five standardised fields.
+
+## 6.5 iQualityR.predict — from model trainer to AutoML pipeline
+
+- **Shipped:** 7-algorithm trainer with `train_auto`, SHAP / PDP
+  explainability, full diagnostic battery, quality-domain translation,
+  tidymodels / mlr3 expert mode.
+- **Trajectory:** Stacked ensembles with automatic meta-learner selection;
+  time-series foundation models (e.g., lag-Llama, Chronos) as additional
+  `ModelTrainer` backends; active learning for expensive-label quality
+  data; counterfactual explanations ("what input change would have avoided
+  the defect"). The `ExplainabilityEngine` already separates model from
+  explainer — new model classes slot in without touching the explanation
+  pipeline.
+
+## 6.6 iQualityR.doe — from sequential optimisation to autonomous experimentation
+
+- **Shipped:** Bayesian optimisation, multi-fidelity transfer learning,
+  Pareto + TOPSIS, surrogate GP, digital-twin virtual DOE, AutoDOECopilot,
+  predictive DOE flywheel, D/A/I optimal design, ICH Q1E stability.
+- **Trajectory:** Deep-kernel Gaussian processes (combining neural
+  features with GP uncertainty); active-learning acquisition functions
+  that value information gain over mere EI; closed-loop autonomous
+  experimentation (BO suggests → robot runs → result feeds back → BO
+  updates); Bayesian optimisation over discrete mixture formulations.
+  The `predictive_doe_flywheel()` is the architectural skeleton for
+  full autonomy — it already closes the loop from history to design to
+  prediction.
+
+## 6.7 iQualityR.sampling — from fixed plans to adaptive inspection
+
+- **Shipped:** Unified single/double/multiple/sequential dispatch, OC +
+  ASN + power curves, auto required-n search, actual-sampling validation.
+- **Trajectory:** Sequential probability ratio test (SPRT) with
+  Bayesian stopping boundaries; adaptive sampling plans that tighten or
+  loosen based on real-time SPC signals; risk-based sampling driven by
+  upstream capability indices. The classical correctness of the current
+  package is the prerequisite for these extensions — Bayesian sequential
+  sampling requires a trustworthy frequentist baseline to extend.
+
+## 6.8 iQualityR.reliability — from MLE fitting to degradation modelling
+
+- **Shipped:** Parametric Weibull / lognormal / logistic, Kaplan-Meier,
+  Cox PH with auto risk classification, Weibull-shape maintenance guidance.
+- **Trajectory:** Accelerated Life Testing (ALT) — the `ReliabilityPlan`
+  already declares `stress_vars` and `acceleration_model = "arrhenius"`
+  fields, awaiting analyzer implementation; Bayesian Weibull with
+  informative priors from historical failure data; competing-risks
+  models; degradation-path analysis (vs. time-to-failure only). The
+  cross-package reuse of `iQualityR.stat::fit_distribution` means any
+  Bayesian extension at the stat layer propagates automatically.
+
+## 6.9 iQualityR.core / iQualityR.plot — from substrate to platform
+
+- **Shipped:** 9-slot result contract, R6 task matrix, 4M1E plan,
+  10-preset WCAG-aware theme, i18n, composable ggplot layers.
+- **Trajectory:** LLM-assisted narrative generation on top of
+  `StatInterpreter` (translating result lists into multi-audience
+  reports); cross-package result chaining (SPC result auto-triggers a DOE
+  plan); interactive Plotly-native visualisations for every chart;
+  animation for time-series SPC. The 9-slot `app_result` contract is the
+  API surface that makes each of these composable without re-architecting
+  the analyzers.
+
+## 6.10 The unifying theme
+
+Across all ten packages, the trajectory is the same: **from methods that
+report the past to methods that recommend the future**. Classical quality
+tools answer "what happened?"; the AI-era extensions answer "what should
+I do next, and why?". The `i` prefix commits the framework to this
+trajectory — not as a marketing label, but as a code-grounded
+architecture in which every ML method is auditable, every result is
+structured, and every classical method remains available as the
+trustworthy baseline.
+
+# 7. Conventions Used in This Book
+
+## 7.1 Code style and theme defaults
+
+All examples use `theme = "academic"` (the framework default) unless
+explicitly demonstrating theme switching. Code follows tidyverse style;
+non-standard evaluation variables are declared via `utils::globalVariables()`
+to satisfy `R CMD check`.
+
+## 7.2 Quality scenario notation
+
+Throughout the book, a shared library of quality scenarios is used to
+maintain coherence:
+
+1. **Bearing diameter** — capability
+2. **Semiconductor wafer thickness** — SPC + capability
+3. **CNC machining** — descriptive statistics
+4. **Supplier fill weight** — hypothesis testing
+5. **Coating thickness** — normality
+6. **Time-to-failure** — reliability (Weibull)
+7. **Supplier tensile strength** — ANOVA
+8. **PCB defects** — Pareto
+9. **Plating defects** — fishbone root cause
+10. **Calibration process** — turtle diagram
+11. **Turning operation** — SPC constants
+12. **Plating line benchmark** — capability metrics
+13. **Cycle time transformation** — Box-Cox
+14. **Calibration regression** — model diagnostics
+
+# 8. References
+
+- Adams, R. P., & MacKay, D. J. C. (2007). Bayesian online changepoint
+  detection. *arXiv:0710.3742*.
+- AIAG (2010). *Measurement Systems Analysis* (4th ed.).
+- Box, G. E. P., Hunter, W. G., & Hunter, J. S. (2005). *Statistics for
+  Experimenters* (2nd ed.). Wiley.
+- Hwang, C.-L., & Yoon, K. (1981). *Multiple Attribute Decision Making:
+  Methods and Applications*. Springer-Verlag.
+- ICH (2003). *Q1E Evaluation of Stability Data*.
+- ICH (2005). *Q9 Quality Risk Management*.
+- Lloyd, D. K., & Bertsch, S. (2019). Deep learning for anomaly detection
+  in multivariate process data. *Journal of Quality Technology*.
+- Meyer, R. K., & Nachtsheim, C. J. (1995). The coordinate-exchange
+  algorithm for constructing exact optimal experimental designs.
+  *Technometrics*, 37(1), 60-69.
+- Montgomery, D. C. (2013). *Statistical Quality Control* (7th ed.). Wiley.
+- Shewhart, W. A. (1931). *Economic Control of Quality of Manufactured
+  Product*. Van Nostrand.
+
+*See `vignette("iQualityR-workflow", package = "iQualityR")` for an
+end-to-end case study, and `vignette("iQualityR-core", package =
+"iQualityR.core")` for the core infrastructure reference.*

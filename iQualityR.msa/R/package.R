@@ -18,9 +18,16 @@
 #' @importFrom stats rnorm
 #' @importFrom utils write.csv
 #' @importFrom iQualityR.stat get_d2 get_A2 get_D3 get_D4
+#' @importFrom iQualityR.core IqrTheme IqrPlotterBase
 "_PACKAGE"
 
 utils::globalVariables("self")
+
+# Shared IqrPlotterBase singleton — unified color pipeline entry point.
+# All plotter classes and functional plot helpers in this package source
+# colors from this instance via .pal_* / .scale_* methods, ensuring
+# consistent theming across the iQualityR ecosystem.
+.iqr_plotter <- iQualityR.core::IqrPlotterBase$new()
 
 # Helper to locate an Rmd template bundled with this package.
 # Searches the package's own inst/templates directory first, then falls back

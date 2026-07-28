@@ -1,0 +1,584 @@
+---
+title: "Visualization Infrastructure: base_plot and the Theme Pipeline"
+author: "iQualityR.plot Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Visualization Infrastructure: base_plot and the Theme Pipeline}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.plot)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+The `iQualityR.plot` sub-package provides the graphical foundation on which
+every quality-engineering chart in the iQualityR ecosystem is built. Rather
+than scattering theme and color logic across dozens of plotting functions, the
+package centralizes it in a small, predictable pipeline:
+
+- `base_plot()` creates a `ggplot` object with the iQualityR theme already
+  attached.
+- A small family of resolvers (`as_iqr_theme()`, `as_iqr_theme_object()`,
+  `set_default_theme()`) convert any reasonable theme specification into a
+  concrete `IqrTheme` object.
+- A package-level singleton, `.iqr_plotter`, exposes the unified color
+  toolbox that every `plot_*` function consults for palettes and scales.
+
+This vignette walks through that pipeline end to end, using a steel-plate
+thickness measurement scenario that recurs throughout the quality lab.
+
+### 1.1 The grammar of iQualityR graphics
+
+`iQualityR.plot` is built on top of the *grammar of graphics* implemented by
+`ggplot2`. In that grammar a plot is not a single function call but the
+composition of independent layers:
+
+1. **Data layer** -- a data frame and a set of aesthetic mappings (`aes()`).
+2. **Geometry layer** -- the geometric objects that represent the data
+   (points, lines, bars, ribbons).
+3. **Statistics layer** -- optional transformations (binning, smoothing,
+   quantile computation).
+4. **Scale layer** -- how data values are mapped to visual properties such as
+   color, size, or position.
+5. **Coordinate layer** -- the coordinate system (cartesian, fixed, flipped).
+6. **Theme layer** -- the non-data ink: fonts, grid lines, backgrounds.
+
+The iQualityR layer model adds two conventions on top of this grammar:
+
+- A single entry point, `base_plot()`, attaches the iQualityR theme to the
+  data and mapping so every downstream chart starts from the same baseline.
+- A shared color toolbox (`.iqr_plotter`) keeps every `plot_*` function
+  consistent: switching the active theme recolors every chart uniformly
+  without touching individual function calls.
+
+### 1.2 How plot functions pick colors (the IqrPlotterBase toolbox)
+
+Every higher-level `plot_*` function resolves its colors through the same set
+of accessor methods exposed by the `IqrPlotterBase` class:
+
+| Accessor | Returns | Typical visual job |
+|---|---|---|
+| `.pal_discrete(theme_obj, n)` | discrete color vector | categorical groups |
+| `.pal_sequential(theme_obj)` | 3-stop sequential gradient | ordered, low-to-high |
+| `.pal_diverging(theme_obj)` | 3-stop diverging gradient | deviations from a midpoint |
+| `.pal_semantic(theme_obj, name)` | named pass/fail/watch colors | acceptance regions |
+| `.pal_ui(theme_obj, name, default)` | UI color (primary, muted, danger) | annotation ink |
+| `.contrast_text(bg)` | black or white text | readable labels on fills |
+| `.scale_fill_discrete(theme_obj)` | ggplot2 fill scale | bars, violins, boxes |
+| `.scale_color_discrete(theme_obj)` | ggplot2 color scale | lines, points |
+
+Because these accessors always consult the *active* `IqrTheme` object, a single
+theme switch propagates consistently to histograms, control charts, Pareto
+charts, and interaction plots alike.
+
+## 2. Quick Start
+
+We begin with a realistic data set: thickness measurements (in millimetres)
+taken on 100 steel plates across four production batches.
+
+```{r steel-data}
+set.seed(42)
+steel <- data.frame(
+  thickness = rnorm(100, mean = 10, sd = 0.3),
+  batch     = rep(c("A", "B", "C", "D"), each = 25)
+)
+head(steel)
+#>   thickness batch
+#> 1 10.411288     A
+#> 2  9.830591     A
+#> 3 10.108939     A
+#> 4 10.189859     A
+#> 5 10.121280     A
+#> 6  9.968163     A
+```
+
+### 2.1 Your first base_plot
+
+`base_plot(data, mapping, theme)` returns a standard `ggplot` object with the
+iQualityR theme already attached. Layer geometries on top with `+`, exactly
+as you would with `ggplot()`.
+
+The key convention is: **map an aesthetic to a column, and the theme palette
+follows automatically.** In the example below `fill = .data$batch` is mapped
+to a discrete column, so `base_plot()` auto-injects the theme's discrete fill
+scale -- no `scale_fill_*()` call is required. Switch the `theme` argument and
+the fill colors change with it.
+
+```{r first-base-plot}
+p <- base_plot(steel,
+               aes(x = .data$batch, y = .data$thickness, fill = .data$batch)) +
+  geom_boxplot(alpha = 0.6) +
+  labs(
+    title = "Steel Plate Thickness by Batch",
+    x = "Batch",
+    y = "Thickness (mm)"
+  ) +
+  theme(legend.position = "none")
+
+print(p)
+```
+
+### 2.2 Switching themes with one line
+
+The same data, rendered with a different theme, is a one-token change. Pass
+the theme name as a string and `base_plot()` resolves it for you. Because the
+fill scale is auto-injected from the resolved theme, the bar colors change
+automatically -- note the absence of any `scale_fill_*()` or hardcoded color
+in the call.
+
+```{r switch-theme}
+base_plot(steel, aes(x = .data$thickness, fill = .data$batch), theme = "prism") +
+  geom_histogram(bins = 20, alpha = 0.8) +
+  labs(title = "Thickness Distribution (prism theme)", x = "Thickness (mm)")
+```
+
+## 3. Theory: The Unified Color Pipeline
+
+### 3.1 The .iqr_plotter singleton
+
+At package load time, `iQualityR.plot` creates a single shared instance of
+`IqrPlotterBase`:
+
+```r
+.iqr_plotter <- iQualityR.core::IqrPlotterBase$new()
+```
+
+This object holds **no state of its own**. It is a stateless toolbox of palette
+and scale accessors that always read from the `IqrTheme` object handed to
+them. Keeping the toolbox stateless has two consequences:
+
+1. There is never any risk of one plot mutating global color state for
+   another.
+2. The function-style public API (`plot_qq()`, `plot_acf()`, etc.) is
+   preserved -- the toolbox is consulted internally without forcing the user
+   to thread a plotter object through every call.
+
+### 3.2 How a plot_* function resolves colors (flowchart as text description)
+
+The resolution chain is the same for every plotting function in the package.
+Written as a text flowchart:
+
+```
+User calls plot_xxx(data, ..., theme = NULL)
+        |
+        v
+as_iqr_theme_object(theme)
+   |-- theme is NULL?  --> read options("iqr.default_theme")  (default "academic")
+   |-- theme is string? --> IqrTheme$new(theme_style = theme)
+   |-- theme is function? -> IqrTheme$new(theme_style = <fn>)
+   |-- theme is IqrTheme? -> returned as-is
+   |-- otherwise        --> stop("theme must be NULL, a character string, ...")
+        |
+        v
+   theme_obj  (a concrete IqrTheme object)
+        |
+        +-- as_iqr_theme(theme)  --> theme_obj$theme_iqr()  [the ggplot2 theme]
+        |
+        +-- .iqr_plotter$.pal_discrete(theme_obj, n)   [colors]
+        +-- .iqr_plotter$.scale_fill_discrete(theme_obj)  [scales]
+        +-- .iqr_plotter$.pal_semantic(theme_obj, "fail") [regions]
+        |
+        v
+   ggplot(data, mapping) + theme_iqr + scales + geoms
+```
+
+The key insight is that **all color decisions are deferred to the resolved
+`IqrTheme` object**, never hard-coded. This is what makes "switch the theme,
+recolor everything" possible with a single argument.
+
+### 3.3 The four palette classes matched to visual jobs
+
+The color toolbox exposes four palette classes, each matched to a distinct
+visual job:
+
+- **Discrete palette** (`.pal_discrete`) -- for categorical groups such as
+  machine ID, operator, or batch. Auto-extended via `colorRampPalette` when
+  the number of groups exceeds the base palette length.
+- **Sequential palette** (`.pal_sequential`) -- for ordered, single-direction
+  data such as counts, durations, or defect severity ranks.
+- **Diverging palette** (`.pal_diverging`) -- for deviations from a neutral
+  midpoint, for example standardized residuals or correlation matrices
+  centred on zero.
+- **Semantic palette** (`.pal_semantic`) -- named colors such as `pass`,
+  `fail`, and `watch` that encode *meaning* rather than magnitude, used for
+  acceptance regions on capability and control charts.
+
+Choosing the correct class is a design decision baked into each `plot_*`
+function, so users normally never need to think about it. When composing
+custom charts with `base_plot()`, however, the same accessors are available
+to keep hand-built layers consistent.
+
+## 4. base_plot() — The Foundation
+
+`base_plot()` is the single entry point every chart starts from. It is a
+thin wrapper around `ggplot2::ggplot()` that resolves the theme, attaches it,
+and -- crucially -- **auto-injects theme-aware scales for any `fill` /
+`color` (or `colour`) aesthetic present in `mapping`**.
+
+### 4.1 Signature and parameters
+
+```{r base-plot-signature, eval = FALSE}
+base_plot(data, mapping, theme = NULL)
+```
+
+- `data` -- a `data.frame` for plotting. Verified with `stopifnot(is.data.frame(data))`.
+- `mapping` -- an aesthetic mapping created by `aes()`. Use the `.data$`
+  pronoun to reference columns, e.g. `aes(x = .data$thickness)`.
+- `theme` -- the theme specification; see Section 4.3.
+
+The return value is a `ggplot` object, so any standard ggplot2 layer can be
+added with `+`. The resolved `IqrTheme` object is stashed as attribute
+`"iqr_theme"` on the returned object, so downstream code can retrieve it via
+`attr(p, "iqr_theme")` and use the full `theme_obj$plot$*` /
+`theme_obj$get_pal(...)` API directly.
+
+### 4.2 Auto-injected scales: map it, and the theme colors it
+
+When `mapping` contains a `fill` or `color` aesthetic that refers to a column
+in `data`, `base_plot()` inspects the column type and attaches the matching
+theme scale for you:
+
+| Mapped aesthetic | Column type | Auto-injected scale |
+|---|---|---|
+| `fill = .data$group` | discrete (factor/character) | `theme_obj$plot$scale_fill_iqr(discrete = TRUE)` |
+| `fill = .data$score` | continuous (numeric) | `theme_obj$plot$scale_fill_sequential()` |
+| `color = .data$group` | discrete | `theme_obj$plot$scale_color_iqr(discrete = TRUE)` |
+| `color = .data$score` | continuous | `theme_obj$plot$scale_color_sequential()` |
+
+This means the overwhelming majority of charts need **zero color code**: map
+the aesthetic, pick a theme, and the palette follows.
+
+```{r auto-injection-demo}
+# Discrete fill: batch is a factor -> discrete palette auto-injected
+base_plot(steel, aes(x = .data$batch, y = .data$thickness, fill = .data$batch),
+          theme = "economist") +
+  geom_boxplot(alpha = 0.6) +
+  labs(title = "Discrete fill, economist theme (no scale_* call)") +
+  theme(legend.position = "none")
+
+# Continuous fill: thickness is numeric -> sequential gradient auto-injected
+base_plot(steel, aes(x = .data$batch, y = .data$thickness, fill = .data$thickness),
+          theme = "solarized") +
+  geom_col(alpha = 0.8) +
+  labs(title = "Continuous fill, solarized theme (no scale_* call)")
+```
+
+### 4.3 Advanced scales via attr(p, "iqr_theme")
+
+Three scale families **cannot** be auto-injected because they encode user
+intent rather than column type. For these, retrieve the `IqrTheme` object from
+the returned plot and attach the scale explicitly using the `.core` API:
+
+- **Paired mode** (fill + darkened outline, for boxplots/bars) --
+  `theme_obj$plot$scale_fill_iqr(discrete = TRUE, style = "paired")` plus
+  `theme_obj$plot$scale_color_iqr(discrete = TRUE, style = "paired")`.
+- **Diverging gradient** (for residuals, correlations centred on zero) --
+  `theme_obj$plot$scale_fill_diverging(midpoint = 0)`.
+- **Semantic palette** (pass / fail / watch) --
+  `theme_obj$plot$scale_fill_semantic(labels = c("pass", "fail", "watch"))`.
+
+```{r paired-mode}
+# Paired mode: fill and outline both follow the theme, outline darkened 25%.
+# Requires mapping BOTH fill and color to the same discrete column.
+p <- base_plot(steel,
+               aes(x = .data$batch, y = .data$thickness,
+                   fill = .data$batch, color = .data$batch),
+               theme = "academic")
+theme_obj <- attr(p, "iqr_theme")
+
+p +
+  geom_violin(alpha = 0.55) +
+  theme_obj$plot$scale_fill_iqr(discrete = TRUE, style = "paired") +
+  theme_obj$plot$scale_color_iqr(discrete = TRUE, style = "paired") +
+  labs(title = "Paired mode: fill + darkened outline from the theme") +
+  theme(legend.position = "none")
+```
+
+When a chart needs a **single solid color** that is not mapped to any column
+(for example, filling a one-group histogram), retrieve the first discrete
+palette color from the theme object so the color still tracks the active
+theme:
+
+```{r unmapped-fill}
+p <- base_plot(steel, aes(x = .data$thickness), theme = "prism")
+theme_obj <- attr(p, "iqr_theme")
+fill_color <- theme_obj$get_pal("discrete")[1]
+
+p +
+  geom_histogram(bins = 20, fill = fill_color) +
+  labs(title = "Unmapped fill resolved from the theme (prism)")
+```
+
+### 4.4 Theme input types: NULL / string / function / IqrTheme
+
+The `theme` argument accepts four mutually compatible input types. All four
+produce the same kind of object internally:
+
+```{r theme-input-types}
+# 1. NULL -- falls back to the global default (academic by default)
+p1 <- base_plot(steel, aes(x = .data$thickness), theme = NULL) +
+  geom_histogram(bins = 20)
+
+# 2. Character string -- a built-in or external style name
+p2 <- base_plot(steel, aes(x = .data$thickness), theme = "economist") +
+  geom_histogram(bins = 20)
+
+# 3. Function -- any function returning a ggplot2 theme
+p3 <- base_plot(steel, aes(x = .data$thickness), theme = theme_minimal) +
+  geom_histogram(bins = 20)
+
+# 4. IqrTheme object -- resolved and returned as-is
+theme_obj <- iQualityR.core::IqrTheme$new(theme_style = "solarized")
+p4 <- base_plot(steel, aes(x = .data$thickness), theme = theme_obj) +
+  geom_histogram(bins = 20)
+
+class(p1)
+#> [1] "ggplot2::ggplot" "ggplot"          "ggplot2::gg"     "S7_object"
+#> [5] "gg"
+```
+
+### 4.5 Theme error behavior (no silent fallback)
+
+When a theme specification cannot be resolved, `as_iqr_theme_object()` raises
+an explicit error rather than silently substituting a default. This is a
+deliberate design choice: silent fallback hides typos and configuration
+mistakes that would otherwise surface as mysteriously unstyled charts.
+
+```{r theme-error, error = TRUE}
+base_plot(steel, aes(x = .data$thickness), theme = 123)
+#> Error: theme must be NULL, a character string, a function, or an IqrTheme object
+```
+
+For cases where you genuinely want a fallback (for example, accepting
+user-supplied theme strings in a Shiny app), wrap the call in `tryCatch()` and
+re-issue with a known-good theme.
+
+## 5. as_iqr_theme() and as_iqr_theme_object()
+
+Two resolvers sit underneath `base_plot()` and the higher-level `plot_*`
+functions:
+
+- `as_iqr_theme_object(theme = NULL)` resolves any theme specification into a
+  concrete `IqrTheme` object. This is what you call when you need access to
+  the *palette accessors* (e.g. to fetch discrete colors for a custom legend).
+- `as_iqr_theme(theme = NULL)` is a thin wrapper that calls
+  `as_iqr_theme_object(theme)$theme_iqr()`, returning a ggplot2 theme object
+  that can be added directly with `+`. Use this when you only need the
+  *non-data ink* (fonts, grid lines) for an existing ggplot.
+
+```{r resolvers}
+# Object form -- exposes the palette accessors
+obj <- as_iqr_theme_object("prism")
+plotter <- iQualityR.core::IqrPlotterBase$new()
+discrete_colors <- plotter$.pal_discrete(obj)
+length(discrete_colors)
+#> [1] 10
+
+# Theme form -- ready to add to a ggplot
+ggplot(steel, aes(x = .data$thickness)) +
+  geom_histogram(bins = 20, fill = "grey50") +
+  as_iqr_theme("economist") +
+  labs(title = "Economist theme via as_iqr_theme()")
+```
+
+Both resolvers share the same NULL-handling rule: when `theme` is `NULL`, the
+value of `options("iqr.default_theme")` is used (default `"academic"`).
+
+## 6. set_default_theme() and the global option
+
+`set_default_theme(theme = "academic")` writes the
+`options("iqr.default_theme")` global option. Every subsequent call to
+`base_plot()` or any `plot_*` function that receives `theme = NULL` will pick
+up the new default.
+
+```{r set-default-theme}
+# Inspect the current default
+getOption("iqr.default_theme", "academic")
+#> [1] "academic"
+
+# Switch the session-wide default to "prism"
+set_default_theme("prism")
+getOption("iqr.default_theme")
+#> [1] "prism"
+
+# A plot created with theme = NULL now inherits "prism"
+p_default <- base_plot(steel, aes(x = .data$thickness), theme = NULL)
+theme_obj <- attr(p_default, "iqr_theme")
+fill_color <- theme_obj$get_pal("discrete")[1]
+
+p_default +
+  geom_histogram(bins = 20, fill = fill_color) +
+  labs(title = "Inherits the session default (prism)")
+
+# Restore the default for the rest of the vignette
+set_default_theme("academic")
+```
+
+`set_default_theme()` validates the theme spec by attempting to build it; if
+the build fails it emits a warning but still records the option, so a broken
+theme never silently breaks downstream plots.
+
+## 7. combine_plots() with patchwork
+
+`combine_plots()` arranges multiple `ggplot` objects into a single dashboard
+layout via `patchwork::wrap_plots()`. It accepts plots either as separate
+arguments or as a single `plotlist`, and optionally applies a shared theme to
+every plot.
+
+```{r combine-plots}
+# Each plot resolves its own fill color from the active theme via attr(p, "iqr_theme").
+p_hist <- base_plot(steel, aes(x = .data$thickness), theme = "academic")
+hist_fill <- attr(p_hist, "iqr_theme")$get_pal("discrete")[1]
+p_hist <- p_hist +
+  geom_histogram(bins = 20, fill = hist_fill) +
+  labs(title = "Distribution")
+
+p_box <- base_plot(steel,
+                   aes(x = .data$batch, y = .data$thickness, fill = .data$batch),
+                   theme = "academic") +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "By Batch") +
+  theme(legend.position = "none")
+
+p_qq <- base_plot(steel, aes(sample = .data$thickness), theme = "academic") +
+  layers_qq() +
+  labs(title = "Normal QQ")
+
+dashboard <- combine_plots(p_hist, p_box, p_qq, ncol = 3)
+print(dashboard)
+```
+
+The same layout can be produced from a list:
+
+```{r combine-plots-list}
+combine_plots(plotlist = list(p_hist, p_box, p_qq), nrow = 1)
+```
+
+## 8. save_diagram() — exporting to PNG/SVG/PDF
+
+`save_diagram(obj, filename, type, width, height, dpi, ...)` is a unified
+export helper. It inspects the class of `obj` and dispatches to the correct
+backend:
+
+- **ggplot2 objects** and **patchwork** objects are saved with `ggplot2::ggsave()`.
+- **DiagrammeR** objects (`grViz`, `htmlwidget`, `dgr_graph`) are exported via
+  `DiagrammeRsvg` / `rsvg`.
+
+When the file name carries a recognized extension (`.png`, `.svg`, `.pdf`)
+the `type` argument is inferred; otherwise the `type` argument is used and
+appended to the file name.
+
+```{r save-diagram, eval = FALSE}
+# Export the dashboard as a high-resolution PNG
+save_diagram(dashboard, "thickness_dashboard.png",
+             width = 12, height = 4, dpi = 300)
+
+# Export as vector PDF for a print-quality report
+save_diagram(p_box, "thickness_by_batch", type = "pdf",
+             width = 6, height = 4)
+
+# Export an SVG for embedding in a web dashboard
+save_diagram(p_hist, "thickness_hist.svg")
+```
+
+For `ggplot` and `patchwork` objects the `width`/`height` units are inches;
+for DiagrammeR `grViz` widgets the units are pixels.
+
+## 9. Theme Switching Demonstration
+
+### 9.1 Same plot, four themes (academic / economist / prism / solarized)
+
+A recurring quality-engineering task is the same chart rendered for
+different audiences: a peer-reviewed report (academic), an executive brief
+(economist), a clean slide deck (prism), and a high-contrast screen
+(solarized). The unified color pipeline makes this a one-token change per
+chart.
+
+```{r four-themes}
+themes_to_show <- c("academic", "economist", "prism", "solarized")
+plots <- lapply(themes_to_show, function(th) {
+  # base_plot() auto-injects the discrete fill scale for the mapped `fill`
+  # aesthetic, so switching `th` recolors both the theme chrome and the fill
+  # palette in one step -- no manual scale_* call needed.
+  base_plot(steel,
+            aes(x = .data$batch, y = .data$thickness, fill = .data$batch),
+            theme = th) +
+    geom_violin(alpha = 0.6) +
+    labs(title = paste0("Theme: ", th), x = "Batch", y = "Thickness (mm)") +
+    theme(legend.position = "none")
+})
+
+combine_plots(plotlist = plots, ncol = 2, nrow = 2)
+```
+
+Note that switching the theme changed not only the grid lines and fonts but
+also the fill palette -- because `base_plot()` resolves the theme into an
+`IqrTheme` object and auto-injects the matching discrete fill scale through
+the unified color toolbox. Every `plot_*` function in the package does this
+automatically.
+
+## 10. Summary
+
+- `base_plot()` is the single foundation: it returns a themed `ggplot`
+  object that any standard ggplot2 layer can be added to.
+- Theme resolution is centralized in `as_iqr_theme_object()` /
+  `as_iqr_theme()`. NULL falls back to `options("iqr.default_theme")`, which
+  `set_default_theme()` controls.
+- All color decisions are deferred to the resolved `IqrTheme` object through
+  the stateless `.iqr_plotter` singleton, so a single theme switch recolors
+  every chart consistently.
+- `combine_plots()` lays out multiple plots with `patchwork`, and
+  `save_diagram()` exports the result to PNG, SVG, or PDF.
+- Invalid theme specifications raise explicit errors rather than silently
+  falling back -- a deliberate choice that keeps configuration mistakes
+  visible.
+
+## 11. Further Reading
+
+- **Layer Builders for Quality Charts** -- the companion vignette
+  (`vignette("layer-builders", package = "iQualityR.plot")`) shows how to
+  compose reusable layer functions such as `layers_histogram_density()` and
+  `layers_control_chart()` on top of `base_plot()`.
+- **Basic Plotting and Theme System** -- `vignette("basic_plotting_theme", package = "iQualityR.plot")`.
+- **Scatter Plots**, **Pareto Charts**, **Hypothesis Visualization**, and
+  **Fishbone Diagrams** vignettes cover the higher-level `plot_*` functions
+  that are all built on this same pipeline.
+- The `iQualityR.core` package documents the `IqrTheme` and
+  `IqrPlotterBase` classes that underpin the color toolbox.
+
+## References
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis* (2nd ed.).
+Springer. <https://ggplot2-book.org>
+
+Wilkinson, L. (2005). *The Grammar of Graphics* (2nd ed.). Springer, New York.
+
+Wickham, H., & Sievert, C. (2016). *ggplot2: Elegant Graphics for Data Analysis*
+(online documentation). <https://ggplot2.tidyverse.org>
+
+Pedersen, T. L. (2024). *patchwork: The Composer of Plots*. R package.
+<https://patchwork.data-imaginist.com>
+
+Arnold, J. B. (2024). *ggthemes: Extra Themes, Scales and Geoms for ggplot2*.
+R package. <https://jrnold.github.io/ggthemes>

@@ -1,538 +1,318 @@
 ---
-title: "Introduction to iQualityR.core"
-subtitle: "Foundational infrastructure for the iQualityR framework"
-author: "Zhiming Chen"
+title: "Core Infrastructure: The R6 Base Classes and Workflow Engine"
+author: "iQualityR.core Team"
 date: "`r Sys.Date()`"
 output:
   rmarkdown::html_vignette:
     toc: true
+    toc_depth: 3
 vignette: >
-  %\VignetteIndexEntry{Introduction to iQualityR.core}
+  %\VignetteIndexEntry{Core Infrastructure: The R6 Base Classes and Workflow Engine}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r, include = FALSE}
-library(iQualityR.core)
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
-  fig.width = 7,
-  fig.height = 4.5,
-  fig.path = "fig-iqr-core-"
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
 )
+
+library(iQualityR.core)
+library(ggplot2)
+
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x, format = "f", digits = digits), "%")
 ```
 
-# Overview
+# 1. Introduction
 
-The `iQualityR.core` package provides the foundational infrastructure
-for the iQualityR quality engineering framework. It defines R6 abstract
-base classes for plans, tasks, analyzers, plotters, and reporters; a
-unified ggplot2 theme system with four coordinated palette classes;
-Excel export utilities; metadata management following a 4M1E convention
-(Man, Machine, Material, Method, Environment); simple
-internationalization (en-US, zh-CN); and utility functions for
-validation, formatting, and configuration.
+## 1.1 Why a layered R6 architecture?
 
-Downstream packages such as `iQualityR.plot`, `iQualityR.stat`,
-`iQualityR.msa`, `iQualityR.spc`, and `iQualityR.doe` build on these
-components. Users of those packages do not need to interact with
-`iQualityR.core` directly, but understanding the theme system helps
-when customizing analyses or building new plotter subclasses.
+Quality engineering covers a broad surface — descriptive statistics,
+hypothesis testing, measurement system analysis, process capability,
+design of experiments, statistical process control, reliability, and
+predictive modelling. Each domain has its own canonical methods, but
+they all share the same *workflow*: capture context, execute a
+computation, visualise the result, and export a report. Classical R
+packages treat each analysis as a one-off function call; the engineer
+stitches the pieces together with ad-hoc scripts, copy-pastes data
+between tools, and rebuilds the same report template in every project.
 
-# Base classes
+`iQualityR.core` breaks this pattern by providing a small set of R6
+abstract base classes that codify the shared workflow. Every domain
+package (`iQualityR.msa`, `iQualityR.spc`, `iQualityR.capa`, ...)
+subclasses these bases, so a practitioner who has learned the workflow
+for gage R&R already knows the workflow for SPC, capability, and DOE.
 
-## IqrPlanBase
+The architectural trade-off is deliberate. R6 reference semantics are
+not a universal fit for R, but for quality engineering they are the
+right choice because:
 
-An `IqrPlanBase` object stores the configuration of an analysis: the
-task tag, the confidence level, named criteria (e.g. specification
-limits), and 4M1E metadata.
+- **Stateful lifecycle.** An analysis has a natural state — plan set,
+  data loaded, computation run, results cached, plot rendered, report
+  exported. R6 encapsulates this state without polluting the global
+  environment.
+- **Inheritance.** A concrete `IqrCapabilityTask` inherits the plan
+  storage, theme plumbing, and reporter wiring from `IqrTaskBase`,
+  overriding only the domain-specific compute logic. This eliminates
+  boilerplate that would otherwise be duplicated across ten packages.
+- **Encapsulation.** Private fields and methods hide implementation
+  details; the public API (`$new()`, `$run()`, `$plot()`, `$report()`,
+  `$summary()`) is stable and documented.
+- **Reference identity.** A task object can be passed to a plotter and
+  a reporter and they both see the same results — no copy-on-modify
+  surprises.
 
-```{r plan}
+## 1.2 The class hierarchy at a glance
+
+| Layer | Base class | Responsibility | Key subclass examples |
+|:------|:-----------|:---------------|:----------------------|
+| Plan | `IqrPlanBase` | 4M1E metadata, criteria, params | `MSAPlan`, `CapabilityPlan`, `SpcPlan`, `DoePlan`, `ReliabilityPlan`, `SamplingPlan` |
+| Task | `IqrTaskBase` | Orchestrates plan + data + executor trio | `IqrCapabilityTask`, `IqrSpcTask`, `IqrDoeTask`, `IqrReliabilityTask`, `IqrSamplingTask` |
+| Analyzer | `IqrAnalyzerBase` | Computes statistics, 4-slot result container | `CapabilityAnalyzer`, `SpcAnalyzer`, `DoeAnalyzer`, `ReliabilityAnalyzer`, `MsaAnalyzer` |
+| Plotter | `IqrPlotterBase` | Renders ggplot2, palette toolbox | `CapabilityPlotter`, `SpcPlotter`, `DoePlotter`, `ReliabilityPlotter` |
+| Reporter | `IqrReporter` | Multi-format export dispatcher | (used directly; subclasses register templates) |
+| Exporter | `ExcelExporter` | Themed multi-sheet xlsx | (used directly) |
+
+Every domain package composes these bases into a concrete
+`Plan → Task → Analyzer → Plotter → Reporter` quintet. The remainder
+of this vignette walks through each layer in detail.
+
+# 2. The Plan Layer — IqrPlanBase
+
+## 2.1 The 4M1E metadata model
+
+The `IqrPlanBase` class captures study context using the classical
+**4M1E** cause-classification from Ishikawa: Man, Machine, Material,
+Method, Environment. A sixth slot, `project`, carries project-level
+identifiers. This metadata is not decorative — it flows into reports,
+is versioned with the data, and enables the traceability required by
+ICH Q9 and ISO 9001.
+
+The 4M1E slots are initialised as empty lists and populated via
+`$set_meta()`:
+
+```{r plan-4m1e}
 plan <- IqrPlanBase$new(
-  task_tag = "capability",
+  task_tag  = "capability",
   conf_level = 0.95
 )
 
-plan$set_criteria(lsl = 0, usl = 10)
-plan$set_meta("man",       operator = "John", experience = 5)
-plan$set_meta("machine",   model = "Machine A")
-plan$set_meta("material",  batch = "B-2025")
-plan$set_meta("method",    procedure = "SOP-001")
-plan$set_meta("environment", temperature = 23)
-plan$set_meta("project",   id = "Q-001")
+plan$set_meta("man",         operator = "Shift A", experience_yrs = 5)
+plan$set_meta("machine",     model = "CNC-007",  spindle_rpm = 12000)
+plan$set_meta("material",    batch = "SUJ2-26-07", hardness_hrc = 62)
+plan$set_meta("method",      procedure = "SOP-001", subgroup_n = 5)
+plan$set_meta("environment", temp_C = 22, humidity_pct = 45)
+plan$set_meta("project",     id = "Q-2026-001", customer = "ACME")
 
-plan$conf_level
-plan$criteria$usl
+str(plan$meta_data, max.level = 1)
 ```
 
-Convert the plan to a plain list:
+## 2.2 Creating and validating a plan
 
-```{r plan-list}
-str(plan$to_list(), max.level = 2)
+A plan carries three additional slots beyond 4M1E:
+
+- `task_tag` — a short identifier (`"capability"`, `"msa"`, `"spc"`)
+  used by the reporter to locate templates.
+- `conf_level` — the confidence level (default 0.95), validated to be
+  in (0, 1).
+- `criteria` — named evaluation criteria, e.g. specification limits or
+  acceptance thresholds, set via `$set_criteria()`.
+- `stats_params` — domain-specific statistical parameters, populated
+  via `...` at construction or merged later.
+
+```{r plan-criteria}
+plan$set_criteria(lsl = 9.95, usl = 10.05, target = 10.00, cpk_min = 1.33)
+plan$criteria
+plan$validate()  # returns invisibly; raises on invalid conf_level
 ```
 
-## IqrAnalyzerBase
+## 2.3 Handing off to the analyzer
 
-`IqrAnalyzerBase` is the abstract executor that runs an analysis and
-stores statistics, diagnostics, data tables, and raw output. Subclasses
-override the private `.run_logic` method.
+The `$to_list()` method serialises the plan into a plain list that the
+analyzer consumes via `$setup()`. This decoupling lets the analyzer
+accept either a full `IqrPlanBase` object or a bare list — useful for
+testing and for programmatic pipelines.
 
-```{r analyzer}
+```{r plan-to-list}
+str(plan$to_list(), max.level = 1)
+```
+
+# 3. The Task Layer — IqrTaskBase
+
+## 3.1 Task as the orchestrator
+
+`IqrTaskBase` is the high-level coordinator. It holds three things:
+the data, an `IqrTheme` object, and an `executor` list. A concrete
+subclass (e.g. `IqrCapabilityTask`) populates the executor list with
+the domain-specific analyzer, plotter, and reporter, then exposes the
+five-stage lifecycle through virtual methods.
+
+```{r task-lifecycle, eval = FALSE}
+# Pseudo-code showing the lifecycle; real construction uses subclasses
+task <- IqrTaskBase$new(
+  data  = bearing_diameter,
+  theme = "academic"
+)
+task$compute()   # virtual — subclass dispatches to analyzer$run()
+task$summary()   # virtual — subclass prints domain-specific summary
+task$plot()      # virtual — subclass calls plotter$render()
+task$report()    # virtual — subclass calls reporter$export()
+```
+
+The base class itself raises informative errors if a virtual method is
+called without being overridden — this catches missing implementations
+early rather than producing silent no-ops.
+
+## 3.2 Theme resolution at construction
+
+The `IqrTaskBase$initialize()` method accepts three theme input types,
+so downstream code can pass whichever is convenient:
+
+```{r task-theme-types, eval = FALSE}
+IqrTaskBase$new(data, theme = "academic")       # character: IqrTheme$new("academic")
+IqrTaskBase$new(data, theme = my_theme_obj)     # IqrTheme: used directly
+IqrTaskBase$new(data, theme = my_config_obj)    # ThemeConfig: wrapped in IqrTheme
+```
+
+This is the single point at which the active theme is bound; every
+downstream plot inherits it without re-resolution.
+
+## 3.3 The task registry helper
+
+For packages that dispatch tasks by name (e.g. a backend HTTP handler),
+`create_task_registry()` builds a mapping from task names to the
+analyzer / plotter / reporter class names:
+
+```{r task-registry}
+registry <- create_task_registry(c("capability", "msa", "spc"))
+str(registry, max.level = 2)
+```
+
+# 4. The Analysis Layer — IqrAnalyzerBase
+
+## 4.1 The 4-slot result container
+
+`IqrAnalyzerBase` defines a standardised result container with four
+slots, enforced at construction:
+
+| Slot | Type | Purpose |
+|:-----|:-----|:--------|
+| `statistics` | named list | Scalar summary metrics (mean, sd, Cpk, p-value, ...) |
+| `diagnostics` | named list | Diagnostic objects (normality test, VIF, Cook's D, ...) |
+| `data_tables` | named list of data.frames | Tabular outputs (subgroup summaries, violation tables, ...) |
+| `raw_output` | arbitrary | The original model object (lm, aov, coxph, ...) for advanced users |
+
+The container is reset at the start of every `$run()` call, so an
+analyzer instance is reusable across datasets.
+
+## 4.2 The setup / run / get_results protocol
+
+```{r analyzer-protocol}
 analyzer <- IqrAnalyzerBase$new()
 
-analyzer$setup(list(alpha = 0.05, method = "t-test"))
+# 1. Setup: accept a plan or a list
+analyzer$setup(plan)
 
-analyzer$set_statistic("mean", 10.1)
-analyzer$set_diagnostic("normality", "OK")
-analyzer$set_datatable("runs", data.frame(
-  run = 1:3,
-  value = c(9.8, 10.2, 10.3)
+# 2. (In a real subclass) override .run_logic(dt) to compute results.
+#    Here we set values directly to demonstrate the container.
+analyzer$set_statistic("mean", 10.021)
+analyzer$set_statistic("sd",   0.034)
+analyzer$set_diagnostic("normality_p", 0.42)
+analyzer$set_datatable("subgroups", data.frame(
+  subgroup = 1:3,
+  mean     = c(10.01, 10.03, 10.02),
+  n        = c(5, 5, 5)
 ))
+analyzer$set_raw_output("lm_object_placeholder")
 
+# 3. Retrieve results
 str(analyzer$get_results(), max.level = 2)
 ```
 
-## IqrTaskBase, IqrPlotterBase, IqrReporter
-
-- `IqrTaskBase` is the high-level coordinator. A subclass wires
-  together a plan, data, an analyzer, a plotter, and a reporter.
-- `IqrPlotterBase` is the abstract interface for plot rendering. It
-  also exposes a toolbox of palette / scale accessors that subclasses
-  inherit, so downstream plotters do not have to know the internals of
-  `IqrTheme` (see the *Plotter toolbox* section).
-- `IqrReporter` handles Excel and R Markdown export.
-
-# Theme system
-
-The theme system is the single point of control for visual consistency
-across the entire framework. The design goal is that **users only need
-to pick a theme preset**; every downstream package, every plot type,
-and every analysis module then obtains a coordinated color scheme
-automatically.
-
-## Four palette classes
-
-Every theme preset bundles four palette classes, each covering a
-distinct visual scenario:
-
-| Class | Type | Typical use | Example |
-|-------|------|-------------|---------|
-| `discrete` | Qualitative | Categorical grouping variables | SPC chart with multiple operators, DOE factor levels |
-| `sequential` | Ordered gradient | Non-negative continuous magnitudes | Capability density, heatmaps, contour surfaces |
-| `diverging` | Signed gradient | Values centered on a neutral midpoint | Residuals, standardized effects, correlations |
-| `semantic` | Verdict-bound | Pass / fail / watch / good / bad / neutral | MSA verdict charts, capability traffic lights |
-
-Using the right palette class for the right scenario is what produces a
-coherent look across heterogeneous plots. A control chart (discrete),
-a residual histogram (diverging), and a verdict bar (semantic) all
-share the same theme even though they draw from different palette
-classes.
-
-## Three built-in presets
-
-Three built-in presets are shipped with the package:
-
-```{r presets-list}
-names(IqrTheme$new("academic")$config$style_presets)
-```
-
-The first three are pure-built-in (no external dependencies):
-
-- `"academic"` -- publication-ready, colorblind-safe qualitative palette
-  (Paul Tol), ColorBrewer Blues / RdBu gradients, black axes. Default
-  for reports and papers.
-- `"workbench"` -- higher-saturation UI palette for interactive apps
-  and dashboards; blue / teal / amber / red accents.
-- `"tech"` -- GitHub-inspired cool palette with strong contrast;
-  suitable for technical documentation and demos.
-
-The remaining seven (`economist` / `wsj` / `gdocs` / `tufte` / `few` /
-`solarized` / `prism`) are external theme presets -- see the next
-section.
-
-Switch presets at any time with `$set_theme()`:
-
-```{r theme-switch, message = FALSE}
-library(ggplot2)
-
-theme <- IqrTheme$new("academic")
-
-ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
-  geom_bar(show.legend = FALSE) +
-  theme$theme_iqr() +
-  theme$scale_fill_iqr() +
-  labs(title = "Academic preset")
-
-theme$set_theme("workbench")
-
-ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
-  geom_bar(show.legend = FALSE) +
-  theme$theme_iqr() +
-  theme$scale_fill_iqr() +
-  labs(title = "Workbench preset")
-```
-
-## External theme presets
-
-In addition to the three built-in presets, `iQualityR.core` ships seven
-external theme presets that mirror the look-and-feel of well-known
-publications and tools. Each external preset is a **full preset** --
-it carries its own UI colors and all four data palette classes
-(discrete / sequential / diverging / semantic), so picking
-`"economist"` recolors every plot to match *The Economist* style,
-not just the axis frame.
-
-The external ggplot2 theme function (e.g. `ggthemes::theme_economist`)
-is layered on top of the preset's color configuration inside
-`theme_iqr()`, so the final plot inherits both the publication's
-typography / gridlines and its color palette.
-
-| Preset | Source package | Look-and-feel | Discrete first 3 colors |
-|--------|----------------|---------------|--------------------------|
-| `economist` | ggthemes | *The Economist*: deep teal + slate blue + cyan | `#6794A7 #014D64 #7AD2F6` |
-| `wsj` | ggthemes | *Wall Street Journal*: red + blue + gold on white | `#C72E29 #016392 #BE9C2E` |
-| `gdocs` | ggthemes | Google Docs: Material Design blue / red / yellow / green | `#4285F4 #EA4335 #FBBC04` |
-| `tufte` | ggthemes | Tufte minimal ink: grayscale only | `#000000 #595959 #8C8C8C` |
-| `few` | ggthemes | Stephen Few's qualitative palette | `#5DA5DA #FAA43A #60BD68` |
-| `solarized` | ggthemes | Solarized (Ethan Schoonover): 16-color perceptual scheme | `#268BD2 #B58900 #CB4B16` |
-| `prism` | ggprism | GraphPad Prism "winter_bright" | `#077E97 #800080 #000080` |
-
-External presets are available when the corresponding package is
-installed (`ggthemes` and/or `ggprism`, declared in `Suggests`). When
-the package is absent, the preset's color configuration is still
-applied -- only the ggplot2 theme function is skipped, so the plots
-still get the right colors with a fallback `academic` frame.
-
-### Switching to an external preset
-
-```{r external-switch, message = FALSE}
-theme <- IqrTheme$new("economist")
-
-ggplot(mtcars, aes(x = factor(cyl), fill = factor(cyl))) +
-  geom_bar(show.legend = FALSE) +
-  theme$theme_iqr() +
-  theme$scale_fill_iqr() +
-  labs(title = "Economist preset (full palette + theme)")
-```
-
-Note how both the bar colors and the axis / gridline style change
-together -- this is the difference between the new full-preset
-behavior and the old "external theme only" behavior, which left the
-data colors on the academic palette.
-
-### Comparing external palettes side by side
-
-The four palette classes are coordinated within each preset, so the
-same scenario plot looks coherent regardless of which external
-preset is active:
-
-```{r external-compare, fig.show = "hold", out.width = "33%"}
-data(mtcars)
-mtcars$cyl <- factor(mtcars$cyl)
-
-for (style in c("wsj", "few", "solarized")) {
-  theme <- IqrTheme$new(style)
-  print(
-    ggplot(mtcars, aes(x = wt, y = mpg, color = cyl)) +
-      geom_point(size = 3) +
-      theme$theme_iqr() +
-      theme$scale_color_iqr() +
-      labs(title = paste0(style, " preset"))
-  )
-}
-```
-
-### External preset palettes under the hood
-
-You can inspect any preset's full color configuration directly:
-
-```{r external-inspect}
-theme <- IqrTheme$new("prism")
-
-# Discrete palette (GraphPad Prism winter_bright)
-theme$get_pal("discrete")
-
-# Sequential gradient (single-hue cyan)
-theme$get_pal("sequential")
-
-# Diverging gradient (magenta -> white -> cyan)
-theme$get_pal("diverging")
-
-# Semantic verdict colors (pass / fail / watch)
-theme$get_pal("semantic")
-```
-
-### Soft dependency behavior
-
-`ggthemes` and `ggprism` are declared in `Suggests`, not `Imports`, so
-the package installs cleanly even when they are absent. The runtime
-contract has three tiers:
-
-- **Package installed** (the common case): full preset + external
-  ggplot2 theme function. The plot inherits both the publication's
-  typography / gridlines and its color palette. This is the intended
-  publication-quality look.
-- **Package absent but preset name requested**: the preset's color
-  configuration is still applied (the preset lives in `style_presets`,
-  not in the external package); only the external ggplot2 theme
-  function is skipped. The plot gets the right colors with a fallback
-  `academic` frame.
-- **Preset name not recognized at all**: `set_theme()` raises an
-  error listing all valid names.
-
-```{r external-soft-dep}
-# Preset entry is always present in style_presets, regardless of
-# whether ggthemes is installed:
-"economist" %in% names(IqrTheme$new("academic")$config$style_presets)
-```
-
-
-## Accessing palettes directly
-
-`get_pal(type, n, name, custom)` returns the raw color vector. This is
-the lowest-level entry point, useful when a downstream plotter needs to
-pass colors to a non-ggplot2 function (e.g. `plotly`, `openxlsx`).
-
-```{r get-pal}
-theme <- IqrTheme$new("academic")
-
-# Discrete palette (base length = 10)
-theme$get_pal("discrete")
-
-# Sequential and diverging palettes (3-stop)
-theme$get_pal("sequential")
-theme$get_pal("diverging")
-
-# Semantic palette (named vector)
-theme$get_pal("semantic")
-
-# Single semantic color by name
-theme$get_pal("semantic", name = "pass")
-```
-
-### Discrete palette auto-extension
-
-When the number of categories exceeds the base palette length, the
-discrete palette is automatically interpolated via
-`grDevices::colorRampPalette`:
-
-```{r pal-extend}
-theme <- IqrTheme$new("academic")
-base <- theme$get_pal("discrete")
-extended <- theme$get_pal("discrete", n = 15L)
-
-length(base)
-length(extended)
-extended[1]   # first color is preserved
-extended[15]  # last color matches the last base color
-```
-
-This is what every `scale_*_iqr()` call uses internally, so plots with
-many categories stay readable without manual color picking.
-
-### Resolution priority: custom > option > preset
-
-`get_pal()` resolves colors in three layers, which lets users override
-the preset globally (via `options()`) or per-call (via `custom`):
-
-```{r pal-priority}
-theme <- IqrTheme$new("academic")
-
-# 1. Default: preset
-head(theme$get_pal("discrete"), 3)
-
-# 2. option() overrides preset globally
-op <- options(iqr.custom_discrete = c("#111111", "#222222", "#333333"))
-head(theme$get_pal("discrete"), 3)
-
-# 3. custom argument overrides everything per-call
-theme$get_pal("discrete", custom = c("#AAAAAA", "#BBBBBB"))
-
-options(op)  # restore
-```
-
-## ggplot2 scales
-
-`IqrTheme` exposes one scale family per palette class. All scales
-return ready-to-add ggplot2 scale objects.
-
-| Method | Returns | Use when |
-|--------|---------|----------|
-| `scale_fill_iqr()` / `scale_color_iqr()` | `ScaleDiscrete` or `ScaleContinuous` | General discrete or sequential, controlled by `discrete` flag |
-| `scale_fill_sequential()` / `scale_color_sequential()` | `ScaleContinuous` | Continuous non-negative magnitudes |
-| `scale_fill_diverging()` / `scale_color_diverging()` | `ScaleContinuous` | Signed continuous values around a midpoint |
-| `scale_fill_semantic()` / `scale_color_semantic()` | `ScaleDiscrete` | Verdict / status factors (pass / fail / watch) |
-
-### Discrete fill and color
-
-```{r scale-discrete}
-theme <- IqrTheme$new("academic")
-
-ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
-  geom_point(size = 3) +
-  theme$theme_iqr() +
-  theme$scale_color_iqr() +
-  labs(title = "Discrete color scale (academic preset)")
-```
-
-### Paired fill and color
-
-By default, `scale_fill_iqr()` and `scale_color_iqr()` use the same
-colors, so a bar's fill and its legend key match exactly. For plots
-where the fill has an outline (bars with `color = ...` mapped to the
-same variable), use `style = "paired"` on **both** scales -- the color
-scale becomes a darkened variant of the fill scale so edges stay
-visible against the fill:
-
-```{r scale-paired}
-theme <- IqrTheme$new("workbench")
-
-ggplot(iris, aes(x = Species, y = Sepal.Length,
-                 fill = Species, color = Species)) +
-  geom_boxplot(linewidth = 0.6, outlier.size = 1.5) +
-  theme$theme_iqr() +
-  theme$scale_fill_iqr(style = "paired") +
-  theme$scale_color_iqr(style = "paired") +
-  labs(title = "Paired fill and outline (workbench preset)")
-```
-
-Using `style = "paired"` on only one of the two scales has no visible
-effect -- the pairing is a coordination contract between the fill and
-color scales.
-
-### Sequential gradient
-
-For continuous non-negative magnitudes such as density, frequency, or
-process capability:
-
-```{r scale-sequential}
-theme <- IqrTheme$new("academic")
-
-ggplot(faithfuld, aes(x = waiting, y = eruptions)) +
-  geom_raster(aes(fill = density)) +
-  theme$theme_iqr() +
-  theme$scale_fill_sequential(name = "Density") +
-  labs(title = "Sequential gradient (density)")
-```
-
-### Diverging gradient
-
-For signed values centered on a neutral midpoint, e.g. residuals from
-a fitted model or standardized effects in a DOE:
-
-```{r scale-diverging}
-theme <- IqrTheme$new("academic")
-
-set.seed(1)
-df <- data.frame(
-  x = seq(-3, 3, length.out = 60),
-  y = seq(-3, 3, length.out = 60)
+## 4.3 The app_result 9-slot contract
+
+For results that cross the R-to-frontend boundary (e.g. a Spring Boot
+backend serving a Vue/Plotly frontend), `app_result()` produces a
+JSON-serialisable 9-slot envelope that subsumes the 4-slot analyzer
+container:
+
+| Slot | Type | Purpose |
+|:-----|:-----|:--------|
+| `ok` | logical | Success flag |
+| `code` | character | Stable machine-readable code (`"success"`, `"analysis_failed"`, ...) |
+| `message` | character | User-facing message |
+| `data` | named list | Summary metrics (mirrors `statistics`) |
+| `tables` | named list of data.frames | Tabular outputs (mirrors `data_tables`) |
+| `plots` | named list | Plot file descriptors or Plotly JSON specs |
+| `files` | named list | Output file paths (Excel, PDF, ...) |
+| `warnings` | character vector | Non-fatal warnings |
+| `metadata` | named list | Diagnostic metadata (mirrors `diagnostics`) |
+
+Two factory functions cover the common cases:
+
+```{r app-result-factories}
+ok <- app_success(
+  code = "success",
+  data = list(cpk = 1.42, ppk = 1.38),
+  tables = list(summary = data.frame(metric = "Cpk", value = 1.42))
 )
-df$z <- with(df, sin(x) * cos(y))
+str(ok, max.level = 1)
 
-ggplot(df, aes(x = x, y = y, fill = z)) +
-  geom_raster() +
-  theme$theme_iqr() +
-  theme$scale_fill_diverging(midpoint = 0, name = "Effect") +
-  labs(title = "Diverging gradient (signed effect)")
-```
-
-### Semantic verdict scale
-
-For categorical outcomes that carry a verdict -- typical in MSA,
-capability, and SPC acceptance charts:
-
-```{r scale-semantic}
-theme <- IqrTheme$new("academic")
-
-verdicts <- data.frame(
-  part = factor(1:6),
-  result = factor(c("pass", "pass", "watch", "fail", "pass", "watch"),
-                  levels = c("pass", "watch", "fail"))
+err <- app_error(
+  code = "normality_failed",
+  message = "Data failed Anderson-Darling test; non-normal capability recommended."
 )
-
-ggplot(verdicts, aes(x = part, y = 1, fill = result)) +
-  geom_col(width = 0.7) +
-  theme$theme_iqr() +
-  theme$scale_fill_semantic(labels = c("pass", "watch", "fail")) +
-  labs(title = "Semantic verdict scale (MSA-style)") +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+str(err, max.level = 1)
 ```
 
-The labels passed to `scale_fill_semantic()` must be a subset of the
-semantic palette names (`pass`, `fail`, `watch`, `good`, `bad`,
-`neutral`, `green`, `yellow`, `red`).
+The 9-slot contract is the keystone of the framework's
+software-engineering backbone: the same R analyzer feeds a console
+session, a backend API, and an Excel workbook, all from one
+serialisable object.
 
-## Color utility functions
+# 5. The Visualization Layer — IqrPlotterBase
 
-The package exports a small set of dependency-free color utilities so
-downstream packages can derive coordinated shades from the same
-primitives:
+## 5.1 The render() contract
 
-```{r color-utils}
-# Lighten / darken a base color
-lighten("#2563EB", 0.2)
-darken("#2563EB", 0.3)
+`IqrPlotterBase` declares a single virtual method, `render(results, theme_obj, type = "full", ...)`.
+Subclasses override it to produce a ggplot2 object (or a patchwork
+composition). The contract is deliberately minimal — the heavy lifting
+lives in the palette toolbox.
 
-# Linear interpolation between two colors
-mix("#FF0000", "#0000FF", 0.5)
+## 5.2 The color toolbox
 
-# Luminance checks (WCAG-based)
-is_dark("#000000")
-is_dark("#FFFFFF")
-contrast_ratio("#FFFFFF", "#000000")
-```
+The toolbox is the architectural piece that makes the theme system
+work. It exposes palette accessors (`.pal_*`) and scale factories
+(`.scale_*`) with a leading-dot naming convention (private by R6
+convention, inheritable). Subclasses call these helpers from inside
+`render()` and never touch `IqrTheme` internals directly.
 
-These are useful when a plotter needs to derive, for example, a
-lighter ribbon color from the discrete palette without reaching for
-another package.
+| Toolbox method | Returns | Use when |
+|:----------------|:--------|:---------|
+| `.pal_discrete(theme, n = NULL)` | character vector | Categorical grouping; auto-extends to `n` |
+| `.pal_sequential(theme)` | 3-stop gradient | Non-negative continuous magnitudes |
+| `.pal_diverging(theme)` | 3-stop (low/mid/high) | Signed values around a midpoint |
+| `.pal_semantic(theme, name = NULL)` | named vector or scalar | Verdict colors (pass/fail/watch) |
+| `.pal_ui(theme, name, default)` | scalar hex | UI slots (primary, danger, ...) |
+| `.contrast_text(bg)` | "#000000" or "#FFFFFF" | Readable text on a colored background |
+| `.scale_fill_discrete(theme, ...)` | ggplot2 ScaleDiscrete | Bar/box fills by category |
+| `.scale_color_discrete(theme, ...)` | ggplot2 ScaleDiscrete | Lines/points by category |
+| `.scale_fill_color_paired(theme, ...)` | list(fill, color) | Coordinated fill + darkened outline |
+| `.scale_fill_sequential(theme, ...)` | ggplot2 ScaleContinuous | Density / count gradients |
+| `.scale_fill_diverging(theme, ...)` | ggplot2 ScaleContinuous | Residual / effect gradients |
+| `.scale_fill_semantic(theme, labels)` | ggplot2 ScaleDiscrete | Pass/fail/watch verdicts |
 
-# Plotter toolbox for downstream packages
+## 5.3 Subclassing IqrPlotterBase
 
-The most important architectural piece for downstream package authors
-is `IqrPlotterBase`. It exposes a toolbox of palette accessors and
-scale factories with a leading-dot naming convention (private by
-convention, inheritable via R6). Subclasses call these helpers from
-inside `render()` and never touch `IqrTheme` internals directly.
-
-```{r plotter-toolbox}
-plotter <- IqrPlotterBase$new()
-theme   <- IqrTheme$new("academic")
-
-# Palette accessors
-plotter$.pal_discrete(theme)              # 10 colors
-plotter$.pal_discrete(theme, n = 12L)     # auto-extended to 12
-plotter$.pal_sequential(theme)            # 3-stop gradient
-plotter$.pal_diverging(theme)             # 3 stops
-plotter$.pal_semantic(theme)              # full named vector
-plotter$.pal_semantic(theme, name = "fail")
-
-# Scale factories
-plotter$.scale_fill_discrete(theme)
-plotter$.scale_color_discrete(theme)
-plotter$.scale_fill_sequential(theme)
-plotter$.scale_color_sequential(theme)
-plotter$.scale_fill_diverging(theme)
-plotter$.scale_color_diverging(theme)
-plotter$.scale_fill_semantic(theme, labels = c("pass", "fail"))
-plotter$.scale_color_semantic(theme, labels = c("pass", "fail"))
-
-# Paired fill + color (returns a list of two scales)
-paired <- plotter$.scale_fill_color_paired(theme)
-names(paired)
-```
-
-The benefit is that switching the active theme at the task level is
-enough to recolor every plot consistently -- the plotter code does
-not change.
-
-## Example: a minimal subpackage plotter
-
-The pattern below is what a downstream plotter (e.g. in
-`iQualityR.msa` or `iQualityR.spc`) looks like. It inherits
-`IqrPlotterBase`, calls the toolbox helpers, and stays agnostic of the
-active theme:
+The pattern below is what a downstream plotter looks like. It inherits
+the toolbox, calls the helpers, and stays agnostic of the active theme:
 
 ```{r minimal-plotter}
 MyPlotter <- R6::R6Class("MyPlotter",
@@ -548,252 +328,231 @@ MyPlotter <- R6::R6Class("MyPlotter",
   )
 )
 
-# Simulate an SPC-style result
-spc_results <- list(
-  title = "Operator means (Type 1 study)",
+sim_results <- list(
+  title = "Operator means (Type 1 gage study)",
   data  = data.frame(
     group = factor(c("Op A", "Op B", "Op C")),
     value = c(10.02, 10.08, 9.98)
   )
 )
 
-MyPlotter$new()$render(spc_results, IqrTheme$new("workbench"))
+MyPlotter$new()$render(sim_results, IqrTheme$new("workbench"))
 ```
 
-# Typical subpackage application scenarios
+Switching the theme argument recolours the plot without touching the
+plotter code — this is the design goal of the toolbox.
 
-This section shows how the four palette classes map onto the standard
-plot families used across the iQualityR subpackages. Every example
-below uses only `iQualityR.core` plus `ggplot2`, so the same patterns
-apply verbatim in `iQualityR.msa`, `iQualityR.spc`, `iQualityR.doe`,
-and `iQualityR.stat`.
+# 6. The Report Layer — IqrReporter and ExcelExporter
 
-## Scenario 1 -- MSA verdict chart (semantic)
+## 6.1 IqrReporter: multi-format export dispatcher
 
-Measurement System Analysis produces explicit verdicts (pass / watch /
-fail). Bind them to the semantic palette so a verdict is always the
-same color, regardless of plot type:
+`IqrReporter` is constructed from an `IqrTheme` and dispatches to
+format-specific exporters. It supports five formats: `excel`, `html`,
+`pdf`, `docx`, `pptx`. The reporter consumes the same result list that
+plotters consume, guaranteeing that "what you see is what you export".
 
-```{r scenario-msa}
-theme <- IqrTheme$new("academic")
+```{r reporter-construct, eval = FALSE}
+theme   <- IqrTheme$new("academic")
+reporter <- IqrReporter$new(theme)
 
-msa_summary <- data.frame(
-  characteristic = factor(c("Bias", "Linearity", "GRR", "NDC"),
-                          levels = c("Bias", "Linearity", "GRR", "NDC")),
-  verdict = factor(c("pass", "watch", "fail", "fail"),
-                   levels = c("pass", "watch", "fail"))
+# Register a custom Excel generator for the "capability" task
+reporter$register(
+  task_tag        = "capability",
+  excel_generator = function(results, plan) {
+    list(
+      Summary = data.frame(metric = "Cpk", value = results$statistics$cpk),
+      Data    = results$data_tables$subgroups
+    )
+  }
 )
 
-ggplot(msa_summary, aes(x = characteristic, y = 1, fill = verdict)) +
-  geom_col(width = 0.6) +
-  theme$theme_iqr() +
-  theme$scale_fill_semantic(labels = c("pass", "watch", "fail")) +
-  labs(title = "MSA study verdicts (semantic palette)") +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
-        axis.title.y = element_blank())
+# Export
+reporter$export(results = analyzer$get_results(),
+                plan    = plan,
+                task_tag = "capability",
+                format  = "excel",
+                path    = "capability_report.xlsx")
 ```
 
-The same `scale_fill_semantic()` call is reused by capability verdicts
-and SPC stability flags, so a green bar always means the same thing.
+## 6.2 Template discovery
 
-## Scenario 2 -- SPC control chart with operators (discrete, paired)
+For R Markdown formats (html/pdf/docx/pptx), the reporter searches for
+a template in three tiers, then fails with an actionable error:
 
-When a control chart is faceted or colored by operator / machine, use
-the discrete palette with `style = "paired"` so the point fill and
-its connecting line stay legible:
+1. A template registered via `$register(task_tag, rmd_template = ...)`.
+2. `inst/templates/<task_tag>_template.Rmd` in `iQualityR.core` or any
+   of the eight domain packages.
+3. A glob match under `iQualityR.*/inst/templates/` in the working
+   directory or its parent.
 
-```{r scenario-spc}
-theme <- IqrTheme$new("workbench")
+This convention lets each domain package ship its own templates
+without the core package needing to know about them.
 
-set.seed(7)
-spc <- data.frame(
-  run     = rep(1:20, times = 3),
-  value   = c(rnorm(20, 10, 0.3),
-              rnorm(20, 10.1, 0.3),
-              rnorm(20, 9.95, 0.3)),
-  operator = rep(c("A", "B", "C"), each = 20)
+## 6.3 ExcelExporter: themed multi-sheet workbooks
+
+`ExcelExporter` is constructed from a `ThemeConfig` (not the full
+`IqrTheme`) and produces themed xlsx files with title rows, header
+styles, zebra striping, and column-width heuristics. The styles are
+derived from the theme's UI palette, so a workbook matches the plots
+that accompany it.
+
+```{r excel-export, eval = FALSE}
+theme    <- IqrTheme$new("academic")
+exporter <- ExcelExporter$new(theme$config)
+
+sheets <- list(
+  Summary = data.frame(
+    metric = c("mean", "sd", "Cpk"),
+    value  = c(10.021, 0.034, 1.42)
+  ),
+  Subgroups = data.frame(
+    subgroup = 1:3,
+    mean     = c(10.01, 10.03, 10.02)
+  )
 )
 
-ggplot(spc, aes(x = run, y = value,
-                color = operator, fill = operator)) +
-  geom_hline(yintercept = 10, linetype = 2, color = "grey50") +
-  geom_line(linewidth = 0.6) +
-  geom_point(shape = 21, color = "black", size = 2) +
-  theme$theme_iqr() +
-  theme$scale_color_iqr(discrete = TRUE, style = "paired") +
-  theme$scale_fill_iqr(discrete = TRUE, style = "paired") +
-  labs(title = "SPC run chart by operator (discrete, paired)")
-```
-
-## Scenario 3 -- Capability density (sequential)
-
-Process capability histograms overlay a density curve; the density
-fill uses the sequential gradient so the bulk of the distribution
-reads as the deepest color:
-
-```{r scenario-cap}
-theme <- IqrTheme$new("academic")
-
-set.seed(3)
-meas <- rnorm(500, mean = 10, sd = 0.5)
-cap_df <- data.frame(value = meas)
-
-ggplot(cap_df, aes(x = value)) +
-  geom_histogram(aes(y = after_stat(density),
-                     fill = after_stat(count)),
-                 bins = 30, color = "white", linewidth = 0.2) +
-  geom_density(aes(y = after_stat(density)),
-               color = theme$get_pal("discrete")[1],
-               linewidth = 0.8, fill = NA) +
-  theme$theme_iqr() +
-  theme$scale_fill_sequential(name = "Count") +
-  labs(title = "Capability histogram with density (sequential)")
-```
-
-## Scenario 4 -- DOE residuals (diverging)
-
-Residuals from a fitted DOE model are signed; the diverging gradient
-makes the sign and magnitude immediately readable:
-
-```{r scenario-doe}
-theme <- IqrTheme$new("academic")
-
-set.seed(11)
-doe_res <- data.frame(
-  run = 1:24,
-  residual = rnorm(24, 0, 1.2)
+exporter$export_excel(
+  data  = sheets,
+  path  = tempfile(fileext = ".xlsx"),
+  title = "Bearing Diameter Capability Study"
 )
-
-ggplot(doe_res, aes(x = run, y = residual, fill = residual)) +
-  geom_col(width = 0.7) +
-  geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
-  theme$theme_iqr() +
-  theme$scale_fill_diverging(midpoint = 0, name = "Residual") +
-  labs(title = "DOE residuals (diverging palette)")
 ```
 
-## Scenario 5 -- DOE main effects with paired outlines (discrete, paired)
+The exporter supports per-call style overrides via
+`$set_excel_theme(...)` and a `$reset_excel_theme()` restore.
 
-Main-effects plots group runs by factor level. The paired style keeps
-the level color consistent across the fill (bar) and the outline /
-point:
+# 7. Utility Functions
 
-```{r scenario-doe-main}
-theme <- IqrTheme$new("tech")
+The package exports a small set of dependency-free utilities that
+downstream packages build on.
 
-main_eff <- data.frame(
-  level = factor(c("Low", "Center", "High"),
-                 levels = c("Low", "Center", "High")),
-  mean  = c(8.2, 10.1, 11.8)
-)
+## 7.1 Validation
 
-ggplot(main_eff, aes(x = level, y = mean, fill = level)) +
-  geom_col(color = "black", linewidth = 0.4, width = 0.6) +
-  theme$theme_iqr() +
-  theme$scale_fill_iqr(style = "paired") +
-  labs(title = "DOE main effects (discrete, paired)",
-       x = "Factor level", y = "Mean response")
+- `validate_metadata(metadata)` — ensures all six 4M1E slots exist.
+- `validate_inputs(data, required_cols)` — checks data.frame-ness and
+  required columns.
+- `validate_output_dir(path, create = TRUE)` — ensures a writable
+  directory, creating it if needed.
+
+## 7.2 Formatting
+
+- `format_p_value(p, context = "table"|"plot")` — significance stars
+  for tables, `<0.001` notation for plots.
+- `format_scientific(x, digits = 3)` — scientific notation below
+  0.001, fixed notation otherwise.
+
+```{r format-utils}
+format_p_value(c(0.0001, 0.003, 0.04, 0.08, 0.5))
+format_p_value(c(0.0001, 0.003, 0.04, 0.08, 0.5), context = "plot")
+format_scientific(c(0.00005, 0.042, 1234.5))
 ```
 
-## Scenario 6 -- Multi-response heatmap (sequential)
+## 7.3 Sigma and tolerance helpers
 
-When a DOE or capability study reports a continuous response across a
-two-dimensional grid, the sequential gradient gives a single
-perceptually uniform axis:
+- `moving_range_stats(data, m_span)` — moving ranges, their mean and
+  median, padded with `m_span - 1` NAs. Used by I-MR charts.
+- `safe_tolerance(usl, lsl)` — returns `usl - lsl` or `NULL` when
+  either limit is missing.
 
-```{r scenario-heatmap}
-theme <- IqrTheme$new("workbench")
-
-grid <- expand.grid(x = seq(0, 1, 0.05), y = seq(0, 1, 0.05))
-grid$response <- with(grid, 30 + 10 * x - 8 * y + 4 * x * y)
-
-ggplot(grid, aes(x = x, y = y, fill = response)) +
-  geom_raster() +
-  theme$theme_iqr() +
-  theme$scale_fill_sequential(name = "Response") +
-  labs(title = "Response surface heatmap (sequential)")
+```{r sigma-utils}
+moving_range_stats(c(10.2, 10.3, 10.1, 10.5, 10.2), m_span = 2)
+safe_tolerance(10.05, 9.95)
+safe_tolerance(10.05, NULL)
 ```
 
-# Internationalization
+## 7.4 IDs and config
 
-Two locales are supported. `iqr_t` looks up a message key and
-interpolates named placeholders.
+- `generate_anon_id(n, k = 8, prefix = "ID")` — unique randomised
+  identifiers for anonymising part/subject IDs.
+- `get_config(key, default)` — retrieves a value from the
+  `iQualityR.config` option list.
+- `create_task_registry(tasks, ...)` — builds the name-to-class map
+  described in Section 3.3.
+- `null_to_na(x)` — `NULL` to `NA` coercion for data-frame binding.
+
+```{r id-utils}
+head(generate_anon_id(6, k = 6))
+```
+
+# 8. Internationalization — iqr_t, iqr_locale, iqr_set_locale
+
+The framework ships a real i18n layer with on-disk CSV dictionaries and
+`{placeholder}` interpolation. Two locales are supported out of the
+box: `en-US` and `zh-CN`.
 
 ```{r i18n}
 iqr_t("common.missing_required_column", locale = "en-US", column = "X")
 iqr_t("common.missing_required_column", locale = "zh-CN", column = "X")
 ```
 
-The active locale can be set globally with `iqr_set_locale`:
+Set the global locale once and every downstream `iqr_t()` call picks
+it up:
 
-```{r set-locale}
+```{r i18n-set}
 iqr_set_locale("zh-CN")
 iqr_t("common.missing_required_column", column = "MeasurementValue")
 iqr_set_locale("en-US")
 ```
 
-# Utility functions
+Dictionaries live in `inst/i18n/<locale>.csv` and are cached in an
+environment after first load, so repeated lookups are fast. Extending
+to a new locale is a matter of adding a CSV file — no code changes.
 
-Common formatting and validation helpers:
+# 9. Best Practices for Extending .core
 
-- `format_p_value` summarizes statistical significance
-- `moving_range_stats` computes moving ranges and their mean/median
-- `safe_tolerance` returns the span `usl - lsl`, or `NULL` if missing
-- `generate_anon_id` produces unique randomized identifiers
-- `validate_metadata`, `validate_inputs`, `validate_output_dir`
-  ensure data structure
+## 9.1 Subclassing checklist
 
-```{r utils}
-format_p_value(c(0.0001, 0.005, 0.05, 0.1, 0.5))
-moving_range_stats(c(10.2, 10.3, 10.1, 10.5, 10.2), m_span = 2)
-safe_tolerance(10, 5)
-safe_tolerance(10, NULL)
-head(generate_anon_id(6, k = 6))
-```
+When building a new domain task (e.g. `IqrFooTask`):
 
-# Excel export
+1. **Plan.** Subclass `IqrPlanBase`. Add domain-specific fields (e.g.
+   `lsl`, `usl`, `target` for capability). Override `validate()` to
+   check domain constraints; always call `super$validate()` first.
+2. **Analyzer.** Subclass `IqrAnalyzerBase`. Implement
+   `private$.run_logic(dt)`. Use `self$set_statistic()`,
+   `self$set_diagnostic()`, `self$set_datatable()`,
+   `self$set_raw_output()` to populate the 4-slot container.
+3. **Plotter.** Subclass `IqrPlotterBase`. Implement
+   `render(results, theme_obj, type, ...)`. Use the `.pal_*` and
+   `.scale_*` toolbox — never call `IqrTheme` internals directly.
+4. **Task.** Subclass `IqrTaskBase`. In `initialize()`, construct the
+   plan, analyzer, plotter, and reporter. Wire `$compute()`,
+   `$summary()`, `$plot()`, `$report()` to the executor trio.
+5. **Reporter.** Register a task template via
+   `reporter$register(task_tag, rmd_template, excel_generator)`. Ship
+   the Rmd template at `inst/templates/<task_tag>_template.Rmd`.
 
-`ExcelExporter` writes themed multi-sheet workbooks:
+## 9.2 Result-protocol discipline
 
-```{r excel-export, eval = TRUE}
-theme <- IqrTheme$new("academic")
-exporter <- ExcelExporter$new(theme$config)
+- Always populate the 4-slot container — downstream plotters and
+  reporters rely on predictable names.
+- Use `app_result()` (not a bare list) when crossing the R-to-frontend
+  boundary. The 9-slot envelope is the API contract.
+- Never put non-serialisable objects (e.g. R6 instances, connections)
+  in `data` / `tables` / `metadata` — they break JSON serialisation.
+  Use `raw_output` for model objects.
 
-sheets <- list(
-  Summary = data.frame(
-    statistic = c("mean", "sd", "n"),
-    value = c(10.1, 0.4, 50)
-  ),
-  Raw = data.frame(run = 1:5, value = rnorm(5, 10, 0.5))
-)
+## 9.3 Theme discipline
 
-out <- tempfile(fileext = ".xlsx")
-exporter$export_excel(sheets, path = out, title = "Analysis Report")
-file.exists(out)
-```
+- Resolve the theme once, at task construction. Pass `theme_obj` down
+  to plotters; do not re-resolve inside `render()`.
+- Use the toolbox, not `IqrTheme` internals. If the toolbox is missing
+  a helper you need, add it to `IqrPlotterBase` rather than bypassing
+  it in a subclass.
 
-# Architecture notes
+# 10. References
 
-- All base classes are R6 reference classes. Subclasses typically
-  override a small set of private methods (e.g. `.run_logic`) and
-  inherit the rest.
-- The theme system follows a three-layer architecture:
-  `ThemeConfig` (palette storage and resolution) -> `PlotTheme`
-  (ggplot2 scale and theme factories) -> `IqrTheme` (unified facade).
-  Downstream code only touches `IqrTheme`.
-- The package ships **ten theme presets**: three built-in
-  (`academic` / `workbench` / `tech`) and seven external
-  (`economist` / `wsj` / `gdocs` / `tufte` / `few` / `solarized` /
-  `prism`). Each preset is a full configuration covering UI colors
-  and all four data palette classes; external presets additionally
-  layer the source publication's ggplot2 theme function on top.
-- `IqrPlotterBase` exposes a private-by-convention toolbox
-  (`.pal_*`, `.scale_*`) so downstream plotters stay decoupled from
-  the theme implementation. Switching the active theme at the task
-  level recolors every plot consistently.
-- Dependencies are kept minimal: R6, ggplot2, grDevices, openxlsx, and
-  rmarkdown are the only heavy imports. Optional packages
-  (`systemfonts`, `sysfonts`, `showtext`, `ggthemes`, `ggprism`)
-  provide on-demand CJK font handling and external theme presets.
-- Result objects are plain lists so they serialize to JSON, Excel,
-  or R Markdown without friction.
+- Chambers, W. (2019). *Object-Oriented Programming, Functional
+  Programming, and R*. Statistical Science.
+- ICH (2005). *Q9 Quality Risk Management*.
+- ISO 9001 (2015). *Quality Management Systems — Requirements*.
+- Ishikawa, K. (1985). *What is Total Quality Control? The Japanese
+  Way*. Prentice-Hall.
+- Montgomery, D. C. (2013). *Statistical Quality Control* (7th ed.).
+  Wiley.
+- WCAG 2.x (2018). *Web Content Accessibility Guidelines*.
+  https://www.w3.org/TR/WCAG21/
+
+*See `vignette("theme-system", package = "iQualityR.core")` for the
+complete theme and color pipeline reference, and
+`vignette("iQualityR", package = "iQualityR")` for the framework-level
+methodology overview.*
