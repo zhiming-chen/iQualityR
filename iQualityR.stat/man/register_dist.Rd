@@ -42,9 +42,15 @@ Invisible NULL
 Add a new distribution to the registry
 }
 \examples{
-\dontrun{
-register_dist("my_dist", d = function(x, p) ..., p = ..., q = ...,
-              defaults = list(...), is_discrete = FALSE,
-              description = "My custom distribution")
-}
+# Register a triangular-shaped custom distribution (then unregister it)
+my_d <- function(x, p) pmax(0, 1 - abs(x - p$center) / p$half_width)
+my_p <- function(q, p) pmax(0, pmin(1, 0.5 + (q - p$center) / p$half_width))
+my_q <- function(p_vec, p) p$center + (p_vec - 0.5) * p$half_width
+register_dist("my_tri",
+              d_func = my_d, p_func = my_p, q_func = my_q,
+              defaults = list(center = 0, half_width = 1),
+              is_discrete = FALSE, support = "R",
+              description = "Custom triangular distribution")
+list_available_dists()
+unregister_dist("my_tri")
 }

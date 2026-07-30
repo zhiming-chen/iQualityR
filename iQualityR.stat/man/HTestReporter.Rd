@@ -4,11 +4,31 @@
 \alias{HTestReporter}
 \title{HTestReporter: Hypothesis Test Report Output}
 \description{
-Output test results as console report, data frame, or Excel file.
+Convert a \code{stat_result} from \code{HTestAnalyzer} into user-facing outputs:
+console text, a data frame, or a themed Excel workbook.
+
+\strong{Contract 2 signature} (fixed across all L2 Reporters in .stat):
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{$report(result, format = c("data.frame","console","excel"),
+        path = NULL, audience = "manager")
+}\if{html}{\out{</div>}}
+
+Excel export uses \code{iQualityR.core::ExcelExporter} (soft dependency via
+\code{requireNamespace}) so the reporter still works in environments that only
+need console / data.frame output.
+}
+\section{Public fields}{
+\if{html}{\out{<div class="r6-fields">}}
+\describe{
+\item{\code{theme_obj}}{Active \code{IqrTheme} for Excel styling (NULL = default).}
+}
+\if{html}{\out{</div>}}
 }
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
+\item \href{#method-HTestReporter-new}{\code{HTestReporter$new()}}
+\item \href{#method-HTestReporter-report}{\code{HTestReporter$report()}}
 \item \href{#method-HTestReporter-print_console}{\code{HTestReporter$print_console()}}
 \item \href{#method-HTestReporter-to_dataframe}{\code{HTestReporter$to_dataframe()}}
 \item \href{#method-HTestReporter-export_excel}{\code{HTestReporter$export_excel()}}
@@ -16,10 +36,68 @@ Output test results as console report, data frame, or Excel file.
 }
 }
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestReporter-new"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestReporter-new}{}}}
+\subsection{Method \code{new()}}{
+Initialize with a theme
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestReporter$new(theme = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme}}{Theme name or \code{IqrTheme} object. NULL is allowed -- Excel
+export will then fall back to the default ThemeConfig.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestReporter-report"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestReporter-report}{}}}
+\subsection{Method \code{report()}}{
+Unified report entry point (Contract 2)
+
+Dispatches on \code{format}:
+\itemize{
+\item \code{"console"}: prints a human-readable summary to stdout.
+\item \code{"data.frame"}: returns a tidy one-row data frame.
+\item \code{"excel"}: writes a themed xlsx file via \code{ExcelExporter}.
+}
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestReporter$report(
+  result,
+  format = c("data.frame", "console", "excel"),
+  path = NULL,
+  audience = "manager"
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
+
+\item{\code{format}}{Output format: \code{"data.frame"} (default), \code{"console"}, or \code{"excel"}.}
+
+\item{\code{path}}{File path for \code{format = "excel"}. Auto-timestamped if NULL.}
+
+\item{\code{audience}}{Audience level forwarded to the interpreter when
+\code{format = "console"}: \code{"manager"}, \code{"technical"}, or \code{"client"}.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+For \code{"data.frame"}: a data frame. For \code{"console"}/\code{"excel"}:
+invisible(NULL) (side-effect output).
+}
+}
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestReporter-print_console"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestReporter-print_console}{}}}
 \subsection{Method \code{print_console()}}{
-Print console report
+Print a console report
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestReporter$print_console(
   result,
@@ -32,22 +110,26 @@ Print console report
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result}
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
 
-\item{\code{interpret}}{Whether to output interpretation}
+\item{\code{interpret}}{Logical; whether to append a plain-language interpretation.}
 
-\item{\code{interpreter}}{StatInterpreter instance}
+\item{\code{interpreter}}{Optional \code{StatInterpreter} instance. If NULL and
+\code{interpret = TRUE}, a transient \code{StatInterpreter} is created.}
 
-\item{\code{audience}}{Audience level}
+\item{\code{audience}}{Audience level for the interpretation.}
 }
 \if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Invisible NULL (writes to stdout).
 }
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestReporter-to_dataframe"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestReporter-to_dataframe}{}}}
 \subsection{Method \code{to_dataframe()}}{
-Convert to data frame
+Convert a stat_result to a tidy data frame
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestReporter$to_dataframe(result)}\if{html}{\out{</div>}}
 }
@@ -55,19 +137,19 @@ Convert to data frame
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result}
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Data frame
+One-row data frame with test metadata + estimates.
 }
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestReporter-export_excel"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestReporter-export_excel}{}}}
 \subsection{Method \code{export_excel()}}{
-Export to Excel
+Export to a themed Excel workbook
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestReporter$export_excel(
   result,
@@ -80,15 +162,20 @@ Export to Excel
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result}
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
 
-\item{\code{path}}{Output path}
+\item{\code{path}}{Output file path. Auto-timestamped when NULL.}
 
-\item{\code{excel_exporter}}{ExcelExporter instance}
+\item{\code{excel_exporter}}{Optional pre-built \code{ExcelExporter} instance.
+When NULL, one is built on demand from the reporter's theme (or the
+default ThemeConfig if no theme is set).}
 
-\item{\code{audience}}{Audience level}
+\item{\code{audience}}{Audience level (reserved for future interpretation sheet).}
 }
 \if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Invisible path of the written file.
 }
 }
 \if{html}{\out{<hr>}}

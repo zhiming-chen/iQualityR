@@ -20,10 +20,11 @@ Fits Johnson distribution family to data, finding best transformation to normali
 Supports SU (unbounded), SB (bounded), SL (lognormal) three types.
 }
 \examples{
-\dontrun{
-set.seed(123)
-x <- rexp(100, rate = 0.5)
-result <- johnson_transform(x)
-result$type
+# Johnson transform requires the SuppDists Suggests package
+if (requireNamespace("SuppDists", quietly = TRUE)) {
+  set.seed(123)
+  x <- rexp(100, rate = 0.5)
+  result <- johnson_transform(x)
+  result$type
 }
 }

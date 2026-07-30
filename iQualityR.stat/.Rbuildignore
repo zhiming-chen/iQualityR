@@ -8,6 +8,7 @@
 ^\.trae$
 ^temp$
 ^temp_reports$
+^temp_.*\.R$
 ^vignettes/.*\.html$
 ^.*_files$
 ^.*\.docx$
@@ -17,3 +18,4 @@
 ^doc$
 ^Meta$
 ^\.\.Rcheck$
+^STAT_ANALYSIS_PLAN\.md$

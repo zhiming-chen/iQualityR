@@ -2,7 +2,33 @@
 % Please edit documentation in R/RcppExports.R
 \name{get_c4_prime_cpp}
 \alias{get_c4_prime_cpp}
-\title{Calculate c4 prime Constant using Monte Carlo Simulation}
+\title{Calculate c4' Constant via Monte Carlo Simulation}
+\usage{
+get_c4_prime_cpp(n, B = 1000000L)
+}
+\arguments{
+\item{n}{Sample size (integer, >= 2).}
+
+\item{B}{Number of Monte Carlo iterations (default 1,000,000).}
+}
+\value{
+Numeric scalar (double) — the c4' bias correction factor.
+Returns \code{NA_real_} for \code{n < 2}, and \code{sqrt(2/pi)} for \code{n = 2}.
+}
 \description{
-Calculate c4 prime Constant using Monte Carlo Simulation
+Bias correction factor for MSSD (Mean Squared Successive Difference)
+based sigma estimation. Returns the expected value of
+\eqn{\sqrt{\sum (x_i - x_{i-1})^2 / (2(n-1))}} for standard normal
+samples, used to unbias \code{sigma_estimate(method = "mssd")}.
+}
+\examples{
+# c4' for small samples (small B for speed in examples;
+# increase B for production accuracy)
+set.seed(123)
+get_c4_prime_cpp(n = 5, B = 1000)
+get_c4_prime_cpp(n = 10, B = 1000)
+
+# n = 2 has closed form sqrt(2/pi) — no simulation needed
+get_c4_prime_cpp(n = 2)  # approx 0.7978846
+sqrt(2 / pi)
 }

@@ -4,33 +4,31 @@
 \alias{htest_plot}
 \title{Convenience hypothesis test plotting function}
 \usage{
-htest_plot(
-  test_type,
-  ...,
-  plot_type = "auto",
-  show_table = TRUE,
-  theme = "academic"
-)
+htest_plot(result, plot_type = "auto", show_table = FALSE, theme = "academic")
 }
 \arguments{
-\item{test_type}{Test type}
+\item{result}{A \code{stat_result} from \code{\link[=htest_run]{htest_run()}} or \code{HTestAnalyzer}.}
 
-\item{...}{Test parameters}
+\item{plot_type}{One of \code{"auto"}, \code{"curve"}, \code{"box"}, \code{"combined"}.}
 
-\item{plot_type}{Plot type}
+\item{show_table}{Logical; overlay a stats table on box plots.}
 
-\item{show_table}{Whether to display statistics table}
-
-\item{theme}{Theme}
+\item{theme}{Theme name or \code{IqrTheme} object.}
 }
 \value{
-ggplot2 or patchwork object
+A \code{ggplot} or \code{patchwork} object.
 }
 \description{
-Directly plot hypothesis test graphics without creating R6 object.
+Plot a \code{stat_result} returned by \code{\link[=htest_run]{htest_run()}} (or by \code{HTestAnalyzer}
+directly). Delegates to \code{HTestPlotter$plot()} with the unified Contract 2
+signature.
 }
 \examples{
-set.seed(123)
-x <- rnorm(30, mean = 102, sd = 5)
-htest_plot("t_test_1s", x = x, mu = 100, plot_type = "combined")
+# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  set.seed(123)
+  x <- rnorm(30, mean = 102, sd = 5)
+  result <- htest_run("t_test_1s", x = x, mu = 100)
+  htest_plot(result, plot_type = "combined")
+}
 }

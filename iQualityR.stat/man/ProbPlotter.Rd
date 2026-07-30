@@ -7,11 +7,39 @@
 Responsible for generating PDF/CDF plots, shaded areas, label annotations, etc.
 Uses ggrepel to avoid label overlap, reuses IqrTheme for consistent visual style.
 }
+\section{Public fields}{
+\if{html}{\out{<div class="r6-fields">}}
+\describe{
+\item{\code{theme_obj}}{Active IqrTheme object used to style plots.}
+}
+\if{html}{\out{</div>}}
+}
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
+\item \href{#method-ProbPlotter-new}{\code{ProbPlotter$new()}}
 \item \href{#method-ProbPlotter-render}{\code{ProbPlotter$render()}}
 \item \href{#method-ProbPlotter-clone}{\code{ProbPlotter$clone()}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-ProbPlotter-new"></a>}}
+\if{latex}{\out{\hypertarget{method-ProbPlotter-new}{}}}
+\subsection{Method \code{new()}}{
+Initialize the plotter with a theme
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{ProbPlotter$new(theme = "academic")}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{theme}}{Theme name (e.g. \code{"academic"}) or an \code{IqrTheme} object.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Invisible self.
 }
 }
 \if{html}{\out{<hr>}}
@@ -20,7 +48,14 @@ Uses ggrepel to avoid label overlap, reuses IqrTheme for consistent visual style
 \subsection{Method \code{render()}}{
 Render plot
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{ProbPlotter$render(nodes, calc_results, facet, show_cdf, mode, theme_obj)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{ProbPlotter$render(
+  nodes,
+  calc_results,
+  facet,
+  show_cdf,
+  mode,
+  theme_obj = NULL
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -36,7 +71,7 @@ Render plot
 
 \item{\code{mode}}{Calculation mode}
 
-\item{\code{theme_obj}}{IqrTheme object}
+\item{\code{theme_obj}}{IqrTheme object (overrides \code{self$theme_obj})}
 }
 \if{html}{\out{</div>}}
 }

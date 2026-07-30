@@ -4,12 +4,14 @@
 \alias{test_heteroscedasticity}
 \title{Heteroscedasticity test}
 \usage{
-test_heteroscedasticity(model, test = c("bp", "ncv", "white"))
+test_heteroscedasticity(model, test = c("bp", "ncv", "white"), alpha = 0.05)
 }
 \arguments{
 \item{model}{lm object}
 
 \item{test}{Test method ("bp" Breusch-Pagan, "ncv" Non-constant Variance, "white" White test)}
+
+\item{alpha}{Significance level (default 0.05)}
 }
 \value{
 List containing statistic (test statistic), p.value, is_heteroscedastic

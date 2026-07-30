@@ -4,12 +4,14 @@
 \alias{test_residual_normality}
 \title{Residual normality test}
 \usage{
-test_residual_normality(model, method = "auto")
+test_residual_normality(model, method = "auto", alpha = 0.05)
 }
 \arguments{
 \item{model}{lm object}
 
 \item{method}{Test method ("auto", "sw", "ad", "lillie", "cvm", "sf")}
+
+\item{alpha}{Significance level (default 0.05)}
 }
 \value{
 List of normality test results

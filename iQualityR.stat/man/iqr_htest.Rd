@@ -4,7 +4,9 @@
 \alias{iqr_htest}
 \title{iqr_htest: Hypothesis test entry class}
 \description{
-Top-level interface for iQualityR hypothesis test module, coordinating computation, plotting, reporting, and interpretation.
+Top-level L3 integrator for the iQualityR hypothesis test module, coordinating
+computation (L1 \code{HTestAnalyzer}), plotting (L2 \code{HTestPlotter}), reporting
+(L2 \code{HTestReporter}), and interpretation (\code{StatInterpreter}).
 
 \strong{Supported test types}:
 \itemize{
@@ -18,114 +20,43 @@ Top-level interface for iQualityR hypothesis test module, coordinating computati
 \item \code{chisq_test}: Chi-square test
 }
 
-\strong{Output system}:
-\itemize{
-\item Calculation: Test statistic, P-value, confidence interval
-\item Graphics: Rejection region plot, box plot, combined plot
-\item Interpretation: Manager/technical/client three versions
-\item Report: Console, data frame, Excel
-}
-
-\strong{Dual interface design}:
+\strong{Dual interface design} (per Contract 2):
 \itemize{
 \item R6 class interface: \code{iqr_htest$new()$run()$plot()} (suitable for chaining)
-\item Convenience function interface: \code{htest_run()}, \code{htest_plot()} (suitable for one-time use)
+\item Convenience function interface: \code{htest_run()}, \code{htest_plot()},
+\code{htest_interpret()}, \code{htest_report()} (suitable for one-time use)
 }
 }
 \examples{
-\dontrun{
-# === R6 class interface ===
-# One-sample t test
+# One-sample t-test: does mean of x differ from 100?
 set.seed(123)
 x <- rnorm(30, mean = 102, sd = 5)
 htest <- iqr_htest$new()
 htest$run("t_test_1s", x = x, mu = 100, alternative = "two.sided")
-htest$plot()
 htest$interpret(audience = "manager")
+result <- htest_run("t_test_1s", x = x, mu = 100)
 
-# One-sample Z test (sigma known)
-htest$run("z_test_1s", x = x, mu = 100, sigma = 5)
-
-# Two-sample t test
-y <- rnorm(25, mean = 98, sd = 6)
-htest$run("t_test_2s", x = x, y = y)
-
-# === Convenience function interface ===
-htest_run("t_test_1s", x = x, mu = 100)
+# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  htest$plot()
+  htest_plot(result, plot_type = "combined")
 }
 
-
-## ------------------------------------------------
-## Method `iqr_htest$run`
-## ------------------------------------------------
-
-\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$run("z_test_1s", x = x, mu = 100, sigma = 5, plot = TRUE)
-}
-
-## ------------------------------------------------
-## Method `iqr_htest$plot`
-## ------------------------------------------------
-
-\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$plot(plot_type = "combined")
-htest$plot(plot_type = "curve")
-}
-
-## ------------------------------------------------
-## Method `iqr_htest$interpret`
-## ------------------------------------------------
-
-\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$interpret(audience = "manager")
-}
-
-## ------------------------------------------------
-## Method `iqr_htest$report`
-## ------------------------------------------------
-
-\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-df <- htest$report()
-}
-
-## ------------------------------------------------
-## Method `iqr_htest$report_excel`
-## ------------------------------------------------
-
-\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$report_excel("test_report.xlsx")
-}
-
-## ------------------------------------------------
-## Method `iqr_htest$analyze`
-## ------------------------------------------------
-
-\dontrun{
-htest$analyze("t_test_1s", x = x, mu = 100,
-              plot_type = "combined", audience = "manager")
-}
 }
 \section{Public fields}{
 \if{html}{\out{<div class="r6-fields">}}
 \describe{
-\item{\code{last_results}}{Cached computation results}
+\item{\code{last_results}}{Cached computation result (a \code{stat_result} S3 object).}
 
-\item{\code{last_data}}{Cached sample data (needed for plotting)}
+\item{\code{analyzer}}{L1 computation engine (\code{HTestAnalyzer}).}
 
-\item{\code{analyzer}}{Computation engine}
+\item{\code{plotter}}{L2 plotting engine (\code{HTestPlotter}).}
 
-\item{\code{plotter}}{Plotting engine}
+\item{\code{reporter}}{L2 reporting engine (\code{HTestReporter}).}
 
-\item{\code{reporter}}{Report engine}
+\item{\code{interpreter}}{L2 interpreter (\code{StatInterpreter}).}
 
-\item{\code{interpreter}}{Interpreter engine}
-
-\item{\code{theme_obj}}{Theme object}
+\item{\code{theme_obj}}{Active \code{IqrTheme} object.}
 }
 \if{html}{\out{</div>}}
 }
@@ -137,7 +68,6 @@ htest$analyze("t_test_1s", x = x, mu = 100,
 \item \href{#method-iqr_htest-plot}{\code{iqr_htest$plot()}}
 \item \href{#method-iqr_htest-interpret}{\code{iqr_htest$interpret()}}
 \item \href{#method-iqr_htest-report}{\code{iqr_htest$report()}}
-\item \href{#method-iqr_htest-report_excel}{\code{iqr_htest$report_excel()}}
 \item \href{#method-iqr_htest-analyze}{\code{iqr_htest$analyze()}}
 \item \href{#method-iqr_htest-set_theme}{\code{iqr_htest$set_theme()}}
 \item \href{#method-iqr_htest-clone}{\code{iqr_htest$clone()}}
@@ -147,7 +77,7 @@ htest$analyze("t_test_1s", x = x, mu = 100,
 \if{html}{\out{<a id="method-iqr_htest-new"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-new}{}}}
 \subsection{Method \code{new()}}{
-Initialize hypothesis test module
+Initialize the hypothesis test module
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{iqr_htest$new(theme = "academic", ...)}\if{html}{\out{</div>}}
 }
@@ -155,21 +85,25 @@ Initialize hypothesis test module
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{theme}}{Theme name or IqrTheme object}
+\item{\code{theme}}{Theme name or \code{IqrTheme} object}
 
-\item{\code{...}}{Other parameters}
+\item{\code{...}}{Forwarded to \code{IqrTheme$new()} when \code{theme} is a string.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-iqr_htest object
+An \code{iqr_htest} object (invisibly).
 }
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-iqr_htest-run"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-run}{}}}
 \subsection{Method \code{run()}}{
-Execute hypothesis test
+Execute a hypothesis test
+
+Runs the L1 analyzer and caches the \code{stat_result} on \code{self$last_results}.
+Optionally prints a console report and/or plots in one call (for
+convenience in interactive use).
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{iqr_htest$run(
   test_type,
@@ -184,76 +118,54 @@ Execute hypothesis test
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{test_type}}{Test type}
+\item{\code{test_type}}{Test type code (see class description).}
 
-\item{\code{...}}{Test parameters}
+\item{\code{...}}{Test parameters forwarded to \code{HTestAnalyzer$analyze()}.}
 
-\item{\code{plot}}{Whether to plot}
+\item{\code{plot}}{Logical; print a plot immediately after running.}
 
-\item{\code{plot_type}}{Plot type}
+\item{\code{plot_type}}{Plot type forwarded to \verb{$plot()}.}
 
-\item{\code{interpret}}{Whether to output interpretation}
+\item{\code{interpret}}{Logical; print an interpretation immediately.}
 
-\item{\code{audience}}{Audience level}
+\item{\code{audience}}{Audience level for the interpretation.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Invisible self-reference
+Invisible self (for chaining). The \code{stat_result} is stored on
+\code{self$last_results}.
 }
-\subsection{Examples}{
-\if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$run("z_test_1s", x = x, mu = 100, sigma = 5, plot = TRUE)
-}
-}
-\if{html}{\out{</div>}}
-
-}
-
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-iqr_htest-plot"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-plot}{}}}
 \subsection{Method \code{plot()}}{
-Plot graphics
+Plot the last result (Contract 2 signature)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$plot(plot_type = "auto", show_table = TRUE, theme_obj = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$plot(plot_type = "auto", show_table = FALSE, theme_obj = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{plot_type}}{Plot type ("auto", "curve", "box", "combined")}
+\item{\code{plot_type}}{One of \code{"auto"}, \code{"curve"}, \code{"box"}, \code{"combined"}.}
 
-\item{\code{show_table}}{Whether to display statistics table}
+\item{\code{show_table}}{Logical; overlay a stats table on box plots.}
 
-\item{\code{theme_obj}}{Theme object}
+\item{\code{theme_obj}}{Optional \code{IqrTheme} overriding the module-level theme.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-ggplot2 or patchwork object
+A \code{ggplot} or \code{patchwork} object.
 }
-\subsection{Examples}{
-\if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$plot(plot_type = "combined")
-htest$plot(plot_type = "curve")
-}
-}
-\if{html}{\out{</div>}}
-
-}
-
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-iqr_htest-interpret"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-interpret}{}}}
 \subsection{Method \code{interpret()}}{
-Interpret test results
+Interpret the last result
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{iqr_htest$interpret(audience = "manager", context = NULL)}\if{html}{\out{</div>}}
 }
@@ -261,89 +173,52 @@ Interpret test results
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{audience}}{Audience level ("manager", "technical", "client")}
+\item{\code{audience}}{Audience level (\code{"manager"}, \code{"technical"}, \code{"client"}).}
 
-\item{\code{context}}{Business context description}
+\item{\code{context}}{Optional business context string.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Interpretation string
+Interpretation string (invisibly; also cat'd to stdout).
 }
-\subsection{Examples}{
-\if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$interpret(audience = "manager")
-}
-}
-\if{html}{\out{</div>}}
-
-}
-
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-iqr_htest-report"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-report}{}}}
 \subsection{Method \code{report()}}{
-Structured data export
+Report the last result (Contract 2 signature)
+
+Unified entry point: dispatches to console / data.frame / excel output.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$report()}\if{html}{\out{</div>}}
-}
-
-\subsection{Returns}{
-Data frame
-}
-\subsection{Examples}{
-\if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-df <- htest$report()
-}
-}
-\if{html}{\out{</div>}}
-
-}
-
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-iqr_htest-report_excel"></a>}}
-\if{latex}{\out{\hypertarget{method-iqr_htest-report_excel}{}}}
-\subsection{Method \code{report_excel()}}{
-Export to Excel report
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$report_excel(path = NULL, audience = "manager")}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$report(
+  format = c("data.frame", "console", "excel"),
+  path = NULL,
+  audience = "manager"
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{path}}{Output path}
+\item{\code{format}}{Output format: \code{"data.frame"} (default), \code{"console"}, \code{"excel"}.}
 
-\item{\code{audience}}{Audience level}
+\item{\code{path}}{File path for \code{format = "excel"}. Auto-timestamped if NULL.}
+
+\item{\code{audience}}{Audience level for console interpretation.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Invisible self-reference
+For \code{"data.frame"}: a data frame. For \code{"console"}/\code{"excel"}:
+invisible NULL.
 }
-\subsection{Examples}{
-\if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-htest$run("t_test_1s", x = x, mu = 100)
-htest$report_excel("test_report.xlsx")
-}
-}
-\if{html}{\out{</div>}}
-
-}
-
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-iqr_htest-analyze"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-analyze}{}}}
 \subsection{Method \code{analyze()}}{
-One-click analysis (calculation + plotting + interpretation)
+One-click analysis (run + plot + interpret)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{iqr_htest$analyze(
   test_type,
@@ -357,53 +232,40 @@ One-click analysis (calculation + plotting + interpretation)
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{test_type}}{Test type}
+\item{\code{test_type}}{Test type code.}
 
-\item{\code{...}}{Test parameters}
+\item{\code{...}}{Test parameters.}
 
-\item{\code{plot_type}}{Plot type}
+\item{\code{plot_type}}{Plot type.}
 
-\item{\code{audience}}{Audience level}
+\item{\code{audience}}{Audience level.}
 
-\item{\code{context}}{Business context}
+\item{\code{context}}{Optional business context.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-ggplot2 or patchwork object
+Invisible self (for chaining).
 }
-\subsection{Examples}{
-\if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-htest$analyze("t_test_1s", x = x, mu = 100,
-              plot_type = "combined", audience = "manager")
-}
-}
-\if{html}{\out{</div>}}
-
-}
-
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-iqr_htest-set_theme"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_htest-set_theme}{}}}
 \subsection{Method \code{set_theme()}}{
-Set theme
+Set / replace the active theme
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$set_theme(theme_style = NULL, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{iqr_htest$set_theme(theme_style = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{theme_style}}{Theme name or IqrTheme object}
-
-\item{\code{...}}{Other parameters}
+\item{\code{theme_style}}{Theme name or \code{IqrTheme} object.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Invisible self-reference
+Invisible self.
 }
 }
 \if{html}{\out{<hr>}}

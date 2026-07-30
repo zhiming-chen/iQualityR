@@ -53,7 +53,8 @@ Automatically plot based on test results
   x,
   result = NULL,
   plot_type = "auto",
-  add_confidence = FALSE
+  add_confidence = FALSE,
+  theme_obj = NULL
 )}\if{html}{\out{</div>}}
 }
 
@@ -67,6 +68,8 @@ Automatically plot based on test results
 \item{\code{plot_type}}{Plot type ("auto", "hist", "qq", "pp", "combined")}
 
 \item{\code{add_confidence}}{Whether to add confidence band for QQ plot}
+
+\item{\code{theme_obj}}{Optional \code{IqrTheme} overriding \code{self$theme_obj}.}
 }
 \if{html}{\out{</div>}}
 }

@@ -41,28 +41,13 @@
 #' @importFrom stats mad cooks.distance hatvalues fitted.values model.matrix
 #' @importFrom nortest ad.test cvm.test lillie.test pearson.test sf.test
 #' @importFrom moments skewness kurtosis
-#' @importFrom dplyr mutate select filter arrange summarise group_by ungroup
-#' @importFrom dplyr desc bind_rows bind_cols across everything if_else case_when
-#' @importFrom dplyr n n_distinct pull distinct count left_join right_join
-#' @importFrom dplyr inner_join full_join semi_join anti_join
-#' @importFrom magrittr %>%
 #' @importFrom patchwork plot_annotation wrap_plots wrap_elements plot_layout area
 #' @importFrom ggrepel geom_text_repel geom_label_repel
 #' @importFrom openxlsx createWorkbook addWorksheet writeData saveWorkbook
 #' @importFrom openxlsx createStyle addStyle
-#' @importFrom rlang %||% abort warn inform sym syms ensym enexpr quo quos
-#' @importFrom rlang .data .env caller_env global_env is_null is_scalar_atomic
-#' @importFrom rlang is_atomic is_character is_integer is_double
-#' @importFrom rlang is_logical is_bool is_list is_function is_formula
-#' @importFrom data.table as.data.table data.table setDT setDF fread fwrite
-#' @importFrom data.table CJ setkey setkeyv setorder setorderv dcast melt
-#' @importFrom data.table setnames setcolorder copy transpose uniqueN
-#' @importFrom data.table frank foverlaps tstrsplit rbindlist setDTthreads
-#' @importFrom data.table between fifelse
 #' @importFrom gridExtra tableGrob ttheme_default grid.arrange
 #' @importFrom grid unit viewport grid.text grid.rect grid.lines grid.points
 #' @importFrom utils head tail str capture.output modifyList
-#' @importFrom iQualityR.plot base_plot layers_boxplot layers_histogram_density
 #' @importFrom iQualityR.core IqrTheme iqr_t
 #' @name iQualityR.stat-package
 #' @keywords internal

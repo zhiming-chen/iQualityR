@@ -4,8 +4,9 @@
 \alias{HTestAnalyzer}
 \title{HTestAnalyzer: Hypothesis Test Calculation Engine}
 \description{
-A pure computation engine for performing various hypothesis tests, returning structured results.
-Called by iqr_htest and internal subpackage functions.
+A pure computation engine for performing various hypothesis tests, returning
+structured \code{stat_result} S3 objects (class \code{c("stat_result", "htest_result")}).
+Called by \code{iqr_htest} and internal subpackage functions.
 
 \strong{Supported test types}:
 \itemize{
@@ -16,6 +17,7 @@ Called by iqr_htest and internal subpackage functions.
 \item One-sample proportion test
 \item Two-sample proportion test
 \item Variance test (F-test)
+\item Chi-square test
 }
 }
 \section{Methods}{
@@ -37,7 +39,7 @@ Called by iqr_htest and internal subpackage functions.
 \if{html}{\out{<a id="method-HTestAnalyzer-analyze"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestAnalyzer-analyze}{}}}
 \subsection{Method \code{analyze()}}{
-Perform hypothesis test
+Perform hypothesis test by test_type code
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$analyze(test_type, ...)}\if{html}{\out{</div>}}
 }
@@ -45,14 +47,16 @@ Perform hypothesis test
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{test_type}}{Test type}
+\item{\code{test_type}}{Test type code, one of:
+\code{"z_test_1s"}, \code{"t_test_1s"}, \code{"t_test_2s"}, \code{"t_test_paired"},
+\code{"prop_test_1s"}, \code{"prop_test_2s"}, \code{"f_test"}, \code{"chisq_test"}}
 
-\item{\code{...}}{Test parameters}
+\item{\code{...}}{Test parameters (forwarded to the matching private method)}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Structured test result list
+A \code{stat_result} S3 object (class \code{c("stat_result", "htest_result")})
 }
 }
 \if{html}{\out{<hr>}}
@@ -73,20 +77,20 @@ One-sample Z-test
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{x}}{Sample data vector, or list containing mean/n/sigma}
+\item{\code{x}}{Sample data vector, or list containing \code{mean}/\code{n}/\code{sigma}}
 
 \item{\code{mu}}{Hypothesized population mean}
 
 \item{\code{sigma}}{Known population standard deviation}
 
-\item{\code{alternative}}{Test direction}
+\item{\code{alternative}}{Test direction (\code{"two.sided"}, \code{"less"}, \code{"greater"})}
 
 \item{\code{conf_level}}{Confidence level}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -117,7 +121,7 @@ One-sample t-test
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -151,7 +155,7 @@ Two-sample t-test
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -177,7 +181,7 @@ Paired t-test
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -211,7 +215,7 @@ One-sample proportion test
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -248,7 +252,7 @@ Two-sample proportion test
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -274,7 +278,7 @@ Variance equality test (F-test)
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}
@@ -296,7 +300,7 @@ Chi-square test
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Test result list
+A \code{stat_result} S3 object
 }
 }
 \if{html}{\out{<hr>}}

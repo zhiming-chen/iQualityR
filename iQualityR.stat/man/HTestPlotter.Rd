@@ -4,13 +4,20 @@
 \alias{HTestPlotter}
 \title{HTestPlotter: Hypothesis Test Plotting Coordinator}
 \description{
-Automatically select appropriate visualization based on test results.
-All plotting functions reuse iQualityR.plot package functions.
+Test-type-aware visualization for hypothesis test results. This is a thin
+delegation layer -- ALL ggplot2 visualization code lives in
+\code{iQualityR.plot}. HTestPlotter only dispatches by \code{result$test_type} and
+extracts parameters from the \code{stat_result} object.
+
+\strong{Contract 2 signature} (fixed across all L2 Plotters in .stat):
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{$plot(result, plot_type = "auto", show_table = FALSE, theme_obj = NULL)
+}\if{html}{\out{</div>}}
 }
 \section{Public fields}{
 \if{html}{\out{<div class="r6-fields">}}
 \describe{
-\item{\code{theme_obj}}{Theme object}
+\item{\code{theme_obj}}{Active \code{IqrTheme} object (NULL until a theme resolves).}
 }
 \if{html}{\out{</div>}}
 }
@@ -30,7 +37,7 @@ All plotting functions reuse iQualityR.plot package functions.
 \if{html}{\out{<a id="method-HTestPlotter-new"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-new}{}}}
 \subsection{Method \code{new()}}{
-Initialize
+Initialize with a theme
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$new(theme = "academic")}\if{html}{\out{</div>}}
 }
@@ -38,7 +45,7 @@ Initialize
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{theme}}{Theme name or IqrTheme object}
+\item{\code{theme}}{Theme name (e.g. \code{"academic"}) or an \code{IqrTheme} object.}
 }
 \if{html}{\out{</div>}}
 }
@@ -47,99 +54,94 @@ Initialize
 \if{html}{\out{<a id="method-HTestPlotter-plot"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-plot}{}}}
 \subsection{Method \code{plot()}}{
-Automatically plot based on test results
+Unified plot entry point (Contract 2 signature).
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot(
   result,
-  x = NULL,
-  y = NULL,
   plot_type = "auto",
-  show_table = TRUE
+  show_table = FALSE,
+  theme_obj = NULL
 )}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result list (HTestAnalyzer output)}
+\item{\code{result}}{A \code{stat_result} returned by \code{HTestAnalyzer}.}
 
-\item{\code{x}}{Sample data (required for box plot)}
+\item{\code{plot_type}}{One of \code{"auto"}, \code{"curve"}, \code{"box"}, \code{"combined"}.}
 
-\item{\code{y}}{Second sample (required for two-sample tests)}
+\item{\code{show_table}}{Logical; overlay a stats table on box plots.}
 
-\item{\code{plot_type}}{Plot type ("auto", "curve", "box", "combined")}
-
-\item{\code{show_table}}{Whether to display statistics table}
+\item{\code{theme_obj}}{Optional \code{IqrTheme} overriding \code{self$theme_obj}.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-ggplot2 or patchwork object
+A \code{ggplot} or \code{patchwork} object.
 }
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestPlotter-plot_curve"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-plot_curve}{}}}
 \subsection{Method \code{plot_curve()}}{
-Plot rejection region
+Plot the rejection-region / distribution curve
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot_curve(result)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot_curve(result, theme_obj = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result}
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
+
+\item{\code{theme_obj}}{Optional \code{IqrTheme} override}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-ggplot2 object
+ggplot object
 }
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestPlotter-plot_box"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-plot_box}{}}}
 \subsection{Method \code{plot_box()}}{
-Plot boxplot
+Plot a boxplot of the raw sample data
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot_box(result, x = NULL, y = NULL, show_table = TRUE)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot_box(result, show_table = FALSE, theme_obj = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result}
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
 
-\item{\code{x}}{Sample data}
+\item{\code{show_table}}{Logical; overlay a stats table}
 
-\item{\code{y}}{Second sample}
-
-\item{\code{show_table}}{Whether to display statistics table}
+\item{\code{theme_obj}}{Optional \code{IqrTheme} override}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-ggplot2 object
+ggplot object
 }
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestPlotter-plot_combined"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-plot_combined}{}}}
 \subsection{Method \code{plot_combined()}}{
-Plot combined figure
+Plot a combined figure (distribution curve + boxplot)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot_combined(result, x = NULL, y = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$plot_combined(result, theme_obj = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{result}}{Test result}
+\item{\code{result}}{A \code{stat_result} from \code{HTestAnalyzer}}
 
-\item{\code{x}}{Sample data}
-
-\item{\code{y}}{Second sample}
+\item{\code{theme_obj}}{Optional \code{IqrTheme} override}
 }
 \if{html}{\out{</div>}}
 }
@@ -151,7 +153,7 @@ patchwork object
 \if{html}{\out{<a id="method-HTestPlotter-set_theme"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-set_theme}{}}}
 \subsection{Method \code{set_theme()}}{
-Set theme
+Set / replace the active theme
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$set_theme(theme)}\if{html}{\out{</div>}}
 }
@@ -159,9 +161,12 @@ Set theme
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{theme}}{Theme name or IqrTheme object}
+\item{\code{theme}}{Theme name or \code{IqrTheme} object}
 }
 \if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Invisible self (for chaining)
 }
 }
 \if{html}{\out{<hr>}}

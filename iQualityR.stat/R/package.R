@@ -4,9 +4,7 @@
 # =============================================================================
 
 #' @keywords internal
-#' @importFrom iQualityR.plot plot_hypothesis_curve plot_hypothesis_box plot_hypothesis_combined
-#' @importFrom iQualityR.plot base_plot layers_histogram_density layers_boxplot
-#' @importFrom iQualityR.core IqrTheme IqrPlotterBase
+#' @importFrom iQualityR.core IqrTheme IqrPlotterBase IqrReporter
 "_PACKAGE"
 
 # Shared IqrPlotterBase singleton — unified color pipeline entry point.
@@ -15,6 +13,36 @@
 # consistent theming across the iQualityR ecosystem.
 .iqr_plotter <- iQualityR.core::IqrPlotterBase$new()
 
-# Suppress R CMD check NOTE for data.table/dplyr non-standard evaluation
-# variable bindings used in desc.R and sigma_estimate.R
-utils::globalVariables(c(".", ".N", "metric", "v", "value"))
+# Null-coalescing operator (local definition to avoid rlang dependency).
+# Returns b when a is NULL, otherwise returns a. Matches rlang::%||% semantics.
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Package-level helpers shared by all Plotter classes and plotting functions.
+# Defined here (first in Collate) so desc.R and other early-loaded files can
+# use them without forward-reference issues.
+
+# Check that the iQualityR.plot Suggests package is available before any
+# plotting call. Centralised so callers don't repeat the requireNamespace +
+# error-message boilerplate.
+.check_plot_available <- function() {
+  if (!requireNamespace("iQualityR.plot", quietly = TRUE)) {
+    stop("[iQualityR.stat] iQualityR.plot is required for plotting but is not installed. ",
+         "Install it with: remotes::install_github('zhiming-chen/iQualityR', subdir='packages/iQualityR.plot')",
+         call. = FALSE)
+  }
+}
+
+# Resolve a theme argument (name string, IqrTheme object, or NULL) to an
+# IqrTheme object or NULL. Used by Plotter constructors and plot methods.
+.resolve_theme <- function(theme) {
+  if (is.null(theme)) return(NULL)
+  if (inherits(theme, "IqrTheme")) return(theme)
+  tryCatch(
+    iQualityR.core::IqrTheme$new(theme),
+    error = function(e) NULL
+  )
+}
+
+# Suppress R CMD check NOTE for ggplot2 aes() column references
+# used in desc.R and other plotting functions
+utils::globalVariables(c("metric", "v", "value"))

@@ -23,20 +23,13 @@ Top-level interface for iQualityR probability distribution module, coordinating 
 }
 }
 \examples{
-\dontrun{
-# === R6 class interface ===
-# Example 1: Normal distribution probability calculation
+# Normal distribution: P(X > 108) given mean = 100, sd = 5
 prob <- iqr_prob$new(type = "norm", params = list(mean = 100, sd = 5))
 prob$calc(values = 108, mode = "prob", calc_type = "upper")
-prob$plot(show_cdf = TRUE)
-prob$interpret(audience = "manager")
 
-# Example 2: Binomial distribution
-prob <- iqr_prob$new(type = "binom", params = list(size = 50, prob = 0.05))
-prob$calc(values = 3, mode = "prob", calc_type = "lower")
-
-# === Convenience function interface ===
-prob_calc(type = "norm", params = list(mean = 0, sd = 1), x = 1.96)
+# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  prob$plot(show_cdf = TRUE)
 }
 
 
@@ -44,19 +37,19 @@ prob_calc(type = "norm", params = list(mean = 0, sd = 1), x = 1.96)
 ## Method `iqr_prob$add_dist`
 ## ------------------------------------------------
 
-\dontrun{
-prob$add_dist(type = "norm", params = list(mean = 0, sd = 1))
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+prob$add_dist(type = "weibull", params = list(shape = 2, scale = 1))
 prob$add_dist(dist_list = list(
   list(id = "D1", type = "norm", params = list(mean = 0, sd = 1)),
   list(id = "D2", type = "norm", params = list(mean = 1, sd = 1))
-))
-}
+), reset = TRUE)
 
 ## ------------------------------------------------
 ## Method `iqr_prob$calc`
 ## ------------------------------------------------
 
-\dontrun{
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+
 # Probability calculation: P(X > 1.96) for N(0,1)
 prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
 
@@ -65,52 +58,57 @@ prob$calc(values = 0.975, mode = "quant")
 
 # Interval probability: P(1 < X < 2)
 prob$calc(values = c(1, 2), mode = "prob", calc_type = "between")
-}
 
 ## ------------------------------------------------
 ## Method `iqr_prob$plot`
 ## ------------------------------------------------
 
-\dontrun{
-prob$plot()                    # Default PDF plot
-prob$plot(show_cdf = TRUE)     # PDF + CDF combined plot
-prob$plot(facet = TRUE)        # Faceted display (multi-distribution)
+# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+  prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
+  prob$plot()                    # Default PDF plot
+  prob$plot(show_cdf = TRUE)     # PDF + CDF combined plot
 }
 
 ## ------------------------------------------------
 ## Method `iqr_prob$interpret`
 ## ------------------------------------------------
 
-\dontrun{
+prob <- iqr_prob$new(type = "binom", params = list(size = 50, prob = 0.05))
 prob$calc(values = 3, mode = "prob", calc_type = "lower")
 prob$interpret(audience = "manager")
-}
 
 ## ------------------------------------------------
 ## Method `iqr_prob$report`
 ## ------------------------------------------------
 
-\dontrun{
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
 prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
 df <- prob$report()
-}
+head(df)
 
 ## ------------------------------------------------
 ## Method `iqr_prob$report_excel`
 ## ------------------------------------------------
 
-\dontrun{
+# Excel export requires the iQualityR.core ExcelExporter.
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
 prob$calc(values = 1.96, mode = "prob")
-prob$report_excel(path = "probability_analysis_report.xlsx")
+if (requireNamespace("iQualityR.core", quietly = TRUE)) {
+  tf <- tempfile(fileext = ".xlsx")
+  prob$report_excel(path = tf)
 }
 
 ## ------------------------------------------------
 ## Method `iqr_prob$analyze`
 ## ------------------------------------------------
 
-\dontrun{
-prob$analyze(values = 1.96, mode = "prob", calc_type = "upper",
-             type = "norm", params = list(mean = 0, sd = 1))
+# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+  prob$analyze(values = 1.96, mode = "prob", calc_type = "upper",
+               show_cdf = TRUE)
 }
 }
 \section{Public fields}{
@@ -224,13 +222,12 @@ Self-reference
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-prob$add_dist(type = "norm", params = list(mean = 0, sd = 1))
+\preformatted{prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+prob$add_dist(type = "weibull", params = list(shape = 2, scale = 1))
 prob$add_dist(dist_list = list(
   list(id = "D1", type = "norm", params = list(mean = 0, sd = 1)),
   list(id = "D2", type = "norm", params = list(mean = 1, sd = 1))
-))
-}
+), reset = TRUE)
 }
 \if{html}{\out{</div>}}
 
@@ -278,7 +275,8 @@ Invisible self-reference
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
+\preformatted{prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+
 # Probability calculation: P(X > 1.96) for N(0,1)
 prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
 
@@ -287,7 +285,6 @@ prob$calc(values = 0.975, mode = "quant")
 
 # Interval probability: P(1 < X < 2)
 prob$calc(values = c(1, 2), mode = "prob", calc_type = "between")
-}
 }
 \if{html}{\out{</div>}}
 
@@ -321,10 +318,12 @@ ggplot/patchwork object
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-prob$plot()                    # Default PDF plot
-prob$plot(show_cdf = TRUE)     # PDF + CDF combined plot
-prob$plot(facet = TRUE)        # Faceted display (multi-distribution)
+\preformatted{# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+  prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
+  prob$plot()                    # Default PDF plot
+  prob$plot(show_cdf = TRUE)     # PDF + CDF combined plot
 }
 }
 \if{html}{\out{</div>}}
@@ -355,10 +354,9 @@ Interpretation string (also printed to console)
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
+\preformatted{prob <- iqr_prob$new(type = "binom", params = list(size = 50, prob = 0.05))
 prob$calc(values = 3, mode = "prob", calc_type = "lower")
 prob$interpret(audience = "manager")
-}
 }
 \if{html}{\out{</div>}}
 
@@ -379,10 +377,10 @@ Data frame
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
+\preformatted{prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
 prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
 df <- prob$report()
-}
+head(df)
 }
 \if{html}{\out{</div>}}
 
@@ -412,9 +410,12 @@ Invisible self-reference
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
+\preformatted{# Excel export requires the iQualityR.core ExcelExporter.
+prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
 prob$calc(values = 1.96, mode = "prob")
-prob$report_excel(path = "probability_analysis_report.xlsx")
+if (requireNamespace("iQualityR.core", quietly = TRUE)) {
+  tf <- tempfile(fileext = ".xlsx")
+  prob$report_excel(path = tf)
 }
 }
 \if{html}{\out{</div>}}
@@ -472,9 +473,11 @@ ggplot/patchwork object
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{\dontrun{
-prob$analyze(values = 1.96, mode = "prob", calc_type = "upper",
-             type = "norm", params = list(mean = 0, sd = 1))
+\preformatted{# Plotting requires the iQualityR.plot Suggests package
+if (requireNamespace("iQualityR.plot", quietly = TRUE)) {
+  prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
+  prob$analyze(values = 1.96, mode = "prob", calc_type = "upper",
+               show_cdf = TRUE)
 }
 }
 \if{html}{\out{</div>}}

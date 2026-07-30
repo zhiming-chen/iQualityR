@@ -93,5 +93,5 @@ print(sigma_df)
 }
 }
 \seealso{
-\code{\link[stats]{sd}}
+\code{\link[stats:sd]{stats::sd}}
 }

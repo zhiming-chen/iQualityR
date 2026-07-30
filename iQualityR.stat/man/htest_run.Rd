@@ -15,37 +15,31 @@ htest_run(
 )
 }
 \arguments{
-\item{test_type}{Test type}
+\item{test_type}{Test type code (see \link{iqr_htest}).}
 
-\item{...}{Test parameters}
+\item{...}{Test parameters forwarded to \code{HTestAnalyzer$analyze()}.}
 
-\item{plot}{Whether to plot}
+\item{plot}{Logical; print a plot immediately.}
 
-\item{plot_type}{Plot type}
+\item{plot_type}{Plot type forwarded to \code{htest_plot()}.}
 
-\item{interpret}{Whether to output interpretation}
+\item{interpret}{Logical; print an interpretation immediately.}
 
-\item{audience}{Audience level}
+\item{audience}{Audience level for the interpretation.}
 
-\item{theme}{Theme}
+\item{theme}{Theme name or \code{IqrTheme} object.}
 }
 \value{
-Test results list (or plot object if plot = TRUE)
+A \code{stat_result} S3 object (invisibly).
 }
 \description{
-Execute hypothesis test without creating R6 object.
-Suitable for quick analysis scenarios.
+Execute a hypothesis test without creating an R6 object. Suitable for quick
+analysis scenarios. Returns a \code{stat_result} S3 object so the caller can
+still feed it to \code{htest_plot()} / \code{htest_interpret()} / \code{htest_report()}.
 }
 \examples{
-# One-sample t test
 set.seed(123)
 x <- rnorm(30, mean = 102, sd = 5)
-htest_run("t_test_1s", x = x, mu = 100)
-
-# One-sample Z test (sigma known)
-htest_run("z_test_1s", x = x, mu = 100, sigma = 5, plot = TRUE)
-
-# Two-sample t test
-y <- rnorm(25, mean = 98, sd = 6)
-htest_run("t_test_2s", x = x, y = y, interpret = TRUE)
+result <- htest_run("t_test_1s", x = x, mu = 100)
+print(result)
 }

@@ -17,3 +17,12 @@ Descriptive statistics list
 \description{
 Descriptive statistics calculation
 }
+\examples{
+# Descriptive stats for a sample
+set.seed(123)
+x <- rnorm(50, mean = 100, sd = 5)
+stats <- desc_calc(x)
+stats$mean
+stats$stdev
+stats$ci_mean
+}

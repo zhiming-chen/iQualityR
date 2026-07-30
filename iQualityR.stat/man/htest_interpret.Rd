@@ -4,25 +4,25 @@
 \alias{htest_interpret}
 \title{Convenience hypothesis test interpretation function}
 \usage{
-htest_interpret(test_type, ..., audience = "manager", context = NULL)
+htest_interpret(result, audience = "manager", context = NULL)
 }
 \arguments{
-\item{test_type}{Test type}
+\item{result}{A \code{stat_result} from \code{\link[=htest_run]{htest_run()}} or \code{HTestAnalyzer}.}
 
-\item{...}{Test parameters}
+\item{audience}{Audience level (\code{"manager"}, \code{"technical"}, \code{"client"}).}
 
-\item{audience}{Audience level}
-
-\item{context}{Business context description}
+\item{context}{Optional business context string.}
 }
 \value{
-Interpretation string
+Interpretation string (invisibly; also cat'd to stdout).
 }
 \description{
-Directly output hypothesis test interpretation without creating R6 object.
+Interpret a \code{stat_result} returned by \code{\link[=htest_run]{htest_run()}} without creating an
+R6 object.
 }
 \examples{
 set.seed(123)
 x <- rnorm(30, mean = 102, sd = 5)
-htest_interpret("t_test_1s", x = x, mu = 100, audience = "manager")
+result <- htest_run("t_test_1s", x = x, mu = 100)
+htest_interpret(result, audience = "manager")
 }

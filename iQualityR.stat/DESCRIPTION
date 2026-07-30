@@ -16,8 +16,6 @@ Imports:
     R6,
     Rcpp,
     ggplot2,
-    dplyr,
-    magrittr,
     stats,
     utils,
     nortest,
@@ -25,11 +23,8 @@ Imports:
     patchwork,
     ggrepel,
     openxlsx,
-    rlang,
-    data.table,
     gridExtra,
     grid,
-    iQualityR.plot,
     iQualityR.core
 Remotes:
     zhiming-chen/iQualityR/iQualityR.plot,
@@ -39,12 +34,49 @@ Suggests:
     knitr,
     rmarkdown,
     MASS,
-    memoise,
-    SuppDists
+    SuppDists,
+    iQualityR.plot,
+    MuMIn,
+    emmeans,
+    multcomp,
+    lme4,
+    lmerTest
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+Collate:
+    'package.R'
+    'constant.R'
+    'RcppExports.R'
+    'sigma_estimate.R'
+    'desc.R'
+    'dist_registry.R'
+    'validate_dist_params.R'
+    'dist_fit.R'
+    'quality_metrics.R'
+    'sample_size.R'
+    'spc_rules.R'
+    'ProbNode.R'
+    'ProbAnalyzer.R'
+    'ProbPlotter.R'
+    'ProbReporter.R'
+    'iqr_prob.R'
+    'NormalityAnalyzer.R'
+    'NormalityPlotter.R'
+    'NormalityReporter.R'
+    'transform.R'
+    'outlier.R'
+    'iqr_normality.R'
+    'StatInterpreter.R'
+    'model_diag.R'
+    'anova.R'
+    'stat_result.R'
+    'HTestAnalyzer.R'
+    'HTestPlotter.R'
+    'HTestReporter.R'
+    'iqr_htest.R'
+    'zzz.R'
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 LinkingTo:
