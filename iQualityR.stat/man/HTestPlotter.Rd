@@ -14,42 +14,27 @@ extracts parameters from the \code{stat_result} object.
 \if{html}{\out{<div class="sourceCode">}}\preformatted{$plot(result, plot_type = "auto", show_table = FALSE, theme_obj = NULL)
 }\if{html}{\out{</div>}}
 }
-\section{Public fields}{
-\if{html}{\out{<div class="r6-fields">}}
-\describe{
-\item{\code{theme_obj}}{Active \code{IqrTheme} object (NULL until a theme resolves).}
-}
-\if{html}{\out{</div>}}
+\section{Super class}{
+\code{\link[iQualityR.stat:StatPlotter]{iQualityR.stat::StatPlotter}} -> \code{HTestPlotter}
 }
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
-\item \href{#method-HTestPlotter-new}{\code{HTestPlotter$new()}}
 \item \href{#method-HTestPlotter-plot}{\code{HTestPlotter$plot()}}
 \item \href{#method-HTestPlotter-plot_curve}{\code{HTestPlotter$plot_curve()}}
 \item \href{#method-HTestPlotter-plot_box}{\code{HTestPlotter$plot_box()}}
 \item \href{#method-HTestPlotter-plot_combined}{\code{HTestPlotter$plot_combined()}}
-\item \href{#method-HTestPlotter-set_theme}{\code{HTestPlotter$set_theme()}}
 \item \href{#method-HTestPlotter-clone}{\code{HTestPlotter$clone()}}
 }
 }
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-HTestPlotter-new"></a>}}
-\if{latex}{\out{\hypertarget{method-HTestPlotter-new}{}}}
-\subsection{Method \code{new()}}{
-Initialize with a theme
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$new(theme = "academic")}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{theme}}{Theme name (e.g. \code{"academic"}) or an \code{IqrTheme} object.}
-}
-\if{html}{\out{</div>}}
-}
-}
+\if{html}{\out{
+<details open><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="initialize"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-initialize'><code>iQualityR.stat::StatPlotter$initialize()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="set_theme"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-set_theme'><code>iQualityR.stat::StatPlotter$set_theme()</code></a></span></li>
+</ul>
+</details>
+}}
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestPlotter-plot"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestPlotter-plot}{}}}
@@ -147,26 +132,6 @@ Plot a combined figure (distribution curve + boxplot)
 }
 \subsection{Returns}{
 patchwork object
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-HTestPlotter-set_theme"></a>}}
-\if{latex}{\out{\hypertarget{method-HTestPlotter-set_theme}{}}}
-\subsection{Method \code{set_theme()}}{
-Set / replace the active theme
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HTestPlotter$set_theme(theme)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{theme}}{Theme name or \code{IqrTheme} object}
-}
-\if{html}{\out{</div>}}
-}
-\subsection{Returns}{
-Invisible self (for chaining)
 }
 }
 \if{html}{\out{<hr>}}

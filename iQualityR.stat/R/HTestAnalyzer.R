@@ -21,6 +21,14 @@
 #' - Two-sample proportion test
 #' - Variance test (F-test)
 #' - Chi-square test
+#' - Wilcoxon signed rank test (one-sample / paired)
+#' - Wilcoxon rank sum test (two-sample, Mann-Whitney U)
+#' - Kruskal-Wallis rank sum test (k-sample)
+#' - Friedman rank sum test (randomized complete block)
+#' - TOST for mean equivalence (one-sample / two-sample)
+#' - TOST for proportion equivalence (two-sample)
+#' - Non-inferiority test (mean or proportion, one-sided)
+#' - Superiority test (mean or proportion, one-sided)
 #'
 #' @export
 HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
@@ -28,21 +36,33 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
     #' @description Perform hypothesis test by test_type code
     #' @param test_type Test type code, one of:
     #'   `"z_test_1s"`, `"t_test_1s"`, `"t_test_2s"`, `"t_test_paired"`,
-    #'   `"prop_test_1s"`, `"prop_test_2s"`, `"f_test"`, `"chisq_test"`
+    #'   `"prop_test_1s"`, `"prop_test_2s"`, `"f_test"`, `"chisq_test"`,
+    #'   `"wilcoxon_signed_rank"`, `"wilcoxon_rank_sum"`,
+    #'   `"kruskal_wallis"`, `"friedman"`,
+    #'   `"tost_mean"`, `"tost_proportion"`,
+    #'   `"non_inferiority"`, `"superiority"`
     #' @param ... Test parameters (forwarded to the matching private method)
     #' @return A `stat_result` S3 object (class `c("stat_result", "htest_result")`)
     analyze = function(test_type, ...) {
       args <- list(...)
 
       result <- switch(test_type,
-        "z_test_1s"      = private$.z_test_1s(args),
-        "t_test_1s"      = private$.t_test_1s(args),
-        "t_test_2s"      = private$.t_test_2s(args),
-        "t_test_paired"  = private$.t_test_paired(args),
-        "prop_test_1s"   = private$.prop_test_1s(args),
-        "prop_test_2s"   = private$.prop_test_2s(args),
-        "f_test"         = private$.f_test(args),
-        "chisq_test"     = private$.chisq_test(args),
+        "z_test_1s"          = private$.z_test_1s(args),
+        "t_test_1s"          = private$.t_test_1s(args),
+        "t_test_2s"          = private$.t_test_2s(args),
+        "t_test_paired"      = private$.t_test_paired(args),
+        "prop_test_1s"       = private$.prop_test_1s(args),
+        "prop_test_2s"       = private$.prop_test_2s(args),
+        "f_test"             = private$.f_test(args),
+        "chisq_test"         = private$.chisq_test(args),
+        "wilcoxon_signed_rank" = private$.wilcoxon_signed_rank(args),
+        "wilcoxon_rank_sum"    = private$.wilcoxon_rank_sum(args),
+        "kruskal_wallis"       = private$.kruskal_wallis(args),
+        "friedman"             = private$.friedman(args),
+        "tost_mean"            = private$.tost_mean(args),
+        "tost_proportion"      = private$.tost_proportion(args),
+        "non_inferiority"      = private$.non_inferiority(args),
+        "superiority"          = private$.superiority(args),
         stop(sprintf("Unknown test type: %s", test_type))
       )
 
@@ -147,6 +167,172 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
     #' @return A `stat_result` S3 object
     chisq_test = function(x, p = NULL) {
       private$.chisq_test(list(x = x, p = p))
+    },
+
+    #' @description Wilcoxon signed rank test (one-sample or paired)
+    #'
+    #' Wraps [stats::wilcox.test] for the one-sample / paired case. When `y` is
+    #' supplied the test is performed on the paired differences `x - y`.
+    #'
+    #' @param x First (or only) sample.
+    #' @param y Optional second sample for paired comparison.
+    #' @param mu Hypothesized location of `x` (or of `x - y` when `y` given).
+    #' @param alternative Test direction (`"two.sided"`, `"less"`, `"greater"`).
+    #' @param conf_level Confidence level.
+    #' @param paired Logical; if `TRUE` and `y` is supplied, runs paired test.
+    #'   Defaults to `TRUE` when `y` is non-NULL to honour the non-parametric
+    #'   paired-test contract.
+    #' @return A `stat_result` S3 object.
+    wilcoxon_signed_rank = function(x, y = NULL, mu = 0,
+                                    alternative = "two.sided",
+                                    conf_level = 0.95, paired = TRUE) {
+      private$.wilcoxon_signed_rank(list(
+        x = x, y = y, mu = mu, alternative = alternative,
+        conf_level = conf_level, paired = paired
+      ))
+    },
+
+    #' @description Wilcoxon rank sum test (Mann-Whitney U, two-sample)
+    #'
+    #' Wraps [stats::wilcox.test] for two independent samples.
+    #'
+    #' @param x First sample.
+    #' @param y Second sample.
+    #' @param mu Hypothesized shift parameter.
+    #' @param alternative Test direction.
+    #' @param conf_level Confidence level.
+    #' @return A `stat_result` S3 object.
+    wilcoxon_rank_sum = function(x, y, mu = 0,
+                                 alternative = "two.sided",
+                                 conf_level = 0.95) {
+      private$.wilcoxon_rank_sum(list(
+        x = x, y = y, mu = mu, alternative = alternative,
+        conf_level = conf_level
+      ))
+    },
+
+    #' @description Kruskal-Wallis rank sum test
+    #'
+    #' Wraps [stats::kruskal.test] to compare `k` independent groups.
+    #'
+    #' @param x Numeric vector of observations, or a list of numeric vectors.
+    #' @param g Grouping vector / factor (ignored when `x` is a list).
+    #' @return A `stat_result` S3 object.
+    kruskal_wallis = function(x, g = NULL) {
+      private$.kruskal_wallis(list(x = x, g = g))
+    },
+
+    #' @description Friedman rank sum test (randomized complete block)
+    #'
+    #' Wraps [stats::friedman.test]. Accepts either a wide matrix / data frame
+    #' (rows = blocks, columns = treatments) or the long form `x`/`g`/`b`.
+    #'
+    #' @param x Numeric vector, matrix, or data frame.
+    #' @param g Treatment grouping vector (ignored when `x` is a matrix).
+    #' @param b Blocking vector (ignored when `x` is a matrix).
+    #' @return A `stat_result` S3 object.
+    friedman = function(x, g = NULL, b = NULL) {
+      private$.friedman(list(x = x, g = g, b = b))
+    },
+
+    #' @description TOST for mean equivalence (Two One-Sided Tests)
+    #'
+    #' Tests whether the mean of `x` (or the difference `x - y` when `y` is
+    #' supplied) is practically equivalent to a reference value, i.e. within
+    #' the equivalence margin `[-delta, +delta]`. The TOST procedure runs two
+    #' one-sided t-tests at level `conf_level` and declares equivalence when
+    #' both reject.
+    #'
+    #' @param x First (or only) sample.
+    #' @param y Optional second sample for two-sample comparison.
+    #' @param mu Reference value for one-sample; ignored when `y` is supplied.
+    #' @param delta Equivalence margin (positive scalar). Equivalence is
+    #'   declared when `|mean(x) - mu| < delta` (one-sample) or
+    #'   `|mean(x) - mean(y)| < delta` (two-sample).
+    #' @param conf_level Confidence level (also the significance level of each
+    #'   one-sided test).
+    #' @param var.equal Whether to assume equal variances for two-sample test.
+    #' @return A `stat_result` S3 object with `extra$equivalence` field
+    #'   indicating `"equivalent"` or `"not equivalent"`.
+    tost_mean = function(x, y = NULL, mu = 0, delta, conf_level = 0.95,
+                         var.equal = FALSE) {
+      private$.tost_mean(list(
+        x = x, y = y, mu = mu, delta = delta,
+        conf_level = conf_level, var.equal = var.equal
+      ))
+    },
+
+    #' @description TOST for two-sample proportion equivalence
+    #'
+    #' Tests whether the difference between two proportions is within the
+    #' equivalence margin `[-delta, +delta]` using two one-sided z-tests.
+    #'
+    #' @param x1 Successes in group 1.
+    #' @param n1 Sample size of group 1.
+    #' @param x2 Successes in group 2.
+    #' @param n2 Sample size of group 2.
+    #' @param delta Equivalence margin on the proportion-difference scale
+    #'   (positive scalar, typically 0.1-0.2).
+    #' @param conf_level Confidence level.
+    #' @return A `stat_result` S3 object.
+    tost_proportion = function(x1, n1, x2, n2, delta, conf_level = 0.95) {
+      private$.tost_proportion(list(
+        x1 = x1, n1 = n1, x2 = x2, n2 = n2,
+        delta = delta, conf_level = conf_level
+      ))
+    },
+
+    #' @description Non-inferiority test (one-sided)
+    #'
+    #' Tests whether `x` (or `x - y` for two-sample) is non-inferior to a
+    #' reference, i.e. the treatment is not worse than the reference by more
+    #' than `delta`. For proportions, supply `x1/n1/x2/n2` instead of `x/y`.
+    #'
+    #' @param type `"mean"` (default) or `"proportion"`.
+    #' @param x First sample (for `type = "mean"`) -- ignored for proportions.
+    #' @param y Second sample (for `type = "mean"`) -- one-sample if NULL.
+    #' @param mu Reference value for one-sample mean test.
+    #' @param x1,n1,x2,n2 Counts / sizes for `type = "proportion"`.
+    #' @param delta Non-inferiority margin. Rejecting H0: `x - ref <= -delta`
+    #'   concludes non-inferiority.
+    #' @param conf_level Confidence level.
+    #' @param var.equal Equal-variance assumption for two-sample mean test.
+    #' @return A `stat_result` S3 object.
+    non_inferiority = function(type = c("mean", "proportion"),
+                               x = NULL, y = NULL, mu = 0,
+                               x1 = NULL, n1 = NULL, x2 = NULL, n2 = NULL,
+                               delta, conf_level = 0.95, var.equal = FALSE) {
+      private$.non_inferiority(list(
+        type = match.arg(type), x = x, y = y, mu = mu,
+        x1 = x1, n1 = n1, x2 = x2, n2 = n2,
+        delta = delta, conf_level = conf_level, var.equal = var.equal
+      ))
+    },
+
+    #' @description Superiority test (one-sided)
+    #'
+    #' Tests whether `x` (or `x - y` for two-sample) is superior to a
+    #' reference by more than `delta`. Rejecting H0: `x - ref <= delta`
+    #' concludes superiority.
+    #'
+    #' @param type `"mean"` (default) or `"proportion"`.
+    #' @param x First sample (for `type = "mean"`) -- ignored for proportions.
+    #' @param y Second sample (for `type = "mean"`) -- one-sample if NULL.
+    #' @param mu Reference value for one-sample mean test.
+    #' @param x1,n1,x2,n2 Counts / sizes for `type = "proportion"`.
+    #' @param delta Superiority margin.
+    #' @param conf_level Confidence level.
+    #' @param var.equal Equal-variance assumption for two-sample mean test.
+    #' @return A `stat_result` S3 object.
+    superiority = function(type = c("mean", "proportion"),
+                           x = NULL, y = NULL, mu = 0,
+                           x1 = NULL, n1 = NULL, x2 = NULL, n2 = NULL,
+                           delta, conf_level = 0.95, var.equal = FALSE) {
+      private$.superiority(list(
+        type = match.arg(type), x = x, y = y, mu = mu,
+        x1 = x1, n1 = n1, x2 = x2, n2 = n2,
+        delta = delta, conf_level = conf_level, var.equal = var.equal
+      ))
     }
   ),
 
@@ -653,6 +839,595 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
         dist_type   = "chisq",
         data        = list(x = x, y = NULL)
       )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Wilcoxon signed rank test (one-sample / paired)
+    # =========================================================================
+    .wilcoxon_signed_rank = function(args) {
+      x <- stats::na.omit(args$x)
+      y <- args$y
+      mu <- args$mu %||% 0
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+      paired <- isTRUE(args$paired) && !is.null(y)
+
+      if (is.null(y)) {
+        # One-sample Wilcoxon signed rank test
+        ht <- stats::wilcox.test(x, mu = mu, alternative = alternative,
+                                 conf.level = conf_level, conf.int = TRUE)
+        method <- "Wilcoxon signed rank test (one-sample)"
+        data_name <- "x"
+        raw_x <- as.numeric(x); raw_y <- NULL
+      } else {
+        # Paired Wilcoxon signed rank test on x - y
+        y <- stats::na.omit(y)
+        if (length(x) != length(y)) {
+          stop("x and y must have the same length for paired Wilcoxon test.",
+               call. = FALSE)
+        }
+        ht <- stats::wilcox.test(x, y, paired = TRUE, mu = mu,
+                                 alternative = alternative,
+                                 conf.level = conf_level, conf.int = TRUE)
+        method <- "Wilcoxon signed rank test (paired)"
+        data_name <- "x and y"
+        raw_x <- as.numeric(x); raw_y <- as.numeric(y)
+      }
+
+      # Parameter for Wilcoxon is the number of observations used by wilcox.test
+      # (after dropping zeros / NAs). wilcox.test does not expose it directly,
+      # so compute n as length of non-zero differences.
+      diff_vec <- if (is.null(y)) x - mu else x - y
+      n_used <- sum(diff_vec != 0, na.rm = TRUE)
+
+      res <- list(
+        test_type   = "wilcoxon_signed_rank",
+        method      = method,
+        data_name   = data_name,
+        statistic   = ht$statistic,            # V (named)
+        parameter   = c(n = n_used),
+        p.value     = ht$p.value,
+        conf.int    = if (!is.null(ht$conf.int)) as.numeric(ht$conf.int) else NULL,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,             # (pseudo)median
+        null.value  = c("location" = mu),
+        alternative = alternative,
+        n           = length(raw_x),
+        n_used      = n_used,
+        mu          = mu,
+        paired      = paired,
+        dist_type   = "wilcox",
+        data        = list(x = raw_x, y = raw_y)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Wilcoxon rank sum test (Mann-Whitney U, two-sample)
+    # =========================================================================
+    .wilcoxon_rank_sum = function(args) {
+      x <- stats::na.omit(args$x)
+      y <- stats::na.omit(args$y)
+      mu <- args$mu %||% 0
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+
+      ht <- stats::wilcox.test(x, y, paired = FALSE, mu = mu,
+                               alternative = alternative,
+                               conf.level = conf_level, conf.int = TRUE)
+
+      n1 <- length(x); n2 <- length(y)
+
+      res <- list(
+        test_type   = "wilcoxon_rank_sum",
+        method      = "Wilcoxon rank sum test (Mann-Whitney U)",
+        data_name   = "x and y",
+        statistic   = ht$statistic,            # W (named)
+        parameter   = c(n1 = n1, n2 = n2),
+        p.value     = ht$p.value,
+        conf.int    = if (!is.null(ht$conf.int)) as.numeric(ht$conf.int) else NULL,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,             # difference in location
+        null.value  = c("location shift" = mu),
+        alternative = alternative,
+        n1 = n1, n2 = n2,
+        mu  = mu,
+        dist_type = "wilcox",
+        data = list(x = as.numeric(x), y = as.numeric(y))
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Kruskal-Wallis rank sum test
+    # =========================================================================
+    .kruskal_wallis = function(args) {
+      x <- args$x
+      g <- args$g
+
+      if (is.list(x) && !is.data.frame(x)) {
+        # List of numeric vectors -> reshape to long form
+        g <- rep(seq_along(x), lengths(x))
+        x <- unlist(x, use.names = FALSE)
+      }
+
+      if (is.null(g)) {
+        stop("kruskal_wallis: grouping vector 'g' is required when 'x' is a vector.",
+             call. = FALSE)
+      }
+
+      g <- as.factor(g)
+      if (length(x) != length(g)) {
+        stop("kruskal_wallis: 'x' and 'g' must have the same length.",
+             call. = FALSE)
+      }
+      k <- nlevels(g)
+      if (k < 2L) {
+        stop("kruskal_wallis: need at least 2 groups.", call. = FALSE)
+      }
+
+      ht <- stats::kruskal.test(x ~ g)
+
+      # Per-group sample sizes & mean ranks for the report
+      group_n <- as.integer(table(g))
+      names(group_n) <- levels(g)
+
+      ranks <- rank(x)
+      group_mean_rank <- tapply(ranks, g, mean)
+
+      res <- list(
+        test_type   = "kruskal_wallis",
+        method      = "Kruskal-Wallis rank sum test",
+        data_name   = "x by g",
+        statistic   = ht$statistic,            # Kruskal-Wallis chi-squared
+        parameter   = ht$parameter,            # df
+        p.value     = ht$p.value,
+        conf.int    = NULL,
+        conf.level  = NULL,
+        estimate    = NULL,
+        null.value  = NULL,
+        alternative = "two.sided",
+        k           = k,
+        group_n     = group_n,
+        group_mean_rank = group_mean_rank,
+        dist_type   = "chisq",
+        data        = list(x = as.numeric(x), y = g)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Friedman rank sum test (randomized complete block)
+    # =========================================================================
+    .friedman = function(args) {
+      x <- args$x
+      g <- args$g
+      b <- args$b
+
+      # Coerce data frame input to matrix (rows = blocks, cols = treatments)
+      if (is.data.frame(x)) {
+        x <- as.matrix(x)
+      }
+
+      if (is.matrix(x)) {
+        if (ncol(x) < 2L || nrow(x) < 2L) {
+          stop("friedman: matrix needs at least 2 rows (blocks) and 2 columns (treatments).",
+               call. = FALSE)
+        }
+        ht <- stats::friedman.test(x)
+        n_blocks <- nrow(x)
+        n_treat <- ncol(x)
+        wide_mat <- x
+      } else {
+        if (is.null(g) || is.null(b)) {
+          stop("friedman: when 'x' is a vector, both 'g' (treatment) and 'b' (block) are required.",
+               call. = FALSE)
+        }
+        if (length(x) != length(g) || length(x) != length(b)) {
+          stop("friedman: 'x', 'g', 'b' must have the same length.",
+               call. = FALSE)
+        }
+        ht <- stats::friedman.test(x, g, b)
+        g <- as.factor(g); b <- as.factor(b)
+        n_blocks <- nlevels(b)
+        n_treat <- nlevels(g)
+        wide_mat <- NULL
+      }
+
+      res <- list(
+        test_type   = "friedman",
+        method      = "Friedman rank sum test",
+        data_name   = if (is.matrix(x)) "x (matrix)" else "x, g, b",
+        statistic   = ht$statistic,            # Friedman chi-squared
+        parameter   = ht$parameter,            # df
+        p.value     = ht$p.value,
+        conf.int    = NULL,
+        conf.level  = NULL,
+        estimate    = NULL,
+        null.value  = NULL,
+        alternative = "two.sided",
+        n_blocks    = n_blocks,
+        n_treatments = n_treat,
+        wide_matrix = wide_mat,
+        dist_type   = "chisq",
+        data        = list(x = if (is.matrix(x)) x else as.numeric(x), y = NULL)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # TOST for mean equivalence (one-sample / two-sample)
+    # =========================================================================
+    .tost_mean = function(args) {
+      x <- stats::na.omit(args$x)
+      y <- args$y
+      mu <- args$mu %||% 0
+      delta <- args$delta
+      conf_level <- args$conf_level %||% 0.95
+      var_equal <- args$var.equal %||% FALSE
+
+      if (is.null(delta) || length(delta) != 1L || delta <= 0) {
+        stop("tost_mean: 'delta' must be a positive scalar (equivalence margin).",
+             call. = FALSE)
+      }
+
+      alpha <- 1 - conf_level
+      two_sided <- TRUE
+
+      if (is.null(y)) {
+        # One-sample TOST: H0: |mu_x - mu| >= delta
+        n <- length(x)
+        if (n < 2L) stop("tost_mean: need at least 2 observations.", call. = FALSE)
+        x_bar <- mean(x); s <- sd(x); se <- s / sqrt(n)
+        df <- n - 1
+        method <- "TOST for mean equivalence (one-sample)"
+        data_name <- "x"
+        diff_est <- x_bar - mu
+      } else {
+        # Two-sample TOST: H0: |mu1 - mu2| >= delta
+        y <- stats::na.omit(y)
+        n1 <- length(x); n2 <- length(y)
+        m1 <- mean(x); m2 <- mean(y)
+        s1 <- sd(x); s2 <- sd(y)
+        if (var_equal) {
+          se <- sqrt(((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)) *
+                sqrt(1/n1 + 1/n2)
+          df <- n1 + n2 - 2
+        } else {
+          se <- sqrt(s1^2/n1 + s2^2/n2)
+          v1 <- s1^2/n1; v2 <- s2^2/n2
+          df <- (v1 + v2)^2 / (v1^2/(n1 - 1) + v2^2/(n2 - 1))
+        }
+        n <- n1 + n2
+        method <- "TOST for mean equivalence (two-sample)"
+        data_name <- "x and y"
+        diff_est <- m1 - m2
+      }
+
+      # Two one-sided t-tests
+      # t1: H0: diff <= -delta  vs  H1: diff > -delta  (lower bound)
+      # t2: H0: diff >=  delta  vs  H1: diff <  delta  (upper bound)
+      t1 <- (diff_est - (-delta)) / se
+      t2 <- (diff_est -   delta)  / se
+      p1 <- stats::pt(t1, df = df, lower.tail = FALSE)   # P(T > t1)
+      p2 <- stats::pt(t2, df = df, lower.tail = TRUE)    # P(T < t2)
+      p_max <- max(p1, p2)
+      equiv <- p_max < alpha
+
+      # 100*(1-2*alpha)% CI is the conventional TOST CI
+      ci_alpha <- 1 - 2 * alpha
+      tcrit <- stats::qt(1 - alpha, df = df)
+      ci_low <- diff_est - tcrit * se
+      ci_upp <- diff_est + tcrit * se
+
+      res <- list(
+        test_type   = "tost_mean",
+        method      = method,
+        data_name   = data_name,
+        statistic   = c(t1 = t1, t2 = t2),
+        parameter   = c(df = df),
+        p.value     = p_max,
+        conf.int    = c(ci_low, ci_upp),
+        conf.level  = ci_alpha,
+        estimate    = c("difference" = diff_est),
+        null.value  = c("equivalence margin" = delta),
+        alternative = "equivalence",
+        n           = n,
+        delta       = delta,
+        se          = se,
+        t1 = t1, t2 = t2,
+        p1 = p1, p2 = p2,
+        equivalence = if (equiv) "equivalent" else "not equivalent",
+        dist_type   = "t",
+        data        = list(x = as.numeric(x), y = if (is.null(y)) NULL else as.numeric(y))
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # TOST for two-sample proportion equivalence
+    # =========================================================================
+    .tost_proportion = function(args) {
+      x1 <- args$x1; n1 <- args$n1
+      x2 <- args$x2; n2 <- args$n2
+      delta <- args$delta
+      conf_level <- args$conf_level %||% 0.95
+
+      if (is.null(delta) || length(delta) != 1L || delta <= 0) {
+        stop("tost_proportion: 'delta' must be a positive scalar.",
+             call. = FALSE)
+      }
+
+      alpha <- 1 - conf_level
+      p1 <- x1 / n1; p2 <- x2 / n2
+      diff <- p1 - p2
+      # Unpooled SE for the CI / TOST (common practice for proportion TOST)
+      se <- sqrt(p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2)
+
+      z1 <- (diff - (-delta)) / se
+      z2 <- (diff -   delta)  / se
+      p1_test <- stats::pnorm(z1, lower.tail = FALSE)
+      p2_test <- stats::pnorm(z2, lower.tail = TRUE)
+      p_max <- max(p1_test, p2_test)
+      equiv <- p_max < alpha
+
+      ci_alpha <- 1 - 2 * alpha
+      zcrit <- stats::qnorm(1 - alpha)
+      ci_low <- diff - zcrit * se
+      ci_upp <- diff + zcrit * se
+
+      res <- list(
+        test_type   = "tost_proportion",
+        method      = "TOST for proportion equivalence (two-sample)",
+        data_name   = sprintf("p1 = %d/%d, p2 = %d/%d", x1, n1, x2, n2),
+        statistic   = c(z1 = z1, z2 = z2),
+        parameter   = NULL,
+        p.value     = p_max,
+        conf.int    = c(ci_low, ci_upp),
+        conf.level  = ci_alpha,
+        estimate    = c("p1" = p1, "p2" = p2, "difference" = diff),
+        null.value  = c("equivalence margin" = delta),
+        alternative = "equivalence",
+        n1 = n1, n2 = n2,
+        x1 = x1, x2 = x2,
+        delta = delta,
+        se = se,
+        z1 = z1, z2 = z2,
+        p1_test = p1_test, p2_test = p2_test,
+        equivalence = if (equiv) "equivalent" else "not equivalent",
+        dist_type = "norm",
+        data = list(x = NULL, y = NULL)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Non-inferiority test (one-sided)
+    # =========================================================================
+    .non_inferiority = function(args) {
+      type <- args$type %||% "mean"
+      delta <- args$delta
+      conf_level <- args$conf_level %||% 0.95
+
+      if (is.null(delta) || length(delta) != 1L) {
+        stop("non_inferiority: 'delta' must be a scalar margin.", call. = FALSE)
+      }
+
+      alpha <- 1 - conf_level
+
+      if (type == "mean") {
+        x <- stats::na.omit(args$x)
+        y <- args$y
+        mu <- args$mu %||% 0
+        var_equal <- args$var.equal %||% FALSE
+
+        if (is.null(y)) {
+          n <- length(x)
+          if (n < 2L) stop("non_inferiority: need at least 2 observations.",
+                           call. = FALSE)
+          x_bar <- mean(x); s <- sd(x); se <- s / sqrt(n); df <- n - 1
+          diff_est <- x_bar - mu
+          data_name <- "x"
+          raw_y <- NULL
+        } else {
+          y <- stats::na.omit(y)
+          n1 <- length(x); n2 <- length(y)
+          m1 <- mean(x); m2 <- mean(y)
+          s1 <- sd(x); s2 <- sd(y)
+          if (var_equal) {
+            se <- sqrt(((n1-1)*s1^2 + (n2-1)*s2^2) / (n1+n2-2)) * sqrt(1/n1 + 1/n2)
+            df <- n1 + n2 - 2
+          } else {
+            se <- sqrt(s1^2/n1 + s2^2/n2)
+            v1 <- s1^2/n1; v2 <- s2^2/n2
+            df <- (v1 + v2)^2 / (v1^2/(n1-1) + v2^2/(n2-1))
+          }
+          n <- n1 + n2
+          diff_est <- m1 - m2
+          data_name <- "x and y"
+          raw_y <- as.numeric(y)
+        }
+        # H0: diff <= -delta  vs  H1: diff > -delta
+        t_stat <- (diff_est - (-delta)) / se
+        p_val <- stats::pt(t_stat, df = df, lower.tail = FALSE)
+        ci_low <- diff_est - stats::qt(1 - alpha, df = df) * se
+        res <- list(
+          test_type   = "non_inferiority",
+          method      = sprintf("Non-inferiority test (mean, delta = %.4f)", delta),
+          data_name   = data_name,
+          statistic   = c(t = t_stat),
+          parameter   = c(df = df),
+          p.value     = p_val,
+          conf.int    = c(ci_low, Inf),
+          conf.level  = conf_level,
+          estimate    = c("difference" = diff_est),
+          null.value  = c("non-inferiority margin" = -delta),
+          alternative = "greater",
+          n = n,
+          delta = delta,
+          se = se,
+          type = "mean",
+          non_inferior = p_val < alpha,
+          dist_type = "t",
+          data = list(x = as.numeric(x), y = raw_y)
+        )
+      } else if (type == "proportion") {
+        x1 <- args$x1; n1 <- args$n1
+        x2 <- args$x2; n2 <- args$n2
+        if (is.null(x1) || is.null(n1) || is.null(x2) || is.null(n2)) {
+          stop("non_inferiority (proportion): x1/n1/x2/n2 are required.",
+               call. = FALSE)
+        }
+        p1 <- x1/n1; p2 <- x2/n2
+        diff <- p1 - p2
+        # Pooled SE under the null for the non-inferiority margin
+        se <- sqrt(p1*(1-p1)/n1 + p2*(1-p2)/n2)
+        z_stat <- (diff - (-delta)) / se
+        p_val <- stats::pnorm(z_stat, lower.tail = FALSE)
+        ci_low <- diff - stats::qnorm(1 - alpha) * se
+        res <- list(
+          test_type   = "non_inferiority",
+          method      = sprintf("Non-inferiority test (proportion, delta = %.4f)", delta),
+          data_name   = sprintf("p1 = %d/%d, p2 = %d/%d", x1, n1, x2, n2),
+          statistic   = c(z = z_stat),
+          parameter   = NULL,
+          p.value     = p_val,
+          conf.int    = c(ci_low, Inf),
+          conf.level  = conf_level,
+          estimate    = c("p1" = p1, "p2" = p2, "difference" = diff),
+          null.value  = c("non-inferiority margin" = -delta),
+          alternative = "greater",
+          n1 = n1, n2 = n2,
+          x1 = x1, x2 = x2,
+          delta = delta,
+          se = se,
+          type = "proportion",
+          non_inferior = p_val < alpha,
+          dist_type = "norm",
+          data = list(x = NULL, y = NULL)
+        )
+      } else {
+        stop("non_inferiority: type must be 'mean' or 'proportion'.", call. = FALSE)
+      }
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Superiority test (one-sided)
+    # =========================================================================
+    .superiority = function(args) {
+      type <- args$type %||% "mean"
+      delta <- args$delta
+      conf_level <- args$conf_level %||% 0.95
+
+      if (is.null(delta) || length(delta) != 1L) {
+        stop("superiority: 'delta' must be a scalar margin.", call. = FALSE)
+      }
+
+      alpha <- 1 - conf_level
+
+      if (type == "mean") {
+        x <- stats::na.omit(args$x)
+        y <- args$y
+        mu <- args$mu %||% 0
+        var_equal <- args$var.equal %||% FALSE
+
+        if (is.null(y)) {
+          n <- length(x)
+          if (n < 2L) stop("superiority: need at least 2 observations.",
+                           call. = FALSE)
+          x_bar <- mean(x); s <- sd(x); se <- s / sqrt(n); df <- n - 1
+          diff_est <- x_bar - mu
+          data_name <- "x"
+          raw_y <- NULL
+        } else {
+          y <- stats::na.omit(y)
+          n1 <- length(x); n2 <- length(y)
+          m1 <- mean(x); m2 <- mean(y)
+          s1 <- sd(x); s2 <- sd(y)
+          if (var_equal) {
+            se <- sqrt(((n1-1)*s1^2 + (n2-1)*s2^2) / (n1+n2-2)) * sqrt(1/n1 + 1/n2)
+            df <- n1 + n2 - 2
+          } else {
+            se <- sqrt(s1^2/n1 + s2^2/n2)
+            v1 <- s1^2/n1; v2 <- s2^2/n2
+            df <- (v1 + v2)^2 / (v1^2/(n1-1) + v2^2/(n2-1))
+          }
+          n <- n1 + n2
+          diff_est <- m1 - m2
+          data_name <- "x and y"
+          raw_y <- as.numeric(y)
+        }
+        # H0: diff <= delta  vs  H1: diff > delta
+        t_stat <- (diff_est - delta) / se
+        p_val <- stats::pt(t_stat, df = df, lower.tail = FALSE)
+        ci_low <- diff_est - stats::qt(1 - alpha, df = df) * se
+        res <- list(
+          test_type   = "superiority",
+          method      = sprintf("Superiority test (mean, delta = %.4f)", delta),
+          data_name   = data_name,
+          statistic   = c(t = t_stat),
+          parameter   = c(df = df),
+          p.value     = p_val,
+          conf.int    = c(ci_low, Inf),
+          conf.level  = conf_level,
+          estimate    = c("difference" = diff_est),
+          null.value  = c("superiority margin" = delta),
+          alternative = "greater",
+          n = n,
+          delta = delta,
+          se = se,
+          type = "mean",
+          superior = p_val < alpha,
+          dist_type = "t",
+          data = list(x = as.numeric(x), y = raw_y)
+        )
+      } else if (type == "proportion") {
+        x1 <- args$x1; n1 <- args$n1
+        x2 <- args$x2; n2 <- args$n2
+        if (is.null(x1) || is.null(n1) || is.null(x2) || is.null(n2)) {
+          stop("superiority (proportion): x1/n1/x2/n2 are required.",
+               call. = FALSE)
+        }
+        p1 <- x1/n1; p2 <- x2/n2
+        diff <- p1 - p2
+        se <- sqrt(p1*(1-p1)/n1 + p2*(1-p2)/n2)
+        z_stat <- (diff - delta) / se
+        p_val <- stats::pnorm(z_stat, lower.tail = FALSE)
+        ci_low <- diff - stats::qnorm(1 - alpha) * se
+        res <- list(
+          test_type   = "superiority",
+          method      = sprintf("Superiority test (proportion, delta = %.4f)", delta),
+          data_name   = sprintf("p1 = %d/%d, p2 = %d/%d", x1, n1, x2, n2),
+          statistic   = c(z = z_stat),
+          parameter   = NULL,
+          p.value     = p_val,
+          conf.int    = c(ci_low, Inf),
+          conf.level  = conf_level,
+          estimate    = c("p1" = p1, "p2" = p2, "difference" = diff),
+          null.value  = c("superiority margin" = delta),
+          alternative = "greater",
+          n1 = n1, n2 = n2,
+          x1 = x1, x2 = x2,
+          delta = delta,
+          se = se,
+          type = "proportion",
+          superior = p_val < alpha,
+          dist_type = "norm",
+          data = list(x = NULL, y = NULL)
+        )
+      } else {
+        stop("superiority: type must be 'mean' or 'proportion'.", call. = FALSE)
+      }
 
       new_stat_result(res, "htest")
     }

@@ -27,16 +27,8 @@
 #'
 #' @export
 HTestPlotter <- R6::R6Class("HTestPlotter",
+  inherit = StatPlotter,
   public = list(
-    #' @field theme_obj Active `IqrTheme` object (NULL until a theme resolves).
-    theme_obj = NULL,
-
-    #' @description Initialize with a theme
-    #' @param theme Theme name (e.g. `"academic"`) or an `IqrTheme` object.
-    initialize = function(theme = "academic") {
-      self$theme_obj <- .resolve_theme(theme)
-    },
-
     #' @description Unified plot entry point (Contract 2 signature).
     #'
     #' @param result A `stat_result` returned by `HTestAnalyzer`.
@@ -109,14 +101,6 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
           subtitle = sprintf("statistic = %.4f, p-value = %.4f",
                              as.numeric(result$statistic[1]), result$p.value)
         )
-    },
-
-    #' @description Set / replace the active theme
-    #' @param theme Theme name or `IqrTheme` object
-    #' @return Invisible self (for chaining)
-    set_theme = function(theme) {
-      self$theme_obj <- .resolve_theme(theme)
-      invisible(self)
     }
   ),
 
@@ -128,7 +112,18 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
     .auto_select = function(result) {
       tt <- result$test_type
       x <- result$data$x
+      # Summary-only tests (no raw x) -> curve
       if (tt %in% c("prop_test_1s", "prop_test_2s", "chisq_test") || is.null(x)) {
+        return("curve")
+      }
+      # Non-parametric rank tests shine on box plots of the raw data
+      if (tt %in% c("wilcoxon_signed_rank", "wilcoxon_rank_sum",
+                    "kruskal_wallis", "friedman")) {
+        return("box")
+      }
+      # Equivalence / non-inferiority / superiority: dedicated text-panel curve
+      if (tt %in% c("tost_mean", "tost_proportion",
+                    "non_inferiority", "superiority")) {
         return("curve")
       }
       "combined"
@@ -143,6 +138,15 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         if (tt %in% c("prop_test_1s", "prop_test_2s", "chisq_test") || is.null(x)) {
           warning("[HTestPlotter] plot_type = '", plot_type,
                   "' not available for '", tt, "'. Falling back to 'curve'.",
+                  call. = FALSE)
+          return("curve")
+        }
+        # Proportion-based equivalence tests have no raw x either
+        if (tt %in% c("tost_proportion") ||
+            (tt %in% c("non_inferiority", "superiority") &&
+             identical(result$type, "proportion"))) {
+          warning("[HTestPlotter] plot_type = '", plot_type,
+                  "' not available for '", tt, "' (proportion). Falling back to 'curve'.",
                   call. = FALSE)
           return("curve")
         }
@@ -201,6 +205,19 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         return(private$.chisq_curve(result, theme))
       }
 
+      # --- Non-parametric rank tests: no natural distribution curve ---
+      # Fall back to a text panel summarizing the rank-based statistic.
+      if (tt %in% c("wilcoxon_signed_rank", "wilcoxon_rank_sum",
+                    "kruskal_wallis", "friedman")) {
+        return(private$.rank_text_panel(result, theme))
+      }
+
+      # --- Equivalence / non-inferiority / superiority tests ---
+      if (tt %in% c("tost_mean", "tost_proportion",
+                    "non_inferiority", "superiority")) {
+        return(private$.equivalence_text_panel(result, theme))
+      }
+
       stop("[HTestPlotter] Unsupported test_type: ", tt, call. = FALSE)
     },
 
@@ -256,6 +273,68 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         ))
       }
 
+      # --- Wilcoxon signed rank (one-sample): box plot vs mu ---
+      if (tt == "wilcoxon_signed_rank" && is.null(y)) {
+        mu <- if (!is.null(result$null.value)) result$null.value[1] else 0
+        return(iQualityR.plot::plot_hypothesis_box(
+          x = x, mu = mu, sigma = NULL,
+          alternative = result$alternative,
+          conf_level = result$conf.level %||% 0.95,
+          show_table = show_table, theme = theme
+        ))
+      }
+
+      # --- Wilcoxon signed rank (paired): before/after paired plot ---
+      if (tt == "wilcoxon_signed_rank" && !is.null(y)) {
+        .require_data(x, y, tt)
+        subtitle <- sprintf("pseudo-median diff = %.4f, p-value = %.4f",
+                            as.numeric(result$estimate[1]), result$p.value)
+        return(iQualityR.plot::plot_paired_before_after(
+          x = x, y = y, subtitle = subtitle, theme = theme
+        ))
+      }
+
+      # --- Wilcoxon rank sum (two-sample): two-group box plot ---
+      if (tt == "wilcoxon_rank_sum") {
+        .require_data(x, y, tt)
+        subtitle <- sprintf("W = %.4f, p-value = %.4f",
+                            as.numeric(result$statistic[1]), result$p.value)
+        return(iQualityR.plot::plot_hypothesis_box_two_group(
+          x = x, y = y, subtitle = subtitle,
+          title = "Wilcoxon Rank Sum (Mann-Whitney U)", theme = theme
+        ))
+      }
+
+      # --- Kruskal-Wallis: k-group box plot (built inline) ---
+      if (tt == "kruskal_wallis") {
+        return(private$.kruskal_box(result, show_table, theme))
+      }
+
+      # --- Friedman: per-block treatment profile (inline) ---
+      if (tt == "friedman") {
+        return(private$.friedman_profile(result, theme))
+      }
+
+      # --- TOST mean (one-sample with raw x): box plot vs reference mu ---
+      if (tt == "tost_mean" && is.null(y)) {
+        mu <- if (!is.null(result$null.value)) {
+          # null.value is the equivalence margin; use estimate + margin to back
+          # out the reference. For one-sample TOST, estimate = mean(x) - mu,
+          # so reference mu = mean(x) - estimate.
+          mean(x) - as.numeric(result$estimate[1])
+        } else 0
+        subtitle <- sprintf("delta = %.4f, %s, p-value = %.4f",
+                            result$delta,
+                            result$equivalence %||% "",
+                            result$p.value)
+        return(iQualityR.plot::plot_hypothesis_box(
+          x = x, mu = mu, sigma = NULL,
+          alternative = "two.sided",
+          conf_level = result$conf.level %||% 0.95,
+          show_table = show_table, theme = theme
+        ))
+      }
+
       stop("[HTestPlotter] Box plot not available for '", tt,
            "'. Use plot_type = 'curve' instead.", call. = FALSE)
     },
@@ -289,6 +368,130 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         stat_value = stat_value, df = df_val, p_value = p_val,
         theme = theme
       )
+    },
+
+    # =====================================================================
+    # Non-parametric helpers
+    # =====================================================================
+
+    # Text-panel fallback for non-parametric tests when a curve is requested
+    # but the rank-based statistic has no smooth reference distribution to draw.
+    .rank_text_panel = function(result, theme) {
+      stat_value <- as.numeric(result$statistic[1])
+      stat_name <- names(result$statistic)[1] %||% "statistic"
+      df_val <- result$parameter
+      p_val <- result$p.value
+      label <- sprintf("%s\n%s = %.4f, %s, p-value = %.4f",
+                       result$method %||% result$test_type,
+                       stat_name, stat_value,
+                       if (is.null(df_val) || length(df_val) == 0L)
+                         "rank-based" else
+                         paste(names(df_val), df_val, sep = " = ", collapse = ", "),
+                       p_val)
+      ggplot2::ggplot(data.frame(x = 0, y = 0, label = label)) +
+        ggplot2::geom_text(ggplot2::aes(x = x, y = y, label = label),
+                           size = 4, hjust = 0.5) +
+        ggplot2::theme_void() +
+        ggplot2::labs(title = result$method %||% result$test_type,
+                      caption = "Rank-based test: no smooth reference curve.")
+    },
+
+    # Equivalence / non-inferiority / superiority text panel.
+    # These tests carry a margin (delta) and a binary conclusion flag; there is
+    # no single smooth reference distribution to draw, so a text panel is the
+    # clearest visualization of the result and the margin.
+    .equivalence_text_panel = function(result, theme) {
+      tt <- result$test_type
+      p_val <- result$p.value
+      delta <- result$delta %||% NA
+      ci <- result$conf.int
+      stat_vals <- result$statistic
+      stat_str <- paste(names(stat_vals), sprintf("%.4f", as.numeric(stat_vals)),
+                        sep = " = ", collapse = ", ")
+
+      # Pick the binary conclusion label carried on the result
+      conclusion <- switch(tt,
+        "tost_mean"       = ,
+        "tost_proportion" = result$equivalence %||% "",
+        "non_inferiority" = if (isTRUE(result$non_inferior))
+                              "non-inferior" else "NOT non-inferior",
+        "superiority"     = if (isTRUE(result$superior))
+                              "superior" else "NOT superior",
+        ""
+      )
+
+      ci_str <- if (!is.null(ci) && length(ci) == 2L)
+        sprintf("\n%.1f%% CI: [%.4f, %.4f]",
+                100 * (result$conf.level %||% 0.95), ci[1], ci[2]) else ""
+
+      label <- sprintf("%s\n%s\np-value = %.4f\ndelta = %.4f\nConclusion: %s%s",
+                       result$method %||% tt, stat_str, p_val, delta,
+                       conclusion, ci_str)
+
+      ggplot2::ggplot(data.frame(x = 0, y = 0, label = label)) +
+        ggplot2::geom_text(ggplot2::aes(x = x, y = y, label = label),
+                           size = 4, hjust = 0.5) +
+        ggplot2::theme_void() +
+        ggplot2::labs(
+          title = result$method %||% tt,
+          caption = "Equivalence / margin test: conclusion shown with margin and CI."
+        )
+    },
+
+    # Kruskal-Wallis: grouped box plot across k groups.
+    .kruskal_box = function(result, show_table, theme) {
+      x <- result$data$x
+      g <- result$data$y
+      if (is.null(x) || is.null(g)) {
+        stop("[HTestPlotter] kruskal_wallis requires data$x and data$y (grouping).",
+             call. = FALSE)
+      }
+      g <- as.factor(g)
+      df_plot <- data.frame(value = x, group = g)
+      subtitle <- sprintf("chi-squared = %.4f, df = %d, p-value = %.4f",
+                          as.numeric(result$statistic[1]),
+                          as.integer(result$parameter),
+                          result$p.value)
+      p <- ggplot2::ggplot(df_plot, ggplot2::aes(x = group, y = value, fill = group)) +
+        ggplot2::geom_boxplot(alpha = 0.7) +
+        ggplot2::geom_jitter(width = 0.15, alpha = 0.5, size = 1.2) +
+        ggplot2::labs(
+          title = "Kruskal-Wallis Rank Sum Test",
+          subtitle = subtitle,
+          x = "Group", y = "Value"
+        ) +
+        ggplot2::theme_minimal() +
+        ggplot2::theme(legend.position = "none")
+      p
+    },
+
+    # Friedman: per-block treatment profile plot (wide matrix -> line plot).
+    .friedman_profile = function(result, theme) {
+      mat <- result$wide_matrix
+      if (is.null(mat)) {
+        # Long-form input without cached matrix -- fall back to text panel.
+        return(private$.rank_text_panel(result, theme))
+      }
+      df_plot <- data.frame(
+        block   = factor(rep(seq_len(nrow(mat)), ncol(mat))),
+        treatment = factor(rep(seq_len(ncol(mat)), each = nrow(mat)),
+                           labels = paste0("T", seq_len(ncol(mat)))),
+        value = as.numeric(mat)
+      )
+      subtitle <- sprintf("chi-squared = %.4f, df = %d, p-value = %.4f",
+                          as.numeric(result$statistic[1]),
+                          as.integer(result$parameter),
+                          result$p.value)
+      ggplot2::ggplot(df_plot, ggplot2::aes(x = treatment, y = value,
+                                            group = block, colour = block)) +
+        ggplot2::geom_line(alpha = 0.6) +
+        ggplot2::geom_point(size = 1.8) +
+        ggplot2::labs(
+          title = "Friedman Rank Sum Test",
+          subtitle = subtitle,
+          x = "Treatment", y = "Response", colour = "Block"
+        ) +
+        ggplot2::theme_minimal()
     }
   )
 )

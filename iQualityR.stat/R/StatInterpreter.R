@@ -246,10 +246,34 @@ StatInterpreter <- R6::R6Class("StatInterpreter",
       p_val <- htest_result$p.value
       statistic <- unlist(htest_result$statistic)
       conf_int <- htest_result$conf.int
+      tt <- htest_result$test_type %||% ""
+
+      # Equivalence / non-inferiority / superiority tests use a reversed
+      # conclusion logic: a small p-value CONFIRMS the desired claim, which
+      # is the opposite of standard difference-detecting tests. Branch off
+      # into a dedicated interpreter for these test types.
+      if (tt %in% c("tost_mean", "tost_proportion",
+                    "non_inferiority", "superiority")) {
+        return(private$.interpret_equivalence(htest_result, audience))
+      }
 
       # Determine significance
       sig_005 <- p_val < 0.05
       sig_001 <- p_val < 0.01
+
+      # Wording: pick a comparison scope based on the test_type so the
+      # conclusion text fits k-sample / block designs as well as 2-sample tests.
+      scope <- switch(tt,
+        "kruskal_wallis"    = "the groups",
+        "friedman"          = "the treatments across blocks",
+        "wilcoxon_rank_sum" = "the two groups",
+        "wilcoxon_signed_rank" = if (isTRUE(htest_result$paired))
+                                   "the paired observations" else "the sample and the hypothesized location",
+        "chisq_test"        = "the observed and expected frequencies",
+        "f_test"            = "the two variances",
+        "prop_test_2s"      = "the two proportions",
+        "the two groups/processes"
+      )
 
       header <- switch(audience,
         "manager" = "Hypothesis Test Result Interpretation (Manager Version)",
@@ -279,7 +303,7 @@ StatInterpreter <- R6::R6Class("StatInterpreter",
           lines <- c(lines,
             "[Conclusion]",
             sprintf("  P Value = %.4f < 0.01, result is highly significant.", p_val),
-            "  We can be confident that there is a substantial difference between the two groups/processes,",
+            sprintf("  We can be confident that there is a substantial difference between %s,", scope),
             "  and this difference is very unlikely to be caused by random fluctuation.",
             "  Recommendation: The root cause of the difference should be investigated and appropriate measures taken."
           )
@@ -287,7 +311,7 @@ StatInterpreter <- R6::R6Class("StatInterpreter",
           lines <- c(lines,
             "[Conclusion]",
             sprintf("  P Value = %.4f < 0.05, result is statistically significant.", p_val),
-            "  There is sufficient evidence that there is a difference between the two groups/processes,",
+            sprintf("  There is sufficient evidence that there is a difference between %s,", scope),
             "  and this difference is unlikely to be caused by random fluctuation.",
             "  Recommendation: The source of the difference should be investigated and the process evaluated for adjustment."
           )
@@ -295,7 +319,7 @@ StatInterpreter <- R6::R6Class("StatInterpreter",
           lines <- c(lines,
             "[Conclusion]",
             sprintf("  P Value = %.4f > 0.05, result is not significant.", p_val),
-            "  There is insufficient evidence of a substantial difference between the two groups/processes.",
+            sprintf("  There is insufficient evidence of a substantial difference between %s.", scope),
             "  The observed difference is likely due to random fluctuation.",
             "  Recommendation: If the difference is considered important in business, consider increasing sample size and retesting."
           )
@@ -316,6 +340,101 @@ StatInterpreter <- R6::R6Class("StatInterpreter",
                   ifelse(sig_005, "", "do not ")),
           sprintf("  P Value = %.4f means: if the null hypothesis is true, the probability of observing the current or more extreme result is %.2f%%.",
                   p_val, p_val * 100)
+        )
+      }
+
+      paste(c(lines, "", separator), collapse = "\n")
+    },
+
+    # ============================================================================
+    # Equivalence / non-inferiority / superiority interpretation
+    # ============================================================================
+    .interpret_equivalence = function(htest_result, audience) {
+      method <- htest_result$method
+      p_val <- htest_result$p.value
+      statistic <- unlist(htest_result$statistic)
+      conf_int <- htest_result$conf.int
+      tt <- htest_result$test_type
+      delta <- htest_result$delta
+
+      # Decide the claim label and the binary outcome flag carried on the result
+      claim <- switch(tt,
+        "tost_mean"       = "mean equivalence",
+        "tost_proportion" = "proportion equivalence",
+        "non_inferiority" = "non-inferiority",
+        "superiority"     = "superiority",
+        "the desired claim"
+      )
+
+      confirmed <- switch(tt,
+        "tost_mean"       = identical(htest_result$equivalence, "equivalent"),
+        "tost_proportion" = identical(htest_result$equivalence, "equivalent"),
+        "non_inferiority" = isTRUE(htest_result$non_inferior),
+        "superiority"     = isTRUE(htest_result$superior),
+        FALSE
+      )
+
+      header <- switch(audience,
+        "manager"   = sprintf("%s Test Result Interpretation (Manager Version)",
+                              tools::toTitleCase(claim)),
+        "technical" = sprintf("%s Test Result Interpretation (Technical Version)",
+                              tools::toTitleCase(claim)),
+        "client"    = sprintf("%s Quality Assurance Report",
+                              tools::toTitleCase(claim)),
+        sprintf("%s Test Result Interpretation", tools::toTitleCase(claim))
+      )
+      separator <- paste0(rep("-", nchar(header)), collapse = "")
+
+      lines <- c(
+        separator,
+        header,
+        separator,
+        "",
+        "[Test Method]",
+        sprintf("  %s", method),
+        "",
+        "[Core Result]",
+        sprintf("  P Value = %.4f", p_val),
+        sprintf("  Test Statistic = %.4f", statistic[1]),
+        sprintf("  Equivalence / Margin (delta) = %.4f", delta),
+        sprintf("  Conclusion: %s is %sconfirmed.",
+                claim, ifelse(confirmed, "", "NOT ")),
+        ""
+      )
+
+      if (!is.null(conf_int)) {
+        lines <- c(lines,
+          "[Confidence Interval]",
+          sprintf("  %.1f%% CI: [%.4f, %.4f]",
+                  100 * (htest_result$conf.level %||% 0.95),
+                  conf_int[1], conf_int[2]),
+          ""
+        )
+      }
+
+      if (audience == "manager") {
+        if (confirmed) {
+          lines <- c(lines,
+            "[Conclusion]",
+            sprintf("  P Value = %.4f confirms %s at the chosen significance level.", p_val, claim),
+            "  The evidence supports the desired practical conclusion (the treatment is within the margin).",
+            "  Recommendation: The process/product can be considered to meet the equivalence / non-inferiority / superiority criterion."
+          )
+        } else {
+          lines <- c(lines,
+            "[Conclusion]",
+            sprintf("  P Value = %.4f does NOT confirm %s.", p_val, claim),
+            "  The evidence is insufficient to declare the desired practical conclusion.",
+            "  Recommendation: Increase sample size, reduce variability, or re-examine the equivalence margin."
+          )
+        }
+      } else {
+        lines <- c(lines,
+          "[Statistical Interpretation]",
+          sprintf("  At significance level alpha = 0.05, %sconfirm the %s claim.",
+                  ifelse(confirmed, "", "do NOT "), claim),
+          sprintf("  P Value = %.4f means: under the null (no %s), the probability of observing the current or more extreme result is %.2f%%.",
+                  p_val, claim, p_val * 100)
         )
       }
 

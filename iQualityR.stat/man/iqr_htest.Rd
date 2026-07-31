@@ -18,6 +18,10 @@ computation (L1 \code{HTestAnalyzer}), plotting (L2 \code{HTestPlotter}), report
 \item \code{prop_test_2s}: Two-sample proportion test
 \item \code{f_test}: Variance equality test (F test)
 \item \code{chisq_test}: Chi-square test
+\item \code{wilcoxon_signed_rank}: Wilcoxon signed rank test (one-sample / paired)
+\item \code{wilcoxon_rank_sum}: Wilcoxon rank sum test (Mann-Whitney U)
+\item \code{kruskal_wallis}: Kruskal-Wallis rank sum test (k independent groups)
+\item \code{friedman}: Friedman rank sum test (randomized complete block)
 }
 
 \strong{Dual interface design} (per Contract 2):
@@ -35,6 +39,15 @@ htest <- iqr_htest$new()
 htest$run("t_test_1s", x = x, mu = 100, alternative = "two.sided")
 htest$interpret(audience = "manager")
 result <- htest_run("t_test_1s", x = x, mu = 100)
+
+# Wilcoxon rank sum test on two independent samples (no normality assumption)
+set.seed(123)
+g1 <- rnorm(20, mean = 50, sd = 5)
+g2 <- rnorm(20, mean = 55, sd = 5)
+htest$run("wilcoxon_rank_sum", x = g1, y = g2, alternative = "two.sided")
+
+# Kruskal-Wallis across 3 groups (pass x as a list of vectors)
+htest$run("kruskal_wallis", x = list(g1, g2, rnorm(20, mean = 60, sd = 5)))
 
 # Plotting requires the iQualityR.plot Suggests package
 if (requireNamespace("iQualityR.plot", quietly = TRUE)) {

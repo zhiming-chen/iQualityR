@@ -18,6 +18,10 @@ Called by \code{iqr_htest} and internal subpackage functions.
 \item Two-sample proportion test
 \item Variance test (F-test)
 \item Chi-square test
+\item Wilcoxon signed rank test (one-sample / paired)
+\item Wilcoxon rank sum test (two-sample, Mann-Whitney U)
+\item Kruskal-Wallis rank sum test (k-sample)
+\item Friedman rank sum test (randomized complete block)
 }
 }
 \section{Methods}{
@@ -32,6 +36,10 @@ Called by \code{iqr_htest} and internal subpackage functions.
 \item \href{#method-HTestAnalyzer-prop_test_2s}{\code{HTestAnalyzer$prop_test_2s()}}
 \item \href{#method-HTestAnalyzer-f_test}{\code{HTestAnalyzer$f_test()}}
 \item \href{#method-HTestAnalyzer-chisq_test}{\code{HTestAnalyzer$chisq_test()}}
+\item \href{#method-HTestAnalyzer-wilcoxon_signed_rank}{\code{HTestAnalyzer$wilcoxon_signed_rank()}}
+\item \href{#method-HTestAnalyzer-wilcoxon_rank_sum}{\code{HTestAnalyzer$wilcoxon_rank_sum()}}
+\item \href{#method-HTestAnalyzer-kruskal_wallis}{\code{HTestAnalyzer$kruskal_wallis()}}
+\item \href{#method-HTestAnalyzer-friedman}{\code{HTestAnalyzer$friedman()}}
 \item \href{#method-HTestAnalyzer-clone}{\code{HTestAnalyzer$clone()}}
 }
 }
@@ -49,7 +57,9 @@ Perform hypothesis test by test_type code
 \describe{
 \item{\code{test_type}}{Test type code, one of:
 \code{"z_test_1s"}, \code{"t_test_1s"}, \code{"t_test_2s"}, \code{"t_test_paired"},
-\code{"prop_test_1s"}, \code{"prop_test_2s"}, \code{"f_test"}, \code{"chisq_test"}}
+\code{"prop_test_1s"}, \code{"prop_test_2s"}, \code{"f_test"}, \code{"chisq_test"},
+\code{"wilcoxon_signed_rank"}, \code{"wilcoxon_rank_sum"},
+\code{"kruskal_wallis"}, \code{"friedman"}}
 
 \item{\code{...}}{Test parameters (forwarded to the matching private method)}
 }
@@ -301,6 +311,135 @@ Chi-square test
 }
 \subsection{Returns}{
 A \code{stat_result} S3 object
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-wilcoxon_signed_rank"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-wilcoxon_signed_rank}{}}}
+\subsection{Method \code{wilcoxon_signed_rank()}}{
+Wilcoxon signed rank test (one-sample or paired)
+
+Wraps \link[stats:wilcox.test]{stats::wilcox.test} for the one-sample / paired case. When \code{y} is
+supplied the test is performed on the paired differences \code{x - y}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$wilcoxon_signed_rank(
+  x,
+  y = NULL,
+  mu = 0,
+  alternative = "two.sided",
+  conf_level = 0.95,
+  paired = TRUE
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{First (or only) sample.}
+
+\item{\code{y}}{Optional second sample for paired comparison.}
+
+\item{\code{mu}}{Hypothesized location of \code{x} (or of \code{x - y} when \code{y} given).}
+
+\item{\code{alternative}}{Test direction (\code{"two.sided"}, \code{"less"}, \code{"greater"}).}
+
+\item{\code{conf_level}}{Confidence level.}
+
+\item{\code{paired}}{Logical; if \code{TRUE} and \code{y} is supplied, runs paired test.
+Defaults to \code{TRUE} when \code{y} is non-NULL to honour the non-parametric
+paired-test contract.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-wilcoxon_rank_sum"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-wilcoxon_rank_sum}{}}}
+\subsection{Method \code{wilcoxon_rank_sum()}}{
+Wilcoxon rank sum test (Mann-Whitney U, two-sample)
+
+Wraps \link[stats:wilcox.test]{stats::wilcox.test} for two independent samples.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$wilcoxon_rank_sum(
+  x,
+  y,
+  mu = 0,
+  alternative = "two.sided",
+  conf_level = 0.95
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{First sample.}
+
+\item{\code{y}}{Second sample.}
+
+\item{\code{mu}}{Hypothesized shift parameter.}
+
+\item{\code{alternative}}{Test direction.}
+
+\item{\code{conf_level}}{Confidence level.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-kruskal_wallis"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-kruskal_wallis}{}}}
+\subsection{Method \code{kruskal_wallis()}}{
+Kruskal-Wallis rank sum test
+
+Wraps \link[stats:kruskal.test]{stats::kruskal.test} to compare \code{k} independent groups.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$kruskal_wallis(x, g = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector of observations, or a list of numeric vectors.}
+
+\item{\code{g}}{Grouping vector / factor (ignored when \code{x} is a list).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-friedman"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-friedman}{}}}
+\subsection{Method \code{friedman()}}{
+Friedman rank sum test (randomized complete block)
+
+Wraps \link[stats:friedman.test]{stats::friedman.test}. Accepts either a wide matrix / data frame
+(rows = blocks, columns = treatments) or the long form \code{x}/\code{g}/\code{b}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$friedman(x, g = NULL, b = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector, matrix, or data frame.}
+
+\item{\code{g}}{Treatment grouping vector (ignored when \code{x} is a matrix).}
+
+\item{\code{b}}{Blocking vector (ignored when \code{x} is a matrix).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
 }
 }
 \if{html}{\out{<hr>}}
