@@ -31,6 +31,8 @@
 #' - `tost_proportion`: TOST for two-sample proportion equivalence
 #' - `non_inferiority`: Non-inferiority test (mean or proportion, one-sided)
 #' - `superiority`: Superiority test (mean or proportion, one-sided)
+#' - `poisson_test_1s`: One-sample Poisson rate test (exact)
+#' - `poisson_test_2s`: Two-sample Poisson rate test (rate ratio, exact)
 #'
 #' **Dual interface design** (per Contract 2):
 #' - R6 class interface: `iqr_htest$new()$run()$plot()` (suitable for chaining)
@@ -63,6 +65,12 @@
 #' # Non-inferiority test for two proportions (treatment not worse than control by delta)
 #' htest$run("non_inferiority", type = "proportion",
 #'           x1 = 45, n1 = 100, x2 = 42, n2 = 100, delta = 0.1)
+#'
+#' # One-sample Poisson rate test: 12 defects observed over 2 hours, H0 rate = 5/hour
+#' htest$run("poisson_test_1s", x = 12, T_exposure = 2, r = 5)
+#'
+#' # Two-sample Poisson rate test: compare defect rates of two lines
+#' htest$run("poisson_test_2s", x1 = 15, T1 = 3, x2 = 25, T2 = 3)
 #'
 #' # Plotting requires the iQualityR.plot Suggests package
 #' if (requireNamespace("iQualityR.plot", quietly = TRUE)) {

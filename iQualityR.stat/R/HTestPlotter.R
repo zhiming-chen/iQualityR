@@ -218,6 +218,11 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         return(private$.equivalence_text_panel(result, theme))
       }
 
+      # --- Poisson rate tests: summary-only, text panel ---
+      if (tt %in% c("poisson_test_1s", "poisson_test_2s")) {
+        return(private$.poisson_text_panel(result, theme))
+      }
+
       stop("[HTestPlotter] Unsupported test_type: ", tt, call. = FALSE)
     },
 
@@ -435,6 +440,41 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         ggplot2::labs(
           title = result$method %||% tt,
           caption = "Equivalence / margin test: conclusion shown with margin and CI."
+        )
+    },
+
+    # Poisson rate test text panel.  These are summary-only tests (no raw
+    # data vector) so a text panel is the natural visualization.
+    .poisson_text_panel = function(result, theme) {
+      p_val <- result$p.value
+      ci <- result$conf.int
+      stat_vals <- result$statistic
+      stat_str <- paste(names(stat_vals), sprintf("%.0f", as.numeric(stat_vals)),
+                        sep = " = ", collapse = ", ")
+
+      ci_str <- if (!is.null(ci) && length(ci) == 2L)
+        sprintf("\n%.1f%% CI: [%.4f, %.4f]",
+                100 * (result$conf.level %||% 0.95), ci[1], ci[2]) else ""
+
+      if (result$test_type == "poisson_test_1s") {
+        est_str <- sprintf("\nestimated rate = %.4f (null = %.4f)",
+                           result$rate, result$r0 %||% 1)
+      } else {
+        est_str <- sprintf("\nrate1 = %.4f, rate2 = %.4f, ratio = %.4f",
+                           result$rate1, result$rate2, result$rate_ratio)
+      }
+
+      label <- sprintf("%s\n%s\np-value = %.4f%s%s",
+                       result$method %||% result$test_type,
+                       stat_str, p_val, est_str, ci_str)
+
+      ggplot2::ggplot(data.frame(x = 0, y = 0, label = label)) +
+        ggplot2::geom_text(ggplot2::aes(x = x, y = y, label = label),
+                           size = 4, hjust = 0.5) +
+        ggplot2::theme_void() +
+        ggplot2::labs(
+          title = result$method %||% result$test_type,
+          caption = "Exact Poisson test: count, rate, and CI shown."
         )
     },
 

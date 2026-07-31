@@ -29,6 +29,8 @@
 #' - TOST for proportion equivalence (two-sample)
 #' - Non-inferiority test (mean or proportion, one-sided)
 #' - Superiority test (mean or proportion, one-sided)
+#' - One-sample Poisson rate test
+#' - Two-sample Poisson rate test (rate ratio)
 #'
 #' @export
 HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
@@ -40,7 +42,8 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
     #'   `"wilcoxon_signed_rank"`, `"wilcoxon_rank_sum"`,
     #'   `"kruskal_wallis"`, `"friedman"`,
     #'   `"tost_mean"`, `"tost_proportion"`,
-    #'   `"non_inferiority"`, `"superiority"`
+    #'   `"non_inferiority"`, `"superiority"`,
+    #'   `"poisson_test_1s"`, `"poisson_test_2s"`
     #' @param ... Test parameters (forwarded to the matching private method)
     #' @return A `stat_result` S3 object (class `c("stat_result", "htest_result")`)
     analyze = function(test_type, ...) {
@@ -63,6 +66,8 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
         "tost_proportion"      = private$.tost_proportion(args),
         "non_inferiority"      = private$.non_inferiority(args),
         "superiority"          = private$.superiority(args),
+        "poisson_test_1s"      = private$.poisson_test_1s(args),
+        "poisson_test_2s"      = private$.poisson_test_2s(args),
         stop(sprintf("Unknown test type: %s", test_type))
       )
 
@@ -332,6 +337,47 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
         type = match.arg(type), x = x, y = y, mu = mu,
         x1 = x1, n1 = n1, x2 = x2, n2 = n2,
         delta = delta, conf_level = conf_level, var.equal = var.equal
+      ))
+    },
+
+    #' @description One-sample Poisson rate test
+    #'
+    #' Tests whether the observed count `x` over exposure time `T` is
+    #' consistent with a hypothesized rate `r`. Wraps [stats::poisson.test]
+    #' (exact test based on the Poisson distribution).
+    #'
+    #' @param x Observed count (non-negative integer).
+    #' @param T_exposure Exposure time / sample size base (default 1).
+    #' @param r Hypothesized event rate (default 1).
+    #' @param alternative Test direction (`"two.sided"`, `"less"`, `"greater"`).
+    #' @param conf_level Confidence level.
+    #' @return A `stat_result` S3 object.
+    poisson_test_1s = function(x, T_exposure = 1, r = 1,
+                               alternative = "two.sided", conf_level = 0.95) {
+      private$.poisson_test_1s(list(
+        x = x, T_exposure = T_exposure, r = r,
+        alternative = alternative, conf_level = conf_level
+      ))
+    },
+
+    #' @description Two-sample Poisson rate test (rate ratio)
+    #'
+    #' Compares the event rates of two independent Poisson counts.
+    #' Wraps [stats::poisson.test] for the two-sample case. The null
+    #' hypothesis is that the rate ratio `r1 / r2` equals 1.
+    #'
+    #' @param x1 Observed count in group 1.
+    #' @param T1 Exposure time for group 1 (default 1).
+    #' @param x2 Observed count in group 2.
+    #' @param T2 Exposure time for group 2 (default 1).
+    #' @param alternative Test direction.
+    #' @param conf_level Confidence level.
+    #' @return A `stat_result` S3 object.
+    poisson_test_2s = function(x1, T1 = 1, x2 = NULL, T2 = 1,
+                               alternative = "two.sided", conf_level = 0.95) {
+      private$.poisson_test_2s(list(
+        x1 = x1, T1 = T1, x2 = x2, T2 = T2,
+        alternative = alternative, conf_level = conf_level
       ))
     }
   ),
@@ -1428,6 +1474,109 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
       } else {
         stop("superiority: type must be 'mean' or 'proportion'.", call. = FALSE)
       }
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # One-sample Poisson rate test
+    # =========================================================================
+    .poisson_test_1s = function(args) {
+      x <- args$x
+      T_exp <- args$T_exposure %||% 1
+      r <- args$r %||% 1
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+
+      if (is.null(x) || length(x) != 1L || !is.numeric(x) || x < 0) {
+        stop("poisson_test_1s: 'x' must be a non-negative numeric scalar (observed count).",
+             call. = FALSE)
+      }
+      if (length(T_exp) != 1L || !is.numeric(T_exp) || T_exp <= 0) {
+        stop("poisson_test_1s: 'T_exposure' must be a positive scalar.",
+             call. = FALSE)
+      }
+      if (length(r) != 1L || !is.numeric(r) || r <= 0) {
+        stop("poisson_test_1s: 'r' must be a positive scalar (hypothesized rate).",
+             call. = FALSE)
+      }
+
+      ht <- stats::poisson.test(x = as.integer(round(x)), T = T_exp, r = r,
+                                alternative = alternative,
+                                conf.level = conf_level)
+
+      res <- list(
+        test_type   = "poisson_test_1s",
+        method      = "Exact one-sample Poisson rate test",
+        data_name   = sprintf("count = %d, exposure = %g", as.integer(round(x)), T_exp),
+        statistic   = c("count" = as.numeric(ht$statistic)),
+        parameter   = c("exposure" = T_exp),
+        p.value     = ht$p.value,
+        conf.int    = ht$conf.int,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,
+        null.value  = c("rate" = r),
+        alternative = alternative,
+        n           = as.integer(round(x)),
+        T_exposure  = T_exp,
+        rate        = as.numeric(ht$estimate),
+        r0          = r,
+        dist_type   = "poisson",
+        data        = list(x = NULL, y = NULL)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Two-sample Poisson rate test (rate ratio)
+    # =========================================================================
+    .poisson_test_2s = function(args) {
+      x1 <- args$x1; T1 <- args$T1 %||% 1
+      x2 <- args$x2; T2 <- args$T2 %||% 1
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+
+      if (is.null(x1) || is.null(x2) || length(x1) != 1L || length(x2) != 1L ||
+          !is.numeric(x1) || !is.numeric(x2) || x1 < 0 || x2 < 0) {
+        stop("poisson_test_2s: 'x1' and 'x2' must be non-negative numeric scalars.",
+             call. = FALSE)
+      }
+      if (length(T1) != 1L || length(T2) != 1L ||
+          !is.numeric(T1) || !is.numeric(T2) || T1 <= 0 || T2 <= 0) {
+        stop("poisson_test_2s: 'T1' and 'T2' must be positive scalars.",
+             call. = FALSE)
+      }
+
+      ht <- stats::poisson.test(x = c(as.integer(round(x1)), as.integer(round(x2))),
+                                T = c(T1, T2),
+                                alternative = alternative,
+                                conf.level = conf_level)
+
+      rate1 <- as.numeric(x1) / T1
+      rate2 <- as.numeric(x2) / T2
+
+      res <- list(
+        test_type   = "poisson_test_2s",
+        method      = "Exact two-sample Poisson rate test (rate ratio)",
+        data_name   = sprintf("count1 = %d (T=%g), count2 = %d (T=%g)",
+                              as.integer(round(x1)), T1,
+                              as.integer(round(x2)), T2),
+        statistic   = c("count1" = as.numeric(x1), "count2" = as.numeric(x2)),
+        parameter   = c("T1" = T1, "T2" = T2),
+        p.value     = ht$p.value,
+        conf.int    = ht$conf.int,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,
+        null.value  = c("rate ratio" = 1),
+        alternative = alternative,
+        x1 = as.integer(round(x1)), x2 = as.integer(round(x2)),
+        T1 = T1, T2 = T2,
+        rate1 = rate1, rate2 = rate2,
+        rate_ratio = rate1 / rate2,
+        dist_type   = "poisson",
+        data        = list(x = NULL, y = NULL)
+      )
 
       new_stat_result(res, "htest")
     }

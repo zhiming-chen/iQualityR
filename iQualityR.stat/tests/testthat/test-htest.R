@@ -1319,3 +1319,137 @@ test_that("HTestPlotter box plot works for TOST mean one-sample", {
   p <- plotter$plot(result, plot_type = "box")
   expect_true(inherits(p, "ggplot") || inherits(p, "patchwork"))
 })
+
+# ----------------------------------------------------------------------------
+# HTestAnalyzer -- Poisson rate tests (one-sample / two-sample)
+# ----------------------------------------------------------------------------
+
+test_that("One-sample Poisson rate test returns stat_result", {
+  analyzer <- HTestAnalyzer$new()
+  result <- analyzer$poisson_test_1s(x = 12, T_exposure = 2, r = 5)
+  expect_s3_class(result, "stat_result")
+  expect_s3_class(result, "htest_result")
+  expect_equal(result$test_type, "poisson_test_1s")
+  expect_equal(result$dist_type, "poisson")
+  expect_equal(result$alternative, "two.sided")
+  expect_equal(as.numeric(result$statistic["count"]), 12)
+  expect_equal(as.numeric(result$parameter["exposure"]), 2)
+  expect_equal(as.numeric(result$null.value["rate"]), 5)
+  expect_equal(result$rate, 6)  # 12 / 2
+  expect_true(!is.na(result$p.value))
+  expect_true(length(result$conf.int) == 2)
+  expect_null(result$data$x)
+})
+
+test_that("One-sample Poisson test detects rate above null", {
+  analyzer <- HTestAnalyzer$new()
+  # 30 events in 1 hour vs hypothesized rate of 10/hour -> clearly higher
+  result <- analyzer$poisson_test_1s(x = 30, T_exposure = 1, r = 10,
+                                     alternative = "greater")
+  expect_true(result$p.value < 0.05)
+})
+
+test_that("One-sample Poisson test does not reject when rate matches null", {
+  analyzer <- HTestAnalyzer$new()
+  # 10 events in 1 hour vs hypothesized rate of 10/hour -> no rejection
+  result <- analyzer$poisson_test_1s(x = 10, T_exposure = 1, r = 10)
+  expect_true(result$p.value > 0.05)
+})
+
+test_that("One-sample Poisson test with alternative='less'", {
+  analyzer <- HTestAnalyzer$new()
+  # 3 events in 1 hour vs hypothesized rate of 10/hour -> clearly lower
+  result <- analyzer$poisson_test_1s(x = 3, T_exposure = 1, r = 10,
+                                     alternative = "less")
+  expect_equal(result$alternative, "less")
+  expect_true(result$p.value < 0.05)
+})
+
+test_that("One-sample Poisson rejects invalid inputs", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$poisson_test_1s(x = -1), "non-negative")
+  expect_error(analyzer$poisson_test_1s(x = 5, T_exposure = 0), "positive")
+  expect_error(analyzer$poisson_test_1s(x = 5, r = -1), "positive")
+  expect_error(analyzer$poisson_test_1s(x = c(1, 2)), "non-negative")
+})
+
+test_that("Two-sample Poisson rate test returns stat_result", {
+  analyzer <- HTestAnalyzer$new()
+  result <- analyzer$poisson_test_2s(x1 = 15, T1 = 3, x2 = 25, T2 = 3)
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$test_type, "poisson_test_2s")
+  expect_equal(result$dist_type, "poisson")
+  expect_equal(result$rate1, 5)   # 15/3
+  expect_equal(result$rate2, 25/3)  # 25/3
+  expect_equal(as.numeric(result$null.value["rate ratio"]), 1)
+  expect_true(!is.na(result$p.value))
+  expect_true(length(result$conf.int) == 2)
+  expect_null(result$data$x)
+})
+
+test_that("Two-sample Poisson test detects rate difference", {
+  analyzer <- HTestAnalyzer$new()
+  # Line A: 10 defects in 1 hour; Line B: 30 defects in 1 hour
+  result <- analyzer$poisson_test_2s(x1 = 10, T1 = 1, x2 = 30, T2 = 1)
+  expect_true(result$p.value < 0.05)
+})
+
+test_that("Two-sample Poisson test with equal rates does not reject", {
+  analyzer <- HTestAnalyzer$new()
+  # Both lines: 15 defects in 3 hours
+  result <- analyzer$poisson_test_2s(x1 = 15, T1 = 3, x2 = 15, T2 = 3)
+  expect_true(result$p.value > 0.05)
+})
+
+test_that("Two-sample Poisson rejects invalid inputs", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$poisson_test_2s(x1 = -1, x2 = 5), "non-negative")
+  expect_error(analyzer$poisson_test_2s(x1 = 5, x2 = 5, T1 = 0, T2 = 1),
+               "positive")
+  expect_error(analyzer$poisson_test_2s(x1 = 5), "non-negative")
+})
+
+test_that("analyze() dispatches Poisson test types", {
+  analyzer <- HTestAnalyzer$new()
+  r1 <- analyzer$analyze("poisson_test_1s", x = 12, T_exposure = 2, r = 5)
+  expect_equal(r1$test_type, "poisson_test_1s")
+
+  r2 <- analyzer$analyze("poisson_test_2s", x1 = 15, T1 = 3, x2 = 25, T2 = 3)
+  expect_equal(r2$test_type, "poisson_test_2s")
+})
+
+test_that("StatInterpreter handles Poisson one-sample result", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  result <- analyzer$poisson_test_1s(x = 30, T_exposure = 1, r = 10,
+                                     alternative = "greater")
+  out <- interpreter$interpret(result, audience = "manager")
+  expect_type(out, "character")
+  expect_true(grepl("Poisson|poisson|rate", out))
+})
+
+test_that("StatInterpreter handles Poisson two-sample result", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  result <- analyzer$poisson_test_2s(x1 = 10, T1 = 1, x2 = 30, T2 = 1)
+  out <- interpreter$interpret(result, audience = "technical")
+  expect_true(grepl("event rates|P Value", out))
+})
+
+# ---- HTestPlotter coverage for Poisson tests ----
+
+test_that("HTestPlotter renders Poisson one-sample text panel", {
+  skip_if_not_installed("iQualityR.plot")
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$poisson_test_1s(x = 12, T_exposure = 2, r = 5)
+  p <- plotter$plot(result, plot_type = "curve")
+  expect_true(inherits(p, "ggplot"))
+})
+
+test_that("HTestPlotter renders Poisson two-sample text panel", {
+  skip_if_not_installed("iQualityR.plot")
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$poisson_test_2s(x1 = 15, T1 = 3, x2 = 25, T2 = 3)
+  p <- plotter$plot(result, plot_type = "auto")
+  expect_true(inherits(p, "ggplot"))
+})

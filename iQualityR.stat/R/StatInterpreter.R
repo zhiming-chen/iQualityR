@@ -272,6 +272,8 @@ StatInterpreter <- R6::R6Class("StatInterpreter",
         "chisq_test"        = "the observed and expected frequencies",
         "f_test"            = "the two variances",
         "prop_test_2s"      = "the two proportions",
+        "poisson_test_1s"   = "the observed count and the hypothesized rate",
+        "poisson_test_2s"   = "the two event rates",
         "the two groups/processes"
       )
 
