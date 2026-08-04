@@ -102,9 +102,13 @@ MultivariateCapabilityPlotter <- R6::R6Class("MultivariateCapabilityPlotter",
       if (is.null(results)) stop("No results.", call. = FALSE)
       switch(type,
         full      = self$.plot_sixpack(results, theme_obj, plan),
+        summary   = self$.plot_sixpack(results, theme_obj, plan),
+        scatter   = self$.plot_ellipse(results, theme_obj, plan),
         ellipse   = self$.plot_ellipse(results, theme_obj, plan),
+        qq        = self$.plot_qq(results, theme_obj),
         mcpv_bar  = self$.plot_mcpv_bar(results, theme_obj),
         marginal  = self$.plot_marginal(results, theme_obj),
+        per_ctq   = self$.plot_marginal(results, theme_obj),
         t2        = self$.plot_t2(results, theme_obj),
         mcpv      = self$.plot_mcpv(results, theme_obj),
         joint_ppm = self$.plot_joint_ppm(results, theme_obj),
@@ -224,6 +228,31 @@ MultivariateCapabilityPlotter <- R6::R6Class("MultivariateCapabilityPlotter",
         verdict      = verdict,
         theme        = theme_obj
       )
+    },
+
+    # -----------------------------------------------------------------
+    # Chi-square Q-Q plot (multivariate normality check via Mahalanobis d^2)
+    # -----------------------------------------------------------------
+    .plot_qq = function(results, theme_obj) {
+      qq_df <- results$data_tables$mahalanobis_qq
+      if (is.null(qq_df) || nrow(qq_df) == 0) {
+        stop("Mahalanobis QQ data not available.", call. = FALSE)
+      }
+      n <- nrow(qq_df)
+      lims <- range(c(qq_df$theoretical, qq_df$d2))
+      gg <- ggplot2::ggplot(qq_df, ggplot2::aes(x = .data$theoretical, y = .data$d2)) +
+        ggplot2::geom_abline(slope = 1, intercept = 0,
+                             color = "grey50", linetype = "dashed", linewidth = 0.6) +
+        ggplot2::geom_point(size = 1.8, alpha = 0.7, color = "steelblue") +
+        ggplot2::coord_equal(xlim = lims, ylim = lims) +
+        ggplot2::labs(
+          title = "Chi-Square Q-Q Plot",
+          subtitle = sprintf("Multivariate normality check (n = %d)", n),
+          x = expression(paste("Theoretical ", chi^2, " quantiles")),
+          y = expression(paste("Mahalanobis ", d^2))
+        ) +
+        iQualityR.plot::as_iqr_theme(theme_obj)
+      gg
     },
 
     # -----------------------------------------------------------------

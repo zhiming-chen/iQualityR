@@ -128,6 +128,7 @@ AttributeCapabilityPlotter <- R6::R6Class("AttributeCapabilityPlotter",
       if (is.null(results)) stop("No results.", call. = FALSE)
       switch(type,
         full        = self$.plot_sixpack(results, theme_obj, plan),
+        summary     = self$.plot_sixpack(results, theme_obj, plan),
         control     = self$.plot_control(results, theme_obj, plan),
         histogram   = self$.plot_rate(results, theme_obj, plan),
         rate        = self$.plot_rate(results, theme_obj, plan),
