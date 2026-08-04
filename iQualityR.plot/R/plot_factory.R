@@ -1336,20 +1336,26 @@ layers_violin <- function(add_boxplot = TRUE, theme = NULL, ...,
 #'   the active theme automatically. Pass an explicit color to override.
 #' @param lsl_label Label for LSL.
 #' @param usl_label Label for USL.
-#' @param vline_args List of arguments passed to geom_vline.
+#' @param orientation Direction of the spec lines. \code{"v"} (default) draws
+#'   vertical lines via \code{geom_vline} — appropriate when the spec applies
+#'   to the x-axis variable (e.g. histograms). \code{"h"} draws horizontal
+#'   lines via \code{geom_hline} — appropriate when the spec applies to the
+#'   y-axis variable (e.g. individual values charts, trend charts).
+#' @param vline_args List of arguments passed to geom_vline/geom_hline.
 #' @param annotate_args List of arguments passed to annotate (applies to both).
 #' @return A list of ggplot2 layers.
 #' @export
 layers_spec_limits <- function(lsl = NULL, usl = NULL,
                                theme = NULL,
                                spec_color = NULL,
-                               lsl_label = paste("LSL =", lsl),
-                               usl_label = paste("USL =", usl),
+                               lsl_label = paste("LSL =", .fmt_spec(lsl)),
+                               usl_label = paste("USL =", .fmt_spec(usl)),
+                               orientation = c("v", "h"),
                                vline_args = list(),
                                annotate_args = list()) {
+  orientation <- match.arg(orientation)
+
   # Resolve spec_color from theme's semantic "fail" slot when not supplied.
-  # This keeps the spec lines consistent with the active theme without
-  # requiring the caller to pass a color. Explicit spec_color overrides.
   if (is.null(spec_color)) {
     theme_obj <- as_iqr_theme_object(theme)
     spec_color <- theme_obj$get_pal("semantic", name = "fail")
@@ -1357,41 +1363,64 @@ layers_spec_limits <- function(lsl = NULL, usl = NULL,
 
   result <- list()
 
-  if (!is.null(lsl)) {
-    vline_default <- list(
-      xintercept = lsl, color = spec_color,
-      linetype = "longdash", linewidth = 1
-    )
-    final_vline <- utils::modifyList(vline_default, vline_args)
-    result <- c(result, list(do.call(ggplot2::geom_vline, final_vline)))
+  # geom function: geom_vline for vertical, geom_hline for horizontal
+  geom_fn <- if (orientation == "v") ggplot2::geom_vline else ggplot2::geom_hline
+  intercept_arg <- if (orientation == "v") "xintercept" else "yintercept"
 
-    annot_default <- list("text",
-      x = lsl, y = Inf, label = lsl_label,
-      vjust = 2, hjust = -0.1, color = spec_color,
-      fontface = "bold"
-    )
-    final_annot <- utils::modifyList(annot_default, annotate_args)
-    result <- c(result, list(do.call(ggplot2::annotate, final_annot)))
+  # Label positioning: for vertical lines, label at top (y=Inf); for
+  # horizontal lines, label at right edge (x=Inf).
+  if (orientation == "v") {
+    label_x_lsl <- lsl; label_y_lsl <- Inf
+    label_x_usl <- usl; label_y_usl <- Inf
+    lsl_annot <- list(x = label_x_lsl, y = label_y_lsl, vjust = 1.5, hjust = -0.1)
+    usl_annot <- list(x = label_x_usl, y = label_y_usl, vjust = 1.5, hjust = 1.1)
+  } else {
+    label_x_lsl <- Inf; label_y_lsl <- lsl
+    label_x_usl <- Inf; label_y_usl <- usl
+    lsl_annot <- list(x = label_x_lsl, y = label_y_lsl, vjust = -0.5, hjust = 1.05)
+    usl_annot <- list(x = label_x_usl, y = label_y_usl, vjust = 1.5, hjust = 1.05)
+  }
+
+  if (!is.null(lsl)) {
+    line_default <- stats::setNames(list(
+      lsl, color = spec_color, linetype = "longdash", linewidth = 1
+    ), c(intercept_arg, "color", "linetype", "linewidth"))
+    final_line <- utils::modifyList(line_default, vline_args)
+    result <- c(result, list(do.call(geom_fn, final_line)))
+
+    annot_default <- utils::modifyList(c(list("text",
+      label = lsl_label, color = spec_color, fontface = "bold"), lsl_annot),
+      annotate_args)
+    result <- c(result, list(do.call(ggplot2::annotate, annot_default)))
   }
 
   if (!is.null(usl)) {
-    vline_default <- list(
-      xintercept = usl, color = spec_color,
-      linetype = "longdash", linewidth = 1
-    )
-    final_vline <- utils::modifyList(vline_default, vline_args)
-    result <- c(result, list(do.call(ggplot2::geom_vline, final_vline)))
+    line_default <- stats::setNames(list(
+      usl, color = spec_color, linetype = "longdash", linewidth = 1
+    ), c(intercept_arg, "color", "linetype", "linewidth"))
+    final_line <- utils::modifyList(line_default, vline_args)
+    result <- c(result, list(do.call(geom_fn, final_line)))
 
-    annot_default <- list("text",
-      x = usl, y = Inf, label = usl_label,
-      vjust = 2, hjust = 1.1, color = spec_color,
-      fontface = "bold"
-    )
-    final_annot <- utils::modifyList(annot_default, annotate_args)
-    result <- c(result, list(do.call(ggplot2::annotate, final_annot)))
+    annot_default <- utils::modifyList(c(list("text",
+      label = usl_label, color = spec_color, fontface = "bold"), usl_annot),
+      annotate_args)
+    result <- c(result, list(do.call(ggplot2::annotate, annot_default)))
   }
 
   result
+}
+
+# Format a spec-limit value for annotation labels. Trims full-precision
+# floats (e.g. from Box-Cox transformed specs) to a readable 4-significant
+# digit string, avoiding both scientific notation and trailing zeros.
+.fmt_spec <- function(x) {
+  if (is.null(x) || length(x) == 0) return("NA")
+  if (is.na(x)) return("NA")
+  if (is.character(x)) return(x)
+  if (!is.finite(x)) return(as.character(x))
+  # 4 significant digits in plain ("fg") notation; this trims trailing zeros
+  # automatically and avoids scientific notation for typical spec values.
+  formatC(signif(x, 4), format = "fg", big.mark = "")
 }
 
 
@@ -1438,12 +1467,26 @@ layers_control_chart <- function(data,
   y_buffer <- (y_range[2] - y_range[1]) * 0.1
   y_lim <- c(y_range[1] - y_buffer, y_range[2] + y_buffer)
 
+  # IMPORTANT: every geom layer maps `x = .data$x` explicitly and sets
+  # `inherit.aes = FALSE`, so the layer does NOT inherit the parent base_plot's
+  # aesthetic mapping (which typically references columns like `index` or
+  # `value` that do not exist in this control-chart `data` frame). Without
+  # `inherit.aes = FALSE`, ggplot2 would look up `.data$index` against this
+  # data and abort with "Column `index` not found in `.data`" whenever the
+  # caller passes a renamed frame (x/y/cl/ucl/lcl).
   list(
-    ggplot2::geom_line(data = data, ggplot2::aes(y = .data$ucl), color = ucl_color, linetype = "dashed", linewidth = 1),
-    ggplot2::geom_line(data = data, ggplot2::aes(y = .data$lcl), color = ucl_color, linetype = "dashed", linewidth = 1),
-    ggplot2::geom_line(data = data, ggplot2::aes(y = .data$cl), color = cl_color, linewidth = 1),
-    ggplot2::geom_line(data = data, color = data_color, linewidth = 0.5),
-    ggplot2::geom_point(data = data, color = data_color, size = 2),
+    ggplot2::geom_line(data = data, ggplot2::aes(x = .data$x, y = .data$ucl),
+                       color = ucl_color, linetype = "dashed", linewidth = 1,
+                       inherit.aes = FALSE),
+    ggplot2::geom_line(data = data, ggplot2::aes(x = .data$x, y = .data$lcl),
+                       color = ucl_color, linetype = "dashed", linewidth = 1,
+                       inherit.aes = FALSE),
+    ggplot2::geom_line(data = data, ggplot2::aes(x = .data$x, y = .data$cl),
+                       color = cl_color, linewidth = 1, inherit.aes = FALSE),
+    ggplot2::geom_line(data = data, ggplot2::aes(x = .data$x, y = .data$y),
+                       color = data_color, linewidth = 0.5, inherit.aes = FALSE),
+    ggplot2::geom_point(data = data, ggplot2::aes(x = .data$x, y = .data$y),
+                       color = data_color, size = 2, inherit.aes = FALSE),
     ggplot2::annotate("text",
       x = max(data$x, na.rm = TRUE), y = data$ucl[1],
       label = "UCL", hjust = -0.2, vjust = -0.5, size = 3

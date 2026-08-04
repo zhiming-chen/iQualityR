@@ -9,8 +9,9 @@ layers_spec_limits(
   usl = NULL,
   theme = NULL,
   spec_color = NULL,
-  lsl_label = paste("LSL =", lsl),
-  usl_label = paste("USL =", usl),
+  lsl_label = paste("LSL =", .fmt_spec(lsl)),
+  usl_label = paste("USL =", .fmt_spec(usl)),
+  orientation = c("v", "h"),
   vline_args = list(),
   annotate_args = list()
 )
@@ -33,7 +34,13 @@ the active theme automatically. Pass an explicit color to override.}
 
 \item{usl_label}{Label for USL.}
 
-\item{vline_args}{List of arguments passed to geom_vline.}
+\item{orientation}{Direction of the spec lines. \code{"v"} (default) draws
+vertical lines via \code{geom_vline} — appropriate when the spec applies
+to the x-axis variable (e.g. histograms). \code{"h"} draws horizontal
+lines via \code{geom_hline} — appropriate when the spec applies to the
+y-axis variable (e.g. individual values charts, trend charts).}
+
+\item{vline_args}{List of arguments passed to geom_vline/geom_hline.}
 
 \item{annotate_args}{List of arguments passed to annotate (applies to both).}
 }
