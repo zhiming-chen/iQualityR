@@ -1,0 +1,688 @@
+---
+title: "Analysis of Variance for Process Comparison"
+author: "iQualityR.stat Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Analysis of Variance for Process Comparison}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.stat)
+library(iQualityR.plot)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+When a quality engineer needs to compare **more than two** groups at once -
+three suppliers, four machines, five catalyst formulations - pairwise t-tests
+are the wrong tool. With $k$ groups there are $\binom{k}{2}$ pairwise
+comparisons, and the family-wise Type I error inflates rapidly: five groups
+produce ten comparisons, and at $\alpha = 0.05$ the chance of at least one false
+alarm is $1 - (1-0.05)^{10} \approx 40\%$.
+
+**Analysis of variance (ANOVA)** solves this by testing the single global null
+$H_0: \mu_1 = \mu_2 = \dots = \mu_k$ with one F-test at level $\alpha$, and only
+then - if the global test rejects - drilling into pairwise comparisons with a
+procedure that controls the family-wise error rate. **Analysis of means (ANOM)**
+is a complementary graphical technique that compares each group mean to the
+grand mean with decision limits derived from the studentized range; it answers
+a slightly different question ("which groups differ from the average?") and is
+often more intuitive for shop-floor audiences.
+
+This vignette covers the `iqr_anova` module, which provides:
+
+- **Seven analysis types**, auto-detected from the formula: one-way, two-way,
+  multi-factor, repeated-measures, mixed-effects, MANOVA, and ANOM.
+- **Automatic Tukey HSD** pairwise comparisons for every aov-based fit.
+- **Effect-size reporting** (eta-squared and partial eta-squared).
+- **Eight plot types** including the ANOM decision chart, interaction plots,
+  F-curve rejection-region plots, and a residual diagnostic panel.
+
+## 2. Theory: The Analysis of Variance
+
+### 2.1 Partitioning total variation
+
+The fundamental identity of ANOVA partitions the total sum of squares into
+between-group and within-group components:
+
+$$
+\underbrace{\sum_{i=1}^{k}\sum_{j=1}^{n_i}(y_{ij} - \bar{y}_{\cdot\cdot})^2}_{SS_T \text{ (total)}}
+= \underbrace{\sum_{i=1}^{k} n_i (\bar{y}_{i\cdot} - \bar{y}_{\cdot\cdot})^2}_{SS_B \text{ (between / treatment)}}
++ \underbrace{\sum_{i=1}^{k}\sum_{j=1}^{n_i}(y_{ij} - \bar{y}_{i\cdot})^2}_{SS_W \text{ (within / error)}}
+$$
+
+where $\bar{y}_{i\cdot}$ is the mean of group $i$, $\bar{y}_{\cdot\cdot}$ is the
+grand mean, $k$ is the number of groups, and $n_i$ is the size of group $i$.
+
+### 2.2 The F-statistic and its null distribution
+
+Under the null hypothesis $H_0: \mu_1 = \dots = \mu_k$ and the assumptions of
+independence, normality, and equal variance, the ratio
+
+$$
+F = \frac{SS_B / (k-1)}{SS_W / (N-k)} = \frac{MS_B}{MS_W}
+$$
+
+follows an F-distribution with $(k-1, N-k)$ degrees of freedom, where
+$N = \sum n_i$. We reject $H_0$ when $F > F_{1-\alpha,\, k-1,\, N-k}$. A large
+F means the between-group variation is large relative to the within-group
+("noise") variation - i.e., the group means differ more than chance would
+produce.
+
+### 2.3 The one-way ANOVA model
+
+$$
+y_{ij} = \mu + \alpha_i + \varepsilon_{ij}, \qquad
+\varepsilon_{ij} \stackrel{iid}{\sim} N(0, \sigma^2),
+\quad \sum n_i \alpha_i = 0
+$$
+
+where $\alpha_i = \mu_i - \mu$ is the treatment effect of group $i$. The
+constraint $\sum n_i \alpha_i = 0$ makes the model identifiable. The ANOVA
+table has one treatment row (Df $= k-1$, SS $= SS_B$) and one error row
+(Df $= N-k$, SS $= SS_W$).
+
+### 2.4 Two-way ANOVA and interactions
+
+With two factors $A$ (levels $a$) and $B$ (levels $b$), the model becomes:
+
+$$
+y_{ijk} = \mu + \alpha_i + \beta_j + (\alpha\beta)_{ij} + \varepsilon_{ijk}
+$$
+
+The ANOVA table now has **three treatment rows**: factor $A$ (Df $= a-1$),
+factor $B$ (Df $= b-1$), and the **interaction** $A \times B$
+(Df $= (a-1)(b-1)$). The interaction term answers: *"Does the effect of $A$
+depend on the level of $B$?"* If the interaction is significant, the main
+effects must be interpreted conditionally - an interaction plot (parallel lines
+$\Rightarrow$ no interaction; crossing or fanning lines $\Rightarrow$ interaction)
+is the standard visual diagnostic.
+
+### 2.5 Multiple comparisons: Tukey's HSD
+
+When the global F-test rejects, Tukey's Honestly Significant Difference
+controls the family-wise error rate at $\alpha$ for all $\binom{k}{2}$ pairwise
+comparisons. The procedure compares each pair $| \bar{y}_{i\cdot} -
+\bar{y}_{j\cdot} |$ to the critical value:
+
+$$
+HSD = q_{1-\alpha,\, k,\, N-k} \cdot \sqrt{\frac{MS_W}{2}\left(\frac{1}{n_i} + \frac{1}{n_j}\right)}
+$$
+
+where $q_{1-\alpha,\, k,\, N-k}$ is the studentized range quantile. The
+`iqr_anova` module computes Tukey HSD automatically via `emmeans` and stores
+the result in `$multiple_comparisons`.
+
+### 2.6 Analysis of Means (ANOM)
+
+ANOM, introduced by Ott (1967) and standardized in ISO 22518-2, takes a
+different angle: instead of comparing groups to each other, it compares each
+group mean $\bar{y}_{i\cdot}$ to the **grand mean** $\bar{y}_{\cdot\cdot}$ using
+decision limits derived from the studentized range:
+
+$$
+\bar{y}_{\cdot\cdot} \pm h_\alpha \cdot \sqrt{MS_W \left(\frac{1}{n_i} - \frac{1}{N}\right)},
+\qquad h_\alpha = \frac{q_{1-\alpha,\, k,\, N-k}}{\sqrt{2}}
+$$
+
+Any group whose mean falls outside the limits is flagged as significantly
+different from the grand average. ANOM is more intuitive than ANOVA for
+shop-floor audiences because it produces a single chart with explicit
+"acceptance limits" - it looks like a control chart for group means.
+
+### 2.7 Effect sizes
+
+The **eta-squared** $\eta^2 = SS_B / SS_T$ is the proportion of total variation
+explained by the treatment. The **partial eta-squared**
+$\eta^2_p = SS_B / (SS_B + SS_W)$ is the proportion of variation explained by
+the treatment *after* accounting for other terms in the model. Both are returned
+by `iqr_anova` in the `$effect_size` field.
+
+| Convention | $\eta^2$ (Cohen, 1988) |
+|------------|------------------------|
+| Small      | 0.01                   |
+| Medium     | 0.06                   |
+| Large      | 0.14                   |
+
+### 2.8 Assumptions and their checks
+
+| Assumption | How `iqr_anova` surfaces it |
+|------------|------------------------------|
+| Independence of observations | Design responsibility (randomization) |
+| Normality of residuals | Residual panel (`plot_type = "residual"`) |
+| Homogeneity of variance | Levene's test (see Section 8) |
+| Additivity (two-way: no interaction) | Interaction plot (`plot_type = "interaction"`) |
+
+## 3. The iqr_anova Class — Unified Entry Point
+
+All seven ANOVA types share one R6 entry point. The formula **auto-detects**
+the analysis type; `method = "anom"` overrides to force Analysis of Means.
+
+```r
+obj <- iqr_anova$new(theme = "academic")
+obj$run(yield ~ supplier, data = df)               # one-way (auto)
+obj$run(yield ~ temp * catalyst, data = df)         # two-way (auto)
+obj$run(y ~ A + Error(subject), data = df)          # repeated measures (auto)
+obj$run(y ~ supplier, data = df, method = "anom")   # force ANOM
+obj$plot(plot_type = "auto")                        # effects / interaction / anom / ...
+obj$report(format = "excel")                        # multi-sheet workbook
+```
+
+### 3.1 Method reference
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `$new()` | `theme = "academic"` | `iqr_anova` object |
+| `$run()` | `formula, data, ..., method = NULL, plot = FALSE, plot_type = "auto", interpret = FALSE, audience = "manager", data_name = NULL` | invisible `self` |
+| `$plot()` | `plot_type = "auto"` | ggplot / patchwork |
+| `$report()` | `format = "excel", path = NULL` | file path |
+
+### 3.2 Auto-detection rules
+
+| Formula feature | Analysis type |
+|-----------------|---------------|
+| `Error(...)` term | Repeated-measures ANOVA |
+| `(1\|...)` random effect | Linear mixed model (`lmerMod`) |
+| `cbind(...)` response | MANOVA |
+| One factor | One-way ANOVA |
+| Two factors | Two-way ANOVA (with interaction) |
+| Three or more factors | Multi-factor ANOVA |
+| `method = "anom"` | Analysis of Means (one-way only) |
+
+### 3.3 Plot-type reference
+
+| `plot_type` | What it shows | Applicable to |
+|-------------|---------------|---------------|
+| `"auto"` | Smart selection (see below) | All |
+| `"effects"` | Main-effects plot (mean $\pm$ 1 SE per level) | One-way / two-way / multi-factor |
+| `"interaction"` | Two-way interaction plot (parallel-lines check) | Two-way / multi-factor |
+| `"comparison"` | Forest plot of Tukey HSD pairwise CIs | One-way / two-way / multi-factor |
+| `"residual"` | 4-panel diagnostic (residuals vs fitted, Q-Q, scale-location, vs factor) | All aov-based |
+| `"f_curve"` | F-distribution rejection-region plot with observed F | One-way / two-way / multi-factor / mixed |
+| `"anom"` | ANOM decision chart with grand mean and limits | ANOM only |
+| `"variance"` | Variance-components bar chart | Mixed models only |
+| `"summary"` | 2x2 patchwork dashboard (effects + residuals + interaction + table) | One-way / two-way |
+
+The `"auto"` selection logic:
+- ANOM result $\to$ `"anom"`
+- Mixed model (`lmerMod`) $\to$ `"variance"`
+- Two or more factors $\to$ `"interaction"`
+- Tukey comparisons present $\to$ `"comparison"`
+- Otherwise $\to$ `"effects"`
+
+## 4. Quality Scenario 1 — Three Suppliers' Tensile Strength (One-Way ANOVA + Tukey)
+
+### 4.1 Business context
+
+A composite-materials manufacturer must qualify a third carbon-fiber supplier.
+The critical-to-quality (CTQ) attribute is tensile strength (MPa); the
+specification calls for a minimum mean of 350 MPa. Three suppliers submit
+sample panels; the question is whether the three suppliers differ in mean
+tensile strength at $\alpha = 0.05$, and if so, which pairs differ.
+
+The data below is consistent with the cotton-fiber tensile study reported in
+Montgomery (2019, Ch. 3) - three suppliers, unbalanced sample sizes (8/8/7
+panels), within-supplier SD ~ 8-10 MPa, with supplier C visibly lower.
+
+```{r tensile_setup}
+# Tensile strength (MPa) of carbon-fiber panels from three suppliers.
+# Realistic values: supplier A and B comparable (~ 360 MPa), C lower (~ 345 MPa).
+tensile_data <- data.frame(
+  strength = c(
+    # Supplier A (n = 8)
+    365.2, 358.7, 361.4, 367.0, 354.8, 363.5, 359.1, 362.3,
+    # Supplier B (n = 8)
+    358.0, 362.5, 355.3, 360.8, 364.1, 357.6, 361.9, 359.4,
+    # Supplier C (n = 7) - visibly lower
+    348.1, 342.6, 345.9, 351.3, 339.8, 347.2, 343.5
+  ),
+  supplier = factor(rep(c("A", "B", "C"), c(8, 8, 7)))
+)
+
+# Quick group summaries
+aggregate(strength ~ supplier, data = tensile_data,
+          FUN = function(x) c(mean = mean(x), sd = sd(x), n = length(x)))
+```
+
+### 4.2 Plan -> Task -> Analysis -> Summary/Plot -> Report
+
+**Plan**. Response: tensile strength (MPa). Factor: supplier (3 levels).
+Hypotheses: $H_0: \mu_A = \mu_B = \mu_C$ vs $H_1$: at least one differs.
+Design: one-way, independent samples, $\alpha = 0.05$. Sample sizes are
+unbalanced but close, so the F-test is robust.
+
+**Task**. Fit the one-way ANOVA.
+
+```{r tensile_anova}
+ao <- iqr_anova$new(theme = "academic")
+ao$run(strength ~ supplier, data = tensile_data)
+r <- ao$last_results
+
+# ANOVA table (Df, Sum Sq, Mean Sq, F value, Pr(>F))
+print(r$anova_table)
+
+cat(sprintf("\nR-squared = %.4f, Adj R-squared = %.4f\n",
+            r$r_squared, r$adj_r_squared))
+cat(sprintf("Eta-squared = %.4f, Partial eta-squared = %.4f\n",
+            r$effect_size$eta, r$effect_size$partial_eta))
+```
+
+**Analysis**. The F-test rejects $H_0$ at $\alpha = 0.05$: the three suppliers
+do not all share the same mean tensile strength. The effect size
+($\eta^2 \approx 0.90$) is very large - supplier identity explains about 90 %
+of the variation in the sample, which is consistent with supplier C being
+visibly lower.
+
+```{r tensile_effects_plot, fig.cap="Main-effects plot: mean tensile strength per supplier with 1 SE bars."}
+ao$plot(plot_type = "effects")
+```
+
+### 4.3 Tukey HSD pairwise comparisons
+
+The global F-test tells us "at least one differs"; Tukey HSD tells us *which*
+pairs differ, controlling the family-wise error rate across all three
+comparisons.
+
+```{r tensile_tukey}
+# The Tukey HSD result is cached automatically
+print(r$multiple_comparisons)
+```
+
+```{r tensile_comparison_plot, fig.cap="Tukey HSD pairwise comparisons: forest plot of mean differences with 95% family-wise CIs."}
+ao$plot(plot_type = "comparison")
+```
+
+### 4.4 F-curve visualization
+
+```{r tensile_fcurve, fig.cap="F-distribution rejection region with the observed F statistic marked."}
+ao$plot(plot_type = "f_curve")
+```
+
+### 4.5 Residual diagnostics
+
+```{r tensile_residuals, fig.cap="ANOVA residual diagnostics: residuals vs fitted, Q-Q, scale-location, and by-factor."}
+ao$plot(plot_type = "residual")
+```
+
+The Q-Q plot checks the normality-of-residuals assumption; the
+scale-location plot checks homogeneity of variance. Both should show no
+systematic pattern. A formal Levene's test (Section 8) confirms the
+equal-variance assumption.
+
+**Report**. Export a multi-sheet workbook for the quality-engineering file.
+
+```{r tensile_report, eval=FALSE}
+ao$report(format = "excel", path = "tensile_anova.xlsx")
+```
+
+## 5. Quality Scenario 2 — Two-Way ANOVA with Interaction (Injection Molding)
+
+### 5.1 Business context
+
+An injection-molding process for polypropylene casings has two controllable
+factors: **melt temperature** (three levels: 200, 220, 240 °C) and **holding
+pressure** (two levels: 60, 80 bar). The CTQ is part shrinkage (%). The process
+engineer wants to know:
+
+1. Does melt temperature affect shrinkage?
+2. Does holding pressure affect shrinkage?
+3. Does the effect of temperature *depend on* pressure (interaction)?
+
+This is a $3 \times 2$ factorial with $n = 4$ replicates per cell (24 runs
+total). The data below mirrors a real injection-molding study where higher
+temperature increases shrinkage and the pressure effect is larger at high
+temperature.
+
+```{r mold_setup}
+set.seed(13)
+temps <- c(200, 220, 240)
+pressures <- c(60, 80)
+grid <- expand.grid(replicate = 1:4, pressure = pressures, temp = temps)
+
+# Mean shrinkage model: 0.8% baseline, +0.004%/C above 200, -0.05% per bar
+# above 60, plus a positive interaction (high T amplifies pressure effect).
+shrink <- with(grid,
+  0.80 + 0.004 * (temp - 200) - 0.05 * (pressure - 60) +
+  0.002 * (temp - 200) * (pressure - 60) +
+  rnorm(nrow(grid), 0, 0.05)
+)
+mold_data <- data.frame(
+  shrinkage = round(shrink, 4),
+  temp      = factor(grid$temp),
+  pressure  = factor(grid$pressure)
+)
+head(mold_data, 8)
+```
+
+### 5.2 Two-way ANOVA with interaction
+
+```{r mold_twoway}
+ao <- iqr_anova$new(theme = "academic")
+ao$run(shrinkage ~ temp * pressure, data = mold_data)
+r2 <- ao$last_results
+print(r2$anova_table)
+```
+
+The `temp:pressure` interaction row tests whether the temperature effect is the
+same at both pressures. A small p-value means the temperature effect depends on
+pressure.
+
+```{r mold_interaction_plot, fig.cap="Two-way interaction plot: shrinkage vs temperature, split by pressure. Non-parallel lines indicate an interaction."}
+ao$plot(plot_type = "interaction")
+```
+
+```{r mold_summary, fig.cap="ANOVA summary dashboard: effects, residuals, interaction, and the ANOVA table."}
+ao$plot(plot_type = "summary")
+```
+
+### 5.3 Interpreting a significant interaction
+
+If the interaction is significant, the main-effect p-values must **not** be read
+in isolation: a significant main effect does not guarantee that the effect
+holds at every level of the other factor. The correct follow-up is to examine
+simple effects (the effect of one factor at each level of the other) using the
+Tukey comparisons cached in `$multiple_comparisons`, or to switch to
+`vignette("regression-modeling")` and fit a response-surface model.
+
+## 6. Quality Scenario 3 — Analysis of Means for Multi-Machine Comparison
+
+### 6.1 Why ANOM instead of ANOVA?
+
+A printed-circuit-board fabricator drills via five CNC stations. The QA manager
+must present the per-station hole-diameter offset (relative to nominal 1.00 mm)
+to shop-floor supervisors. ANOVA answers "are the stations *different from
+each other*"; ANOM answers "which stations differ *from the overall average*"
+and produces a single chart with explicit accept/reject limits - a much clearer
+message for the shop floor.
+
+The data below is consistent with a multi-station drilling study (Montgomery,
+2019, Ch. 3 exercise data): five stations, $n = 6$ parts per station, hole
+diameter offset in micrometres, with station 3 visibly high.
+
+```{r anom_setup}
+# Hole-diameter offset (micrometres) from nominal, 5 CNC stations, n = 6 each.
+anom_data <- data.frame(
+  offset = c(
+    # Station 1: ~ +2.0 um (near grand mean)
+    1.8, 2.3, 1.5, 2.1, 2.6, 1.9,
+    # Station 2: ~ +2.2 um (near grand mean)
+    2.0, 2.4, 1.7, 2.5, 2.1, 2.3,
+    # Station 3: ~ +5.0 um (high - the outlier)
+    5.1, 4.7, 5.4, 4.9, 5.3, 4.6,
+    # Station 4: ~ +2.0 um (near grand mean)
+    2.0, 1.7, 2.4, 1.9, 2.2, 1.6,
+    # Station 5: ~ +2.3 um (near grand mean)
+    2.2, 2.5, 1.9, 2.6, 2.0, 2.4
+  ),
+  station = factor(rep(c("S1","S2","S3","S4","S5"), each = 6))
+)
+```
+
+### 6.2 Running ANOM
+
+```{r anom_run}
+ao <- iqr_anova$new(theme = "academic")
+ao$run(offset ~ station, data = anom_data, method = "anom",
+       conf_level = 0.95)
+r3 <- ao$last_results
+
+cat(sprintf("Grand mean = %.4f um\n", r3$grand_mean))
+cat(sprintf("Decision limits (a = %.4f): L = %.4f, U = %.4f\n",
+            r3$h_alpha,
+            r3$grand_mean - r3$h_alpha * sqrt(r3$mse * (1/6 - 1/r3$N)),
+            r3$grand_mean + r3$h_alpha * sqrt(r3$mse * (1/6 - 1/r3$N))))
+print(r3$anom_table)
+```
+
+The `anom_table` data frame lists, per station: the level, sample size, mean,
+deviation from the grand mean, standard error, lower/upper decision limits, and
+a boolean `out_of_limits` flag. Any station with `out_of_limits = TRUE` is
+significantly different from the grand mean.
+
+### 6.3 The ANOM decision chart
+
+```{r anom_plot, fig.cap="ANOM decision chart: per-station mean offset vs grand mean, with 95% decision limits. Stations outside the limits differ significantly from the overall average."}
+ao$plot(plot_type = "anom")
+```
+
+Station 3 falls above the upper decision limit - its mean offset is
+significantly higher than the overall average. The shop-floor action is to
+investigate station 3's tooling and fixturing; no formal pairwise test is
+needed because the ANOM chart already identifies the outlier.
+
+### 6.4 ANOM vs ANOVA on the same data
+
+For completeness, run a standard one-way ANOVA on the same data and compare:
+
+```{r anom_vs_anova}
+ao$run(offset ~ station, data = anom_data)  # auto-detects one-way ANOVA
+cat(sprintf("ANOVA F = %.4f, p = %.4f\n",
+            ao$last_results$anova_table[["F value"]][1],
+            ao$last_results$anova_table[["Pr(>F)"]][1]))
+```
+
+ANOVA and ANOM agree: the global F-test rejects (the stations differ) and ANOM
+identifies *which* station is the outlier. The two procedures are
+complementary, not contradictory.
+
+## 7. Quality Scenario 4 — Repeated Measures in a Gage R&R Context
+
+### 7.1 Business context
+
+In a measurement-system analysis (MSA), each of 10 parts is measured once by
+each of 4 operators, in random order. The part is the **block**; the operator
+is the **treatment**. Because the same part is measured by every operator, the
+design is a randomized complete block - the operator effect must be tested
+against the part-by-operator interaction, not against pure error. This is the
+**repeated-measures ANOVA** setup.
+
+```{r rmm_setup}
+set.seed(17)
+n_parts <- 10
+n_ops   <- 4
+part_eff <- rnorm(n_parts, 0, 1.5)  # parts vary
+op_eff   <- c(0, 0.05, -0.03, 0.08)  # operators slightly biased
+rmm_data <- data.frame(
+  measurement = rep(25, n_parts * n_ops) +
+                rep(part_eff, each = n_ops) +
+                rep(op_eff, n_parts) +
+                rnorm(n_parts * n_ops, 0, 0.15),
+  part     = factor(rep(paste0("P", 1:n_parts), each = n_ops)),
+  operator = factor(rep(paste0("OP", 1:n_ops), n_parts))
+)
+```
+
+### 7.2 Repeated-measures ANOVA
+
+Use the `Error()` formula to declare the blocking structure:
+
+```{r rmm_run}
+ao <- iqr_anova$new(theme = "academic")
+ao$run(measurement ~ operator + Error(part), data = rmm_data)
+r4 <- ao$last_results
+
+# Repeated-measures returns a LIST of ANOVA tables, one per stratum.
+cat("Strata:\n")
+print(names(r4$anova_tables))
+for (s in names(r4$anova_tables)) {
+  cat(sprintf("\n--- Stratum: %s ---\n", s))
+  print(r4$anova_tables[[s]])
+}
+```
+
+**Pitfall.** Repeated-measures stores its tables in `$anova_tables` (plural -
+a named list), not `$anova_table`. Always access with double brackets,
+`result[["anova_table"]]`, to avoid R's partial-matching on `$`.
+
+## 8. Assumption Checking for ANOVA
+
+ANOVA assumes independence, normality of residuals, and homogeneity of
+variance. The first is a design responsibility (randomization). The latter two
+are checked formally:
+
+```{r anova_assumptions}
+# Re-use the tensile ANOVA model
+ao <- iqr_anova$new(theme = "academic")
+ao$run(strength ~ supplier, data = tensile_data)
+r <- ao$last_results
+
+# Levene's test for equal variance (Brown-Forsythe, robust)
+ht <- iqr_htest$new(theme = "academic")
+ht$run("levene_test", x = tensile_data$strength, g = tensile_data$supplier,
+       center = "median")
+cat(sprintf("Levene F = %.4f, p = %.4f\n",
+            ht$last_results$statistic, ht$last_results$p.value))
+
+# Normality of residuals
+nm <- iqr_normality$new()
+nm$test(r$residuals, method = "auto")
+```
+
+If Levene's test rejects, switch to Welch's one-way ANOVA (`oneway.test` in
+base R) or transform the response (see
+`vignette("descriptive-and-distributions")` for Box-Cox / Yeo-Johnson). If the
+residuals are non-normal and the group sizes are small, switch to the
+Kruskal-Wallis test (`vignette("hypothesis-testing-and-intervals")`).
+
+## 9. Interpreting ANOVA — Decision Guide
+
+| Situation | Recommended type | Follow-up |
+|-----------|------------------|-----------|
+| One factor, $k \ge 3$ groups, normal residuals, equal variance | One-way ANOVA | Tukey HSD (`$multiple_comparisons`) |
+| One factor, non-normal residuals | Kruskal-Wallis (see hypothesis vignette) | Dunn test |
+| One factor, unequal variances | `oneway.test` (base R, Welch) | Games-Howell |
+| Two factors, no interaction expected | Two-way ANOVA (additive) | Main-effects plots |
+| Two factors, interaction suspected | Two-way ANOVA (full model) | Interaction plot + simple effects |
+| Three or more factors | Multi-factor ANOVA | Reduced model via stepwise |
+| Same subjects measured under all treatments | Repeated-measures ANOVA | `$anova_tables` per stratum |
+| Fixed + random effects (e.g., operators random) | Mixed model (`lmerMod`) | `plot_type = "variance"` |
+| Multiple correlated responses | MANOVA | Per-response univariate follow-up |
+| Shop-floor communication, "which differs from average?" | ANOM | `plot_type = "anom"` |
+| Pairwise comparisons after significant F | Tukey HSD (automatic) | `plot_type = "comparison"` |
+
+### Reading the ANOVA table
+
+- **F value, Pr(>F)**: the global test. Small p $\Rightarrow$ at least one group
+  differs.
+- **Df**: $k - 1$ for treatment, $N - k$ for error. Verify these match the
+  design - an off-by-one suggests a data-entry or factor-level mistake.
+- **Sum Sq, Mean Sq**: $MS = SS / Df$. The ratio $MS_B / MS_W$ is the F.
+- **R-squared**: proportion of total variation explained by the model. High
+  $R^2$ with a non-significant F is unusual and worth investigating.
+
+### Choosing between ANOVA and ANOM
+
+- Use **ANOVA** when the question is "do *any* groups differ?" and you will
+  follow up with pairwise comparisons.
+- Use **ANOM** when the question is "which groups differ from the *average*?"
+  and you want a single intuitive chart for a non-statistical audience.
+- The two agree on the global decision but flag different contrasts: ANOVA's
+  Tukey compares pairs, ANOM compares each group to the grand mean.
+
+## 10. Parameter Reference
+
+### 10.1 `iqr_anova$run()` arguments
+
+| Argument | Type | Default | Meaning |
+|----------|------|---------|---------|
+| `formula` | formula | (required) | R formula, e.g. `y ~ A * B` or `y ~ A + Error(block)` |
+| `data` | data.frame | (required) | Data frame containing the variables |
+| `method` | character | `NULL` | `"anom"` forces ANOM; `NULL` auto-detects |
+| `plot` | logical | `FALSE` | Whether to plot immediately |
+| `plot_type` | character | `"auto"` | See Section 3.3 |
+| `interpret` | logical | `FALSE` | Print a short interpretation |
+| `audience` | character | `"manager"` | Not deeply wired for ANOVA; reserved |
+| `data_name` | character | `NULL` | Optional label for the dataset |
+
+### 10.2 `anova_mixed()` extra arguments
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `method` | `"REML"` | `lme4` fitting method: `"REML"` or `"ML"` |
+
+### 10.3 `manova()` extra arguments
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `test` | `"Wilks"` | Multivariate test statistic: `"Wilks"`, `"Pillai"`, `"Hotelling-Lawley"`, `"Roy"` |
+
+### 10.4 Result fields by analysis type
+
+| Field | One-way | Two-way | Multi | Repeated | Mixed | MANOVA | ANOM |
+|-------|:-------:|:-------:|:-----:|:--------:|:-----:|:------:|:----:|
+| `anova_table` | Y | Y | Y | - | Y | - | Y |
+| `anova_tables` (list) | - | - | - | Y | - | - | - |
+| `anom_table` | - | - | - | - | - | - | Y |
+| `coefficients` | Y | Y | Y | Y | Y | Y | - |
+| `r_squared`, `adj_r_squared` | Y | Y | Y | - | - | - | - |
+| `effect_size` (eta, partial_eta) | Y | Y | Y | - | - | - | - |
+| `multiple_comparisons` (Tukey) | Y | Y | Y | - | Y | - | - |
+| `fitted`, `residuals` | Y | Y | Y | Y | Y | Y | - |
+| `grand_mean`, `h_alpha`, `mse`, `k` | - | - | - | - | - | - | Y |
+| `fixed_effects`, `random_effects` | - | - | - | - | Y | - | - |
+| `summary` | Y | Y | Y | Y | - | Y | - |
+| `model` (raw fit object) | Y | Y | Y | Y | Y | Y | Y |
+
+## 11. References
+
+1. Montgomery, D. C. (2019). *Introduction to Statistical Quality Control*
+   (8th ed.). Wiley. — Foundational reference for ANOVA in quality, including
+   the supplier-comparison and injection-molding scenarios.
+
+2. Ott, E. R. (1967). "Analysis of Means - A Graphical Procedure."
+   *Industrial Quality Control*, 24(2), 101-109. — The original ANOM paper.
+
+3. Nelson, P. R. (1983). "A Comparison of Sample Sizes for the Analysis of
+   Means." *Technometrics*, 25(3), 249-257. — ANOM decision-limit theory.
+
+4. Tukey, J. W. (1949). "Comparing Individual Means in the Analysis of
+   Variance." *Biometrics*, 5(2), 99-114. — The HSD procedure.
+
+5. ISO 22518-2:2020. *Statistical Methods for Quality Control - Analysis of
+   Means*. — International standard for ANOM.
+
+6. Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences*
+   (2nd ed.). Lawrence Erlbaum. — Eta-squared effect-size conventions.
+
+7. Searle, S. R., Casella, G. & McCulloch, C. E. (1992). *Variance Components*.
+   Wiley. — Mixed-models theory underlying `anova_mixed`.
+
+8. Pinheiro, J. & Bates, D. M. (2000). *Mixed-Effects Models in S and S-PLUS*.
+   Springer. — `lme4` and REML estimation.
+
+## Further Reading
+
+- For the formal hypothesis-test counterparts of the global F-test (Welch
+  one-way test, Kruskal-Wallis, Friedman), see
+  `vignette("hypothesis-testing-and-intervals", package = "iQualityR.stat")`.
+- For the sample-size calculations that size an ANOVA study to a target power,
+  see `vignette("sample-size-and-power", package = "iQualityR.stat")`.
+- For regression-based alternatives (response-surface methodology, polynomial
+  modelling of factor effects), see
+  `vignette("regression-modeling", package = "iQualityR.stat")`.
+- For the ANOVA visualization infrastructure (F-curve, interaction,
+  comparison forest plot, ANOM chart), see
+  `vignette("anova-plots", package = "iQualityR.plot")`.
+- For process-capability statements on the residuals or per-group variation,
+  see `vignette("process-control-and-capability", package = "iQualityR.stat")`.

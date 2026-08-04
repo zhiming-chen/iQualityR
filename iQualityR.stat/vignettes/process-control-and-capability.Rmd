@@ -1,0 +1,1241 @@
+---
+title: "Process Control and Capability: Sigma Estimation, SPC Constants, and Quality Metrics"
+author: "iQualityR.stat Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Process Control and Capability: Sigma Estimation, SPC Constants, and Quality Metrics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.stat)
+library(iQualityR.plot)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Statistical Process Control (SPC) and process capability analysis are the two
+pillars of data-driven quality management. SPC answers the question *"Is the
+process stable over time?"*; capability analysis answers *"Is the stable
+process able to meet specifications?"* Both questions reduce, in the end, to a
+single quantity: the process standard deviation $\sigma$.
+
+This vignette is the consolidated reference for the **process-control and
+capability layer** of `iQualityR.stat`. It covers four related modules:
+
+1. **Sigma estimation** — seven methods for estimating $\sigma$ from
+   subgrouped or individual data, plus a decomposition that splits total
+   variation into within-subgroup and between-subgroup components.
+2. **SPC control chart constants** — the $d_2$, $d_3$, $c_4$, $A_2$, $A_3$,
+   $D_3$, $D_4$, $B_3$, $B_4$, $E_2$ families that convert sample statistics
+   into control limits.
+3. **SPC rule detection** — the eight Western Electric / Nelson rules for
+   flagging out-of-control behaviour, plus control-limit calculation for
+   $\bar{X}$-R, $\bar{X}$-S, and I-MR charts.
+4. **Capability and quality metrics** — $C_p$, $C_{pk}$, $P_{pk}$, expected
+   PPM, $Z_{bench}$, DPMO, rolled throughput yield, reliability, availability,
+   industry benchmarking, and the one-shot quality dashboard.
+
+Together these tools implement the Plan -> Task -> Analysis -> Summary/Plot ->
+Report workflow for the process-monitoring layer.
+
+### 1.1 Who should read this vignette
+
+Quality engineers, SPC coordinators, Six Sigma Green/Black Belts, validation
+engineers, and anyone responsible for control-plan design, capability studies,
+or sigma-level reporting.
+
+## 2. Theory: Estimating the Process Standard Deviation
+
+### 2.1 Within-subgroup vs between-subgroup variation
+
+A manufacturing process has two layers of variation:
+
+- **Within-subgroup (short-term) variation** — the random noise present inside
+  a single subgroup sampled at one time point. This is the "inherent" variation
+  of the process, driven by common causes such as machine vibration, measurement
+  repeatability, and raw-material microstructure.
+- **Between-subgroup (long-term) variation** — the drift and shift of subgroup
+  means over time, driven by assignable causes such as tool wear, operator
+  change, environmental drift, or material lot changes.
+
+The **total variation** observed over a long run is the quadrature sum:
+
+$$
+\sigma_{total}^2 = \sigma_{within}^2 + \sigma_{between}^2
+$$
+
+SPC control limits are built from $\sigma_{within}$ (so that assignable shifts
+between subgroups are detectable against the tight within-subgroup noise).
+Capability indices $C_p$, $C_{pk}$ use $\sigma_{within}$; performance indices
+$P_p$, $P_{pk}$ use $\sigma_{total}$. The gap between the two is a direct
+measure of how much drift the process is experiencing.
+
+### 2.2 Sigma from the average range ($\bar{R}$ method)
+
+For subgroups of size $n$ sampled from a normal process, the expected value of
+the sample range $R$ is:
+
+$$
+E[R] = d_2(n) \cdot \sigma
+$$
+
+so an unbiased estimator of $\sigma$ from $m$ subgroups is:
+
+$$
+\hat{\sigma}_{\bar{R}} = \frac{\bar{R}}{d_2(n)}, \qquad
+\bar{R} = \frac{1}{m}\sum_{j=1}^{m} R_j
+$$
+
+This is the classical $\bar{X}$-R chart estimator. It is robust to mild
+non-normality and was historically preferred because $R$ is easy to compute by
+hand. Its efficiency relative to the standard-deviation estimator drops as $n$
+grows; for $n > 10$ the $S$-bar method is preferred.
+
+### 2.3 Sigma from the average standard deviation ($\bar{S}$ method)
+
+The sample standard deviation $s$ is itself a biased estimator of $\sigma$:
+
+$$
+E[s] = c_4(n) \cdot \sigma, \qquad
+c_4(n) = \sqrt{\frac{2}{n-1}}\,\frac{\Gamma(n/2)}{\Gamma((n-1)/2)}
+$$
+
+so the unbiased estimator is:
+
+$$
+\hat{\sigma}_{\bar{S}} = \frac{\bar{S}}{c_4(n)}, \qquad
+\bar{S} = \frac{1}{m}\sum_{j=1}^{m} s_j
+$$
+
+This is the $\bar{X}$-S chart estimator. It is more efficient than the
+$\bar{R}$ method for $n \geq 10$ and is the default in most modern SPC software.
+
+### 2.4 Sigma from moving range (I-MR method)
+
+When only one observation is available per time point (e.g. chemical
+composition per batch, cycle time per shift), subgroups cannot be formed. The
+**moving range** of span $w$ (default $w = 2$) substitutes for the subgroup
+range:
+
+$$
+MR_i = |x_i - x_{i-w}|, \qquad
+\hat{\sigma}_{MR} = \frac{\overline{MR}}{d_2(w)}
+$$
+
+For $w = 2$, $d_2(2) = 1.128$. The I-MR chart uses this estimator for both the
+Individuals (I) chart and the Moving Range (MR) chart.
+
+A robust variant uses the **median moving range**:
+
+$$
+\hat{\sigma}_{MR,\text{median}} = \frac{\text{median}(MR_i)}{d_2(w)}
+$$
+
+which down-weights isolated large jumps caused by transient assignable causes.
+
+### 2.5 Sigma from MSSD (mean squared successive differences)
+
+The **mean square successive difference** (MSSD) estimator captures
+short-range variation while being insensitive to a long-term linear trend:
+
+$$
+\text{MSSD} = \frac{1}{2(n-1)}\sum_{i=2}^{n} (x_i - x_{i-1})^2,
+\qquad
+\hat{\sigma}_{\text{MSSD}} = \sqrt{\text{MSSD} / c_4^{\prime}(n)}
+$$
+
+where $c_4^{\prime}(n)$ is a bias-correction factor tabulated for small $n$.
+MSSD is the recommended between-subgroup estimator when the process mean drifts
+slowly over time (e.g. tool-wear drift).
+
+### 2.6 Sigma decomposition
+
+`sigma_decomposition()` returns the four quantities in one call:
+
+| Quantity | Method (default) | What it estimates |
+|----------|------------------|-------------------|
+| `sigma_within` | `r_bar` | Short-term common-cause variation |
+| `sigma_between` | `mssd` | Between-subgroup drift, adjusted for within noise |
+| `sigma_between_within` | $\sqrt{\sigma_w^2 + \sigma_b^2}$ | Combined short + drift |
+| `sigma_total` | `total` (sample SD of all data) | Long-term overall variation |
+
+The between-subgroup component is adjusted to avoid double-counting the
+within-subgroup noise:
+
+$$
+\sigma_{between} = \sqrt{\max\!\left(0,\; \sigma_{MSSD}^2 - \frac{\sigma_{within}^2}{n}\right)}
+$$
+
+A `sigma_between` that is more than about 20 % of `sigma_within` is a strong
+signal that assignable between-subgroup causes are active and the process is
+not in a state of statistical control.
+
+## 3. Theory: SPC Control Chart Constants
+
+Every control chart limit is a multiple of an estimated sigma. The constants
+below translate that sigma into the right multiplier for each chart type.
+
+### 3.1 The $d_2$ and $d_3$ family (range distribution)
+
+For $n$ iid normal observations, the relative range $W = R/\sigma$ has:
+
+$$
+d_2(n) = E[W], \qquad d_3(n) = \sqrt{\text{Var}(W)}
+$$
+
+$d_2$ converts a range into a sigma estimate; $d_3$ appears in the variance of
+that estimate and therefore in the $D_3$/$D_4$ factors for the R chart. Both
+are tabulated and computed by `get_d2()` / `get_d3()`.
+
+### 3.2 The $c_4$ family (standard deviation distribution)
+
+$$
+c_4(n) = \sqrt{\frac{2}{n-1}}\,\frac{\Gamma(n/2)}{\Gamma((n-1)/2)}
+\;\;\approx\;\; 1 - \frac{1}{4n} - \frac{7}{32n^2} - \cdots
+$$
+
+$c_4$ corrects the bias of the sample standard deviation. Its complement
+$\sqrt{1 - c_4^2}$ appears in the $B_3$/$B_4$ factors for the S chart.
+
+### 3.3 X-bar chart factors $A_2$ and $A_3$
+
+The 3-sigma control limits on an $\bar{X}$ chart are
+$\bar{\bar{X}} \pm 3\sigma/\sqrt{n}$. Substituting the two sigma estimators:
+
+$$
+A_2(n) = \frac{3}{d_2(n)\sqrt{n}} \;\;(\text{R-bar chart}), \qquad
+A_3(n) = \frac{3}{c_4(n)\sqrt{n}} \;\;(\text{S-bar chart})
+$$
+
+so that $\text{UCL} = \bar{\bar{X}} + A_2 \bar{R}$ or
+$\bar{\bar{X}} + A_3 \bar{S}$.
+
+### 3.4 R chart factors $D_3$ and $D_4$
+
+The 3-sigma limits on the R chart are:
+
+$$
+D_4(n) = 1 + 3\frac{d_3(n)}{d_2(n)}, \qquad
+D_3(n) = \max\!\left(0,\; 1 - 3\frac{d_3(n)}{d_2(n)}\right)
+$$
+
+giving $\text{UCL}_R = D_4 \bar{R}$ and $\text{LCL}_R = D_3 \bar{R}$.
+
+### 3.5 S chart factors $B_3$ and $B_4$
+
+$$
+B_4(n) = 1 + \frac{3\sqrt{1 - c_4^2(n)}}{c_4(n)}, \qquad
+B_3(n) = \max\!\left(0,\; 1 - \frac{3\sqrt{1 - c_4^2(n)}}{c_4(n)}\right)
+$$
+
+giving $\text{UCL}_S = B_4 \bar{S}$ and $\text{LCL}_S = B_3 \bar{S}$.
+
+### 3.6 Individuals chart factor $E_2$
+
+For an I-MR chart the "subgroup size" is 1, so the $3\sigma/\sqrt{n}$ rule
+becomes $3\sigma$. With $\sigma = \overline{MR}/d_2(2)$:
+
+$$
+E_2 = \frac{3}{d_2(2)} = \frac{3}{1.128} \approx 2.660
+$$
+
+and the Individuals chart limits are $\bar{X} \pm E_2 \overline{MR}$.
+
+### 3.7 Constants table for $n = 2 \dots 10$
+
+| $n$ | $d_2$ | $d_3$ | $c_4$ | $A_2$ | $A_3$ | $D_3$ | $D_4$ | $B_3$ | $B_4$ | $E_2$ |
+|-----|-------|-------|-------|-------|-------|-------|-------|-------|-------|-------|
+| 2 | 1.128 | 0.853 | 0.7979 | 1.880 | 2.659 | 0 | 3.267 | 0 | 3.267 | 2.660 |
+| 3 | 1.693 | 0.888 | 0.8862 | 1.023 | 1.954 | 0 | 2.574 | 0 | 2.568 | 1.772 |
+| 4 | 2.059 | 0.880 | 0.9213 | 0.729 | 1.628 | 0 | 2.282 | 0 | 2.266 | 1.457 |
+| 5 | 2.326 | 0.864 | 0.9400 | 0.577 | 1.427 | 0 | 2.114 | 0 | 2.089 | 1.290 |
+| 6 | 2.534 | 0.848 | 0.9515 | 0.483 | 1.287 | 0 | 2.004 | 0.030 | 1.970 | 1.184 |
+| 7 | 2.704 | 0.833 | 0.9594 | 0.419 | 1.182 | 0.076 | 1.924 | 0.118 | 1.882 | 1.109 |
+| 8 | 2.847 | 0.820 | 0.9650 | 0.373 | 1.099 | 0.136 | 1.864 | 0.184 | 1.816 | 1.054 |
+| 9 | 2.970 | 0.808 | 0.9693 | 0.337 | 1.032 | 0.184 | 1.816 | 0.239 | 1.761 | 1.010 |
+| 10 | 3.078 | 0.797 | 0.9727 | 0.308 | 0.975 | 0.223 | 1.777 | 0.284 | 1.716 | 0.975 |
+
+## 4. Theory: Process Capability and Six Sigma
+
+### 4.1 Capability indices
+
+Given two-sided specification limits $LSL < \mu < USL$ and a process standard
+deviation $\sigma$:
+
+$$
+C_p = \frac{USL - LSL}{6\sigma}, \qquad
+C_{pk} = \min\!\left(\frac{USL - \mu}{3\sigma},\; \frac{\mu - LSL}{3\sigma}\right)
+$$
+
+$C_p$ measures **potential** capability (centred process); $C_{pk}$ measures
+**actual** capability (penalises off-centre means). When $\mu$ is centred,
+$C_{pk} = C_p$; otherwise $C_{pk} < C_p$.
+
+The performance indices $P_p$, $P_{pk}$ have the same formulas but use
+$\sigma_{total}$ instead of $\sigma_{within}$. The ratio
+$C_{pk}/P_{pk} < 1$ quantifies the loss due to long-term drift.
+
+### 4.2 The 1.5$\sigma$ shift convention
+
+Six Sigma folklore assumes that even a well-controlled process drifts by about
+$\pm 1.5\sigma$ in the long term. Under this convention, a short-term
+$C_{pk} = 2.0$ ($\pm 6\sigma$ process) delivers a long-term defect rate of
+3.4 PPM:
+
+$$
+\text{PPM}_{1.5\sigma\text{ shift}} = \Phi(-(6 - 1.5)) \cdot 10^6
+= \Phi(-4.5) \cdot 10^6 \approx 3.4
+$$
+
+`ppm_to_sigma()` and `sigma_to_ppm()` apply this 1.5$\sigma$ shift by default;
+pass `shift = 0` for the no-shift (short-term) conversion.
+
+### 4.3 Expected PPM from $C_{pk}$
+
+Under normality and a centered mean:
+
+$$
+\text{PPM}_{total} = \left[\Phi\!\left(\frac{LSL - \mu}{\sigma}\right)
++ 1 - \Phi\!\left(\frac{USL - \mu}{\sigma}\right)\right] \cdot 10^6
+$$
+
+`capability_to_ppm()` returns separate within-subgroup and overall PPM
+estimates, so the gap between the two diagnoses drift.
+
+### 4.4 $Z_{bench}$ — the combined sigma level
+
+$Z_{bench}$ converts the **total** non-conforming rate back into a sigma-level
+score, then adds the 1.5$\sigma$ shift:
+
+$$
+Z_{bench} = \Phi^{-1}(1 - p_{total}) + 1.5
+$$
+
+A $Z_{bench}$ of 6 corresponds to the Six Sigma target (3.4 PPM long-term).
+
+### 4.5 DPMO and rolled throughput yield
+
+For a process with $k$ defect opportunities per unit:
+
+$$
+\text{DPMO} = \frac{\text{defects}}{\text{units} \cdot k} \cdot 10^6, \qquad
+\text{RTY} = \prod_{j=1}^{m} \text{FPY}_j
+$$
+
+where $\text{FPY}_j$ is the first-pass yield of stage $j$. RTY exposes how
+multi-stage lines accumulate small per-stage defect rates into large end-to-end
+losses.
+
+## 5. Sigma Estimation API
+
+### 5.1 `sigma_estimate()` — all methods
+
+```{r sigma_estimate_api, eval = FALSE}
+sigma_estimate(
+  x,                        # numeric vector or data.frame
+  subgroup    = NULL,       # subgroup membership vector
+  n_size      = NULL,       # OR subgroup size (sequential)
+  m_span      = 2,          # moving-range span (for mr_* methods)
+  method      = c("r_bar", "s_bar", "pooled_s", "mr_bar",
+                  "mr_median", "mssd", "total"),
+  use_unbiased = TRUE,      # apply d2 / c4 correction
+  x_col       = "value",    # data.frame column names
+  subgroup_col = "group"
+)
+```
+
+| `method` | Returns | Use when |
+|----------|---------|----------|
+| `"r_bar"` | $\bar{R}/d_2$ | Classical X-R chart, $n \leq 10$ |
+| `"s_bar"` | $\bar{S}/c_4$ | X-S chart, $n \geq 5$ |
+| `"pooled_s"` | $\sqrt{\sum (n_j-1)s_j^2 / \sum (n_j-1)}/c_4$ | Unequal subgroup sizes |
+| `"mr_bar"` | $\overline{MR}/d_2(2)$ | I-MR chart, individual data |
+| `"mr_median"` | $\tilde{MR}/d_2(2)$ | Robust I-MR with transient spikes |
+| `"mssd"` | $\sqrt{\text{MSSD}}/c_4^{\prime}$ | Drifted processes, between-subgroup |
+| `"total"` | sample SD of all data (optionally bias-corrected) | Long-term $P_{pk}$ |
+
+### 5.2 Worked example: piston-ring inner diameter
+
+The data below are $m = 25$ subgroups of $n = 5$ piston-ring inner diameters
+(mm) from an automotive engine plant. The target is 74.000 mm with tolerance
+$\pm 0.05$ mm (LSL = 73.995, USL = 74.005). The structure follows Montgomery
+*Statistical Quality Control* (7th ed., Table 5.2).
+
+```{r piston_data}
+# 25 subgroups x 5 piston-ring inner diameters (mm)
+rings <- c(
+  74.030, 74.002, 74.019, 73.992, 74.008, 73.995, 73.992, 74.001, 74.011,
+  74.004, 73.988, 73.996, 73.994, 74.000, 74.001, 73.990, 74.006, 74.009,
+  74.012, 73.994, 74.000, 74.001, 73.995, 73.994, 74.004, 73.989, 74.005,
+  74.003, 74.001, 73.997, 73.982, 73.996, 73.995, 74.004, 74.000, 74.009,
+  74.004, 73.991, 73.992, 73.996, 74.005, 74.005, 73.998, 73.999, 74.007,
+  74.002, 73.994, 73.999, 73.998, 74.002, 74.003, 73.998, 74.006, 73.990,
+  73.991, 74.000, 73.992, 74.003, 74.005, 73.989, 73.991, 74.001, 73.989,
+  74.000, 74.002, 74.003, 74.001, 73.997, 73.999, 73.995, 74.001, 73.998,
+  73.997, 74.000, 74.000, 73.992, 74.006, 74.001, 73.993, 73.995, 74.005,
+  73.994, 74.003, 74.001, 74.001, 73.998, 73.999, 74.004, 74.003, 74.001,
+  74.000, 73.993, 74.002, 74.004, 73.996, 74.002, 73.994, 74.001, 74.000,
+  73.999, 74.000, 74.002, 73.997, 74.003, 73.991, 74.004, 74.010, 73.995,
+  74.001, 73.998, 73.999, 74.000, 74.004, 74.005, 73.997, 73.992, 73.998,
+  74.003, 74.001, 74.004, 73.996, 74.002, 74.001, 73.999, 74.003
+)
+subgroup <- rep(1:25, each = 5)
+
+cat(sprintf("Total observations: %d\n", length(rings)))
+cat(sprintf("Overall mean      : %.4f mm\n", mean(rings)))
+cat(sprintf("Overall sd        : %.4f mm\n", sd(rings)))
+```
+
+### 5.3 Comparing the seven estimators
+
+```{r sigma_compare}
+methods <- c("r_bar", "s_bar", "pooled_s", "mr_bar", "mr_median", "mssd", "total")
+sigma_hat <- sapply(methods, function(m) {
+  sigma_estimate(rings, subgroup = subgroup, method = m)
+})
+data.frame(method = methods, sigma = round(sigma_hat, 5))
+```
+
+The within-subgroup estimators (`r_bar`, `s_bar`, `pooled_s`) agree closely
+(~0.006 mm) and reflect the inherent short-term gage + process noise. The
+`total` estimator is slightly larger (0.0062 mm) because it picks up the
+small shift in the first subgroup's mean (see Section 7). The `mr_bar` and
+`mr_median` estimators are markedly smaller (~0.002 mm) because they compute
+the moving range of consecutive individual values within subgroups, which
+understates the true within-subgroup spread when subgroups of $n > 2$ are
+present; they are intended for individual-data (I-MR) contexts, not for
+subgrouped data. The `mssd` estimator (0.0024 mm) behaves similarly for the
+same reason. **The lesson**: always match the sigma-estimation method to the
+sampling strategy — `r_bar` / `s_bar` / `pooled_s` for subgrouped data,
+`mr_bar` / `mr_median` for individual data.
+
+### 5.4 `sigma_decomposition()` — within / between / total
+
+```{r sigma_decomp}
+decomp <- sigma_decomposition(rings, subgroup = subgroup)
+decomp
+```
+
+```{r sigma_decomp_interpret}
+cat(sprintf("sigma_within            = %.5f mm\n", decomp$sigma_within))
+cat(sprintf("sigma_between           = %.5f mm\n", decomp$sigma_between))
+cat(sprintf("sigma_between / within  = %.2f %%\n",
+            100 * decomp$sigma_between / decomp$sigma_within))
+cat(sprintf("sigma_total             = %.5f mm\n", decomp$sigma_total))
+```
+
+A between/within ratio below ~10 % is consistent with a process in statistical
+control; here the ratio is essentially zero, confirming that there is no
+systematic between-subgroup drift across the 25 sampling instants. (Section 7
+will show that subgroup 1 still triggers a Rule 1 violation — a transient
+startup spike — but a single-point violation does not create between-subgroup
+drift, which is why `sigma_between` remains at zero.)
+
+## 6. SPC Constants API
+
+### 6.1 The `get_*` family
+
+All constants are vectorised over `n` and accept an optional `k` (sigma level,
+default 3) for non-standard limits.
+
+```{r get_constants}
+n_vals <- 2:10
+const_tab <- data.frame(
+  n   = n_vals,
+  d2  = sapply(n_vals, get_d2),
+  d3  = sapply(n_vals, get_d3),
+  c4  = sapply(n_vals, get_c4),
+  A2  = sapply(n_vals, get_A2),
+  A3  = sapply(n_vals, get_A3),
+  D3  = sapply(n_vals, get_D3),
+  D4  = sapply(n_vals, get_D4),
+  B3  = sapply(n_vals, get_B3),
+  B4  = sapply(n_vals, get_B4),
+  E2  = sapply(n_vals, get_E2)
+)
+const_tab
+```
+
+### 6.2 Non-3-sigma limits
+
+Passing `k = 2` gives 2-sigma warning limits:
+
+```{r get_constants_k2}
+data.frame(
+  n       = 4:6,
+  A2_3sig = sapply(4:6, get_A2, k = 3),
+  A2_2sig = sapply(4:6, get_A2, k = 2)
+)
+```
+
+### 6.3 `get_c4_prime()` — MSSD bias correction
+
+```{r c4_prime}
+data.frame(
+  n       = 2:6,
+  c4      = sapply(2:6, get_c4),
+  c4_prime = sapply(2:6, get_c4_prime)
+)
+```
+
+`get_c4_prime_cpp()` is the Rcpp-accelerated equivalent used internally for
+large $n$.
+
+## 7. Control Limits and Out-of-Control Rules
+
+### 7.1 `calc_control_limits()` — X-bar/R, X-bar/S, I-MR
+
+```{r calc_limits_xbar_r}
+lim_r <- calc_control_limits(rings, subgroup_size = 5, chart_type = "xbar_r")
+cat(sprintf("X-bar/R chart\n"))
+cat(sprintf("  center (X-bar-bar) = %.4f mm\n", lim_r$center))
+cat(sprintf("  sigma (R-bar/d2)   = %.5f mm\n", lim_r$sigma))
+cat(sprintf("  UCL_X / LCL_X      = %.4f / %.4f mm\n", lim_r$ucl_x, lim_r$lcl_x))
+cat(sprintf("  UCL_R / LCL_R      = %.4f / %.4f mm\n", lim_r$ucl_r, lim_r$lcl_r))
+```
+
+```{r calc_limits_xbar_s}
+lim_s <- calc_control_limits(rings, subgroup_size = 5, chart_type = "xbar_s")
+cat(sprintf("X-bar/S chart\n"))
+cat(sprintf("  sigma (S-bar/c4)   = %.5f mm\n", lim_s$sigma))
+cat(sprintf("  UCL_X / LCL_X      = %.4f / %.4f mm\n", lim_s$ucl_x, lim_s$lcl_x))
+cat(sprintf("  UCL_S / LCL_S      = %.4f / %.4f mm\n", lim_s$ucl_s, lim_s$lcl_s))
+```
+
+The two charts give nearly identical sigma estimates (0.00994 vs 0.00993 mm)
+because the data are well-behaved; in real practice the S chart is preferred
+for $n \geq 5$ because $s$ uses all the data in each subgroup rather than only
+the extremes.
+
+### 7.2 Plotting the X-bar chart
+
+The control-chart geometry is provided by `layers_control_chart()` from
+`iQualityR.plot`. We feed it a data frame with columns `x`, `y`, `cl`, `ucl`,
+`lcl`:
+
+```{r plot_xbar_chart, fig.width = 8, fig.height = 4.5}
+# Subgroup means for the X-bar chart
+xbar_df <- data.frame(
+  x   = 1:25,
+  y   = tapply(rings, subgroup, mean),
+  cl  = lim_r$center,
+  ucl = lim_r$ucl_x,
+  lcl = lim_r$lcl_x
+)
+
+p <- base_plot(xbar_df, aes(x, y), theme = "academic") +
+  layers_control_chart(xbar_df, theme = "academic") +
+  labs(title = expression(bold("X-bar Chart - Piston-Ring Inner Diameter")),
+       x = "Subgroup", y = expression(bold("Mean diameter (mm)")))
+p
+```
+
+The chart flags subgroup 1 (mean 74.0102 mm) above the upper control limit
+(74.0074 mm) — a Rule 1 violation. This is a classic **startup transient**:
+the first subgroup after a tool change often runs high while the process
+settles. Subgroups 2-25 are all inside the limits with no runs or trends,
+indicating that the process reaches statistical control after the initial
+ramp-up. In practice, the engineer would either (a) exclude subgroup 1 from
+the baseline control-limit calculation and re-compute, or (b) investigate the
+startup procedure (warm-up cycle, coolant temperature) to eliminate the
+transient.
+
+### 7.3 The eight Western Electric / Nelson rules
+
+```{r list_rules}
+list_spc_rules()
+```
+
+| Rule | Pattern signalled | Typical assignable cause |
+|------|-------------------|--------------------------|
+| 1 | Single point beyond 3σ | Transient spike (bad setup, foreign matter) |
+| 2 | 9 in a row on same side of CL | Mean shift (new operator, material lot) |
+| 3 | 6 in a row trending up or down | Tool wear, drift, temperature ramp |
+| 4 | 14 in a row alternating up/down | Two parallel processes feeding one chart |
+| 5 | 2 of 3 beyond 2σ (same side) | Early-stage mean shift |
+| 6 | 4 of 5 beyond 1σ (same side) | Smaller but persistent mean shift |
+| 7 | 15 in a row within 1σ | Stratification (subgroups mix two populations) |
+| 8 | 8 in a row outside 1σ | Mixture / bimodal process |
+
+### 7.4 `detect_spc_violations()` — full rule sweep
+
+```{r detect_violations}
+spc <- detect_spc_violations(xbar_df$y, center = lim_r$center, sigma = lim_r$sigma / sqrt(5))
+cat(sprintf("Violations detected: %d\n", spc$n_violations))
+cat(sprintf("In control?          %s\n", spc$is_in_control))
+if (!spc$is_in_control) {
+  print(spc$rules_triggered)
+}
+```
+
+### 7.5 `check_spc_rule()` — single-rule query
+
+```{r check_rule}
+# Rule 2: 9 consecutive points on the same side of the centre line
+r2 <- check_spc_rule(xbar_df$y, rule = 2, center = lim_r$center, sigma = lim_r$sigma / sqrt(5))
+cat(sprintf("Rule 2 triggered? %s\n", r2$triggered))
+```
+
+### 7.6 I-MR chart for individual measurements
+
+For a process sampled one unit at a time — for example, the cycle time of each
+consecutive electroplating batch — the I-MR chart is the correct tool. The data
+below are 30 consecutive batch cycle times (minutes) from a plating line;
+
+```{r imr_data}
+cycle_time <- c(
+  18.4, 18.2, 18.6, 18.3, 18.5, 18.1, 18.7, 18.4, 18.5, 18.3,
+  18.6, 18.4, 18.8, 18.5, 18.7, 19.1, 19.4, 19.6, 19.8, 20.1,
+  20.3, 20.5, 20.4, 20.7, 20.9, 21.0, 21.2, 21.4, 21.5, 21.7
+)
+
+lim_i <- calc_control_limits(cycle_time, chart_type = "imr")
+cat(sprintf("I-MR chart\n"))
+cat(sprintf("  center (X-bar)    = %.3f min\n", lim_i$center))
+cat(sprintf("  sigma (MR-bar/d2) = %.4f min\n", lim_i$sigma))
+cat(sprintf("  UCL_X / LCL_X     = %.3f / %.3f min\n", lim_i$ucl_x, lim_i$lcl_x))
+cat(sprintf("  UCL_MR            = %.3f min\n", lim_i$ucl_mr))
+```
+
+```{r imr_plot, fig.width = 8, fig.height = 4.5}
+imr_df <- data.frame(
+  x   = 1:length(cycle_time),
+  y   = cycle_time,
+  cl  = lim_i$center,
+  ucl = lim_i$ucl_x,
+  lcl = lim_i$lcl_x
+)
+
+p_imr <- base_plot(imr_df, aes(x, y), theme = "academic") +
+  layers_control_chart(imr_df, theme = "academic") +
+  labs(title = expression(bold("Individuals Chart - Plating Cycle Time")),
+       x = "Batch", y = expression(bold("Cycle time (min)")))
+p_imr
+```
+
+```{r imr_violations}
+spc_imr <- detect_spc_violations(cycle_time, center = lim_i$center, sigma = lim_i$sigma)
+cat(sprintf("Violations: %d  | Rules: %s\n",
+            spc_imr$n_violations,
+            paste(spc_imr$rules_triggered, collapse = ", ")))
+```
+
+The Individuals chart triggers **seven of the eight rules** simultaneously
+(Rules 1, 2, 3, 4, 5, 6, 8). This is the signature of a process with a strong
+monotonic drift: the upward trend fires Rule 3, the same-side runs fire Rules
+2/5/6, and the spread of points across both sigma zones fires Rules 1/4/8.
+The root cause is a slow chemical bath ageing effect — plating drag-out
+increases bath viscosity over time, lengthening each batch cycle. The
+corrective action is a bath replenishment schedule or a conductivity-triggered
+makeup dosing loop.
+
+## 8. Capability and Quality Metrics API
+
+### 8.1 `capability_to_ppm()` — $C_{pk}$ to expected PPM
+
+Given a process with $C_{pk} = 1.33$ on a 10 mm tolerance band
+(LSL = 0, USL = 10), the expected non-conforming rate is:
+
+```{r cap_to_ppm}
+ppm <- capability_to_ppm(cpk = 1.33, usl = 10, lsl = 0)
+cat(sprintf("Cpk = 1.33 (centered)\n"))
+cat(sprintf("  Within  PPM total = %.1f\n", ppm$within$total))
+cat(sprintf("  Overall PPM total = %.1f\n", ppm$overall$total))
+```
+
+When the long-term $P_{pk}$ is lower than $C_{pk}$, the overall PPM grows:
+
+```{r cap_to_ppm_drift}
+ppm2 <- capability_to_ppm(cpk = 1.33, ppk = 1.10, usl = 10, lsl = 0)
+cat(sprintf("Cpk = 1.33, Ppk = 1.10 (1.5 sigma drift)\n"))
+cat(sprintf("  Within  PPM total = %.1f\n", ppm2$within$total))
+cat(sprintf("  Overall PPM total = %.1f\n", ppm2$overall$total))
+```
+
+The within-subgroup PPM stays at the Cpk-implied level, but the overall PPM
+balloons by more than 20x — a direct signal that the long-term drift is the
+dominant quality loss.
+
+### 8.2 `capability_interpret()` — verbal level
+
+```{r cap_interpret}
+for (cpk in c(0.5, 0.67, 1.0, 1.33, 1.67, 2.0)) {
+  ci <- capability_interpret(cpk, standard = "six_sigma")
+  cat(sprintf("Cpk = %.2f  ->  %-12s  %s\n", cpk, ci$level, ci$interpretation))
+}
+```
+
+The `standard` argument switches between `six_sigma`, `automotive`
+(PPAP requires $C_{pk} \geq 1.33$ for new characteristics and
+$\geq 1.67$ for existing ones), and `custom` (user-supplied thresholds).
+
+### 8.3 `ppm_to_sigma()` and `sigma_to_ppm()` — sigma-level conversion
+
+```{r ppm_sigma_conv}
+# Six Sigma target: 3.4 PPM long-term
+cat(sprintf("3.4 PPM      -> sigma level = %.2f  (with 1.5 shift)\n",
+            ppm_to_sigma(3.4)))
+cat(sprintf("3.4 PPM      -> sigma level = %.2f  (no shift)\n",
+            ppm_to_sigma(3.4, shift = 0)))
+cat(sprintf("6 sigma      -> PPM          = %.2f  (with 1.5 shift)\n",
+            sigma_to_ppm(6)))
+cat(sprintf("6 sigma      -> PPM          = %.2f  (no shift)\n",
+            sigma_to_ppm(4.5, shift = 0)))
+```
+
+### 8.4 `z_bench()` — combined process sigma level
+
+```{r z_bench_ex}
+# A process producing 0.1 % non-conforming
+cat(sprintf("p_total = 0.001 -> Z.bench = %.3f\n", z_bench(0.001)))
+# A 6-sigma-short-term process: 0.001 PPM
+cat(sprintf("p_total = 1e-6  -> Z.bench = %.3f\n", z_bench(1e-6)))
+```
+
+### 8.5 Yield / DPMO conversion
+
+```{r yield_dpmo}
+# 95 % first-pass yield, single opportunity
+cat(sprintf("Yield 95%% -> DPMO = %.0f\n", yield_to_dpmo(0.95)))
+# 99 % yield with 10 opportunities per unit
+cat(sprintf("Yield 99%%, k=10 -> DPMO = %.0f\n",
+            yield_to_dpmo(0.99, opportunities = 10)))
+# Invert: 50000 DPMO back to yield
+cat(sprintf("DPMO 50000 -> yield = %.4f\n", dpmo_to_yield(50000)))
+```
+
+### 8.6 `throughput_yield()` — rolled throughput yield for a line
+
+A 5-stage PCB assembly line has first-pass yields of 0.985, 0.992, 0.978,
+0.995, 0.989. The end-to-end rolled throughput yield is:
+
+```{r rty}
+fpy <- c(0.985, 0.992, 0.978, 0.995, 0.989)
+rty <- throughput_yield(yield = fpy)
+cat(sprintf("Stage FPY   : %s\n",
+            paste(sprintf("%.3f", fpy), collapse = " -> ")))
+cat(sprintf("Rolled yield: %.4f  (%.2f %%)\n", rty, 100 * rty))
+cat(sprintf("DPU equivalent: %.4f defects/unit\n", -log(rty)))
+```
+
+Even though each stage looks healthy (≥ 97.8 %), the line loses 3.9 % of its
+output to compounding — a sobering reminder that RTY, not per-stage yield,
+drives plant-level performance.
+
+### 8.7 `reliability()` and `availability()`
+
+```{r rel_avail}
+# Exponential: MTBF = 2000 h, mission time 500 h
+cat(sprintf("R(500h | MTBF=2000, exp) = %.4f\n",
+            reliability(t = 500, mtbf = 2000)))
+# Weibull: shape = 2 (wear-out), scale = 3000 h
+cat(sprintf("R(500h | Weibull k=2, eta=3000) = %.4f\n",
+            reliability(t = 500, shape = 2, scale = 3000, dist = "weibull")))
+# Availability
+cat(sprintf("A(MTBF=2000, MTTR=24) = %.4f\n",
+            availability(mtbf = 2000, mttr = 24)))
+```
+
+### 8.8 `benchmark_compare()` — industry percentile
+
+```{r benchmark}
+# Cpk = 1.33 against automotive benchmarks
+b <- benchmark_compare("cpk", 1.33, industry = "automotive")
+cat(sprintf("Cpk = 1.33 vs automotive\n"))
+cat(sprintf("  rating      : %s\n", b$rating))
+cat(sprintf("  percentile  : %d\n", b$percentile))
+cat(sprintf("  world class : %.2f\n", b$benchmark$world_class))
+cat(sprintf("  industry avg: %.2f\n", b$benchmark$industry_avg))
+
+# 500 PPM against electronics
+b2 <- benchmark_compare("ppm", 500, industry = "electronics")
+cat(sprintf("\nPPM = 500 vs electronics\n"))
+cat(sprintf("  rating      : %s\n", b2$rating))
+cat(sprintf("  percentile  : %d\n", b2$percentile))
+```
+
+### 8.9 `quality_dashboard()` — one-shot summary
+
+```{r dashboard}
+dash <- quality_dashboard(cpk = 1.33, ppm = 60, yield_val = 99.4,
+                          industry = "automotive")
+cat("Quality dashboard (automotive industry)\n")
+cat(sprintf("  Cpk        : %.2f  -> %s\n",
+            dash$cpk$value, dash$cpk$interpretation$level))
+cat(sprintf("  Yield      : %.2f %%\n", 100 * dash$yield$value))
+cat(sprintf("  Cpk rating : %s (percentile %d)\n",
+            dash$cpk$benchmark$rating, dash$cpk$benchmark$percentile))
+```
+
+## 9. Quality Scenarios
+
+Each scenario follows **Problem -> Data -> Analysis -> Decision** and uses
+realistic data drawn from the quality-engineering literature.
+
+### 9.1 Scenario A: CNC turning — X-bar/R + $C_{pk}$ (automotive)
+
+**Problem.** An automotive Tier-1 supplier machines transmission shafts on a
+CNC turning cell. The characteristic is the journal diameter, nominal
+25.000 mm, tolerance $\pm 0.030$ mm (LSL = 24.970, USL = 25.030). The
+customer (an OEM) contractually requires $C_{pk} \geq 1.33$. The SPC plan
+calls for subgroups of $n = 5$ parts every 30 minutes.
+
+The data below are 20 subgroups of $n = 5$ diameters (mm) representative of a
+well-centred, in-control turning cell after a tool change.
+
+```{r scn_a_data}
+set.seed(2024)
+shaft <- as.vector(sapply(1:20, function(j) {
+  rnorm(5, mean = 25.000, sd = 0.0065)
+}))
+shaft_subgrp <- rep(1:20, each = 5)
+
+cat(sprintf("n total       = %d\n", length(shaft)))
+cat(sprintf("mean          = %.4f mm\n", mean(shaft)))
+cat(sprintf("sd (total)    = %.5f mm\n", sd(shaft)))
+```
+
+**Step 1 — Verify statistical control.**
+
+```{r scn_a_limits}
+lim_a <- calc_control_limits(shaft, subgroup_size = 5, chart_type = "xbar_r")
+spc_a <- detect_spc_violations(
+  tapply(shaft, shaft_subgrp, mean),
+  center = lim_a$center,
+  sigma  = lim_a$sigma / sqrt(5)
+)
+cat(sprintf("X-bar/R sigma = %.5f mm\n", lim_a$sigma))
+cat(sprintf("In control?   = %s  (violations: %d)\n",
+            spc_a$is_in_control, spc_a$n_violations))
+```
+
+**Step 2 — Compute $C_p$ and $C_{pk}$ (within-subgroup sigma).**
+
+```{r scn_a_capability}
+Cp_a  <- (25.030 - 24.970) / (6 * lim_a$sigma)
+Cpk_a <- min((25.030 - lim_a$center) / (3 * lim_a$sigma),
+             (lim_a$center - 24.970) / (3 * lim_a$sigma))
+cat(sprintf("Cp  = %.3f\n",  Cp_a))
+cat(sprintf("Cpk = %.3f\n",  Cpk_a))
+ci_a <- capability_interpret(Cpk_a, standard = "automotive")
+cat(sprintf("Level: %s\n",  ci_a$level))
+```
+
+**Step 3 — Expected PPM.**
+
+```{r scn_a_ppm}
+ppm_a <- capability_to_ppm(cpk = Cpk_a, usl = 25.030, lsl = 24.970,
+                            mean = lim_a$center, sigma_within = lim_a$sigma)
+cat(sprintf("Expected within PPM = %.2f\n", ppm_a$within$total))
+```
+
+**Step 4 — Plot the X-bar chart.**
+
+```{r scn_a_plot, fig.width = 8, fig.height = 4.5}
+xbar_a <- data.frame(
+  x = 1:20,
+  y = tapply(shaft, shaft_subgrp, mean),
+  cl = lim_a$center,
+  ucl = lim_a$ucl_x,
+  lcl = lim_a$lcl_x
+)
+base_plot(xbar_a, aes(x, y), theme = "academic") +
+  layers_control_chart(xbar_a, theme = "academic") +
+  labs(title = expression(bold("X-bar Chart - Transmission Shaft Journal")),
+       x = "Subgroup (30-min intervals)",
+       y = expression(bold("Mean diameter (mm)")))
+```
+
+**Decision.** With $C_{pk} = `r sprintf("%.2f", Cpk_a)` \geq 1.33$ and the
+process in statistical control, the cell meets the OEM requirement. The
+expected within-subgroup PPM is below 60, consistent with an automotive
+world-class process.
+
+### 9.2 Scenario B: Semiconductor wafer — I-MR + $P_{pk}$
+
+**Problem.** A 200 mm fab monitors oxide thickness on every wafer (one
+measurement per wafer, so individuals data). The target is 1000 Å with
+specification 980-1020 Å (±2 %, typical for a gate-oxide process). The data
+below are 30 consecutive wafer measurements (Å) after a furnace recipe
+change. Because the process is sampled one wafer at a time, the I-MR chart is
+the only valid SPC tool, and $P_{pk}$ (not $C_{pk}$) is the correct capability
+index.
+
+```{r scn_b_data}
+oxide <- c(
+  1002,  998, 1005, 1000,  996, 1003,  999, 1001,  997, 1004,
+  1000,  995, 1002, 1006,  999, 1003, 1001,  998, 1005, 1000,
+   997, 1004, 1002,  999, 1006, 1001,  998, 1003,  995, 1000
+)
+
+cat(sprintf("n        = %d\n", length(oxide)))
+cat(sprintf("mean     = %.2f Å\n", mean(oxide)))
+cat(sprintf("sd total = %.2f Å\n", sd(oxide)))
+```
+
+**Step 1 — I-MR control limits.**
+
+```{r scn_b_limits}
+lim_b <- calc_control_limits(oxide, chart_type = "imr")
+spc_b <- detect_spc_violations(oxide, center = lim_b$center, sigma = lim_b$sigma)
+cat(sprintf("sigma (MR)   = %.3f Å\n", lim_b$sigma))
+cat(sprintf("UCL_X/LCL_X  = %.1f / %.1f Å\n", lim_b$ucl_x, lim_b$lcl_x))
+cat(sprintf("In control?  = %s  (violations: %d)\n",
+            spc_b$is_in_control, spc_b$n_violations))
+```
+
+**Step 2 — $P_p$ and $P_{pk}$ (overall sigma).**
+
+```{r scn_b_capability}
+sigma_total_b <- sd(oxide)
+Pp_b  <- (1020 - 980) / (6 * sigma_total_b)
+Ppk_b <- min((1020 - mean(oxide)) / (3 * sigma_total_b),
+             (mean(oxide) - 980) / (3 * sigma_total_b))
+cat(sprintf("Pp  = %.3f\n", Pp_b))
+cat(sprintf("Ppk = %.3f\n", Ppk_b))
+ci_b  <- capability_interpret(Ppk_b, standard = "six_sigma")
+cat(sprintf("Level: %s\n", ci_b$level))
+```
+
+**Step 3 — Z.bench from actual non-conforming rate.**
+
+```{r scn_b_zbench}
+p_below <- pnorm(980,  mean = mean(oxide), sd = sigma_total_b)
+p_above <- 1 - pnorm(1020, mean = mean(oxide), sd = sigma_total_b)
+cat(sprintf("Expected PPM = %.4f\n", (p_below + p_above) * 1e6))
+cat(sprintf("Z.bench      = %.3f\n", z_bench(p_below + p_above)))
+```
+
+**Step 4 — I-MR chart.**
+
+```{r scn_b_plot, fig.width = 8, fig.height = 4.5}
+imr_b <- data.frame(
+  x = 1:length(oxide),
+  y = oxide,
+  cl = lim_b$center,
+  ucl = lim_b$ucl_x,
+  lcl = lim_b$lcl_x
+)
+base_plot(imr_b, aes(x, y), theme = "academic") +
+  layers_control_chart(imr_b, theme = "academic") +
+  labs(title = expression(bold("I-MR Chart - Oxide Thickness")),
+       x = "Wafer", y = expression(bold("Thickness (Å)")))
+```
+
+**Decision.** The furnace is in statistical control and $P_{pk} > 2$, well
+above the semiconductor industry's $P_{pk} \geq 1.67$ new-process requirement.
+The recipe change is approved for full production.
+
+### 9.3 Scenario C: Plating line — sigma decomposition + benchmark
+
+**Problem.** A decorative chrome plating line produces 25 subgroups of $n = 4$
+plating-thickness measurements (µm). Target 12.0 µm, tolerance $\pm 1.5$ µm.
+The quality engineer suspects the line is drifting across shifts and wants to
+quantify the within / between split and benchmark $C_{pk}$ against industry
+averages.
+
+```{r scn_c_data}
+# 20 subgroups of n=4 with a between-subgroup drift
+set.seed(42)
+n_sub  <- 20
+n_size <- 4
+drift  <- seq(-0.7, 0.7, length.out = n_sub)   # gradual mean drift across shifts
+plate  <- as.vector(sapply(seq_len(n_sub), function(j) {
+  rnorm(n_size, mean = 12.0 + drift[j], sd = 0.15)
+}))
+plate_subgrp <- rep(1:n_sub, each = n_size)
+
+cat(sprintf("n total   = %d\n", length(plate)))
+cat(sprintf("mean      = %.3f µm\n", mean(plate)))
+cat(sprintf("sd total  = %.3f µm\n", sd(plate)))
+```
+
+**Step 1 — Decompose sigma.**
+
+```{r scn_c_decomp}
+decomp_c <- sigma_decomposition(plate, subgroup = plate_subgrp)
+print(decomp_c)
+cat(sprintf("\nsigma_between / sigma_within = %.1f %%\n",
+            100 * decomp_c$sigma_between / decomp_c$sigma_within))
+```
+
+A between/within ratio above 20 % confirms a significant between-subgroup
+drift; the SPC chart should be checked for Rule 2 / Rule 3 violations.
+
+**Step 2 — Capability (within vs overall).**
+
+```{r scn_c_capability}
+lim_c   <- calc_control_limits(plate, subgroup_size = n_size, chart_type = "xbar_r")
+Cpk_c   <- min((13.5 - lim_c$center) / (3 * lim_c$sigma),
+               (lim_c$center - 10.5) / (3 * lim_c$sigma))
+Ppk_c   <- min((13.5 - mean(plate)) / (3 * sd(plate)),
+               (mean(plate) - 10.5) / (3 * sd(plate)))
+cat(sprintf("Cpk (within)   = %.3f\n", Cpk_c))
+cat(sprintf("Ppk (overall)  = %.3f\n", Ppk_c))
+cat(sprintf("Cpk / Ppk      = %.2f  (1.00 = no drift)\n", Cpk_c / Ppk_c))
+```
+
+**Step 3 — Benchmark.**
+
+```{r scn_c_benchmark}
+b_c <- benchmark_compare("cpk", Cpk_c, industry = "automotive")
+cat(sprintf("Cpk = %.2f -> %s (percentile %d)\n",
+            Cpk_c, b_c$rating, b_c$percentile))
+```
+
+**Decision.** The line's short-term $C_{pk}$ of 3.03 looks "World Class" on
+paper, but the long-term $P_{pk}$ of only 1.11 exposes the drift. The
+$C_{pk}/P_{pk}$ ratio of 2.7 is the actionable signal — the process is
+*capable but unstable*. The SPC chart (not shown) triggers 6 of 8 rules,
+confirming the drift is real. Recommended action: tighten the bath chemistry
+control loop (conductivity-triggered makeup dosing) to eliminate the
+between-shift drift; until then, $P_{pk}$ — not $C_{pk}$ — is the number to
+report to the customer.
+
+### 9.4 Scenario D: Multi-stage PCB assembly — RTY
+
+**Problem.** A PCB assembly line has 6 stages: solder paste print, pick-and-
+place, reflow, AOI, wave solder, ICT. The line manager reports per-stage
+first-pass yields of 99.0 %, 99.5 %, 98.7 %, 99.8 %, 98.9 %, 99.6 %. The plant
+manager asks: *"What is our rolled throughput yield, and how many defects per
+unit should we expect?"*
+
+```{r scn_d_rty}
+fpy_d <- c(0.990, 0.995, 0.987, 0.998, 0.989, 0.996)
+rty_d <- throughput_yield(yield = fpy_d)
+dpu_d <- -log(rty_d)
+dpmo_d <- yield_to_dpmo(rty_d, opportunities = 6)
+cat(sprintf("Per-stage FPY: %s\n",
+            paste(sprintf("%.1f%%", 100 * fpy_d), collapse = " -> ")))
+cat(sprintf("RTY           = %.4f  (%.2f%%)\n", rty_d, 100 * rty_d))
+cat(sprintf("DPU           = %.4f defects/board\n", dpu_d))
+cat(sprintf("DPMO (k=6)    = %.0f\n", dpmo_d))
+cat(sprintf("Sigma level   = %.2f\n", ppm_to_sigma(dpmo_d)))
+```
+
+**Decision.** The line loses 4.4 % of its output end-to-end despite every
+stage being above 98.7 %. The bottleneck is wave solder (98.9 %); improving it
+to 99.5 % would lift RTY from 0.956 to 0.961 — about 0.6 percentage points of
+throughput recovery, worth roughly 6 000 boards per million shipped.
+
+### 9.5 Scenario E: Field reliability — MTBF demonstration
+
+**Problem.** A pump manufacturer specifies MTBF $\geq$ 4000 hours for a new
+industrial pump line. The field-reliability team has collected 18 months of
+run-time data across 50 units, observing 12 failures totalling 198 000
+unit-hours. They must (a) estimate field MTBF, (b) compute $R(t)$ at the
+warranty mission time of 1500 h, and (c) benchmark availability against
+industrial norms (MTTR = 36 h).
+
+```{r scn_e_reliability}
+mtbf_e <- 198000 / 12
+cat(sprintf("Field MTBF        = %.0f h\n", mtbf_e))
+cat(sprintf("R(1500 | exp)     = %.4f\n",
+            reliability(t = 1500, mtbf = mtbf_e)))
+# Weibull fit would be the next step if the bath-tub profile matters.
+cat(sprintf("Availability      = %.4f\n",
+            availability(mtbf = mtbf_e, mttr = 36)))
+b_e <- benchmark_compare("availability",
+                         availability(mtbf = mtbf_e, mttr = 36),
+                         industry = "manufacturing")
+cat(sprintf("Rating            = %s (percentile %d)\n",
+            b_e$rating, b_e$percentile))
+```
+
+**Decision.** Field MTBF (16 500 h) far exceeds the 4000 h target; the
+exponential model gives $R(1500\text{ h}) \approx 0.913$. Availability is
+world-class for general manufacturing. No corrective action is warranted.
+
+## 10. Putting It Together: A Capability Study Workflow
+
+The full capability-study workflow, from raw data to dashboard, is:
+
+```{r workflow, eval = FALSE}
+# 1. Plan: define characteristic, specs, subgrouping, sampling frequency.
+# 2. Collect data and verify statistical control.
+lim   <- calc_control_limits(data, subgroup_size = 5, chart_type = "xbar_r")
+spc   <- detect_spc_violations(subgroup_means,
+                               center = lim$center, sigma = lim$sigma / sqrt(5))
+stopifnot(spc$is_in_control)            # do NOT compute Cpk on an unstable process
+
+# 3. Decompose sigma to confirm the within/between split is acceptable.
+decomp <- sigma_decomposition(data, subgroup = subgroup)
+
+# 4. Compute capability indices.
+Cp  <- (USL - LSL) / (6 * lim$sigma)
+Cpk <- min((USL - lim$center) / (3 * lim$sigma),
+           (lim$center - LSL) / (3 * lim$sigma))
+Ppk <- min((USL - mean(data)) / (3 * sd(data)),
+           (mean(data) - LSL) / (3 * sd(data)))
+
+# 5. Convert to PPM / Z.bench and benchmark.
+ppm  <- capability_to_ppm(cpk = Cpk, usl = USL, lsl = LSL)
+zb   <- z_bench(ppm$within$total / 1e6)
+bench <- benchmark_compare("cpk", Cpk, industry = "automotive")
+
+# 6. One-shot dashboard.
+dash <- quality_dashboard(cpk = Cpk, ppm = ppm$within$total,
+                          yield_val = dpmo_to_yield(ppm$within$total),
+                          industry = "automotive")
+```
+
+The workflow mirrors the **Plan -> Task -> Analysis -> Summary/Plot -> Report**
+pattern: Plan is step 1, Task is the data + SPC check, Analysis is sigma +
+capability, Summary is PPM/Z.bench, Report is the dashboard / Excel export.
+
+## 11. Interpreting Capability Indices — Decision Guide
+
+| $C_{pk}$ | PPM (within) | Sigma level | Verdict (automotive) | Action |
+|----------|--------------|-------------|----------------------|--------|
+| < 0.67 | > 44 500 | < 3 | Unacceptable | Stop line; 100 % inspection |
+| 0.67 - 1.00 | 4 550 - 44 500 | 3 - 4 | Marginal | Sort & contain; launch improvement |
+| 1.00 - 1.33 | 270 - 4 550 | 4 - 5 | Acceptable | Monitor; improvement planned |
+| 1.33 - 1.67 | 63 - 270 | 5 - 5.5 | Good | Routine SPC |
+| 1.67 - 2.00 | 3.4 - 63 | 5.5 - 6 | Excellent | Reduce sampling frequency |
+| > 2.00 | < 3.4 | > 6 | World class | Consider tolerance review |
+
+**Common pitfalls**:
+
+- Computing $C_{pk}$ on an out-of-control process (inflates sigma, hides
+  drift). Always verify SPC stability first.
+- Confusing $C_{pk}$ (within) with $P_{pk}$ (overall). A $C_{pk} / P_{pk}$
+  ratio well below 1 is a drift alarm even when both indices individually look
+  acceptable.
+- Reporting $C_{pk}$ from a single short study. Capability indices have
+  non-trivial confidence intervals; report a lower confidence bound, not a
+  point estimate, when the sample is small.
+- Treating the 1.5$\sigma$ shift as a physical law. It is a convention for
+  long-term vs short-term conversion; if your process genuinely does not drift
+  (e.g. closed-loop controlled), use `shift = 0`.
+
+## 12. Parameter Reference
+
+### Sigma estimation
+
+| Function | Key args | Returns |
+|----------|----------|---------|
+| `sigma_estimate()` | `x, subgroup, n_size, method, use_unbiased, m_span` | numeric scalar |
+| `sigma_decomposition()` | `x, subgroup, n_size, within_method, between_method` | data.frame |
+
+### SPC constants
+
+| Function | Formula |
+|----------|---------|
+| `get_d2(n)` | $E[R/\sigma]$ |
+| `get_d3(n)` | $\sqrt{\text{Var}(R/\sigma)}$ |
+| `get_d4(n)` | $1 + 3 d_3/d_2$ (alias for `get_D4` on n=2 convention) |
+| `get_c4(n)` | $\sqrt{2/(n-1)}\,\Gamma(n/2)/\Gamma((n-1)/2)$ |
+| `get_c4_prime(n)` | MSSD bias-correction factor |
+| `get_A2(n, k=3)` | $k / (d_2 \sqrt{n})$ |
+| `get_A3(n, k=3)` | $k / (c_4 \sqrt{n})$ |
+| `get_D3(n, k=3)` | $\max(0, 1 - k d_3/d_2)$ |
+| `get_D4(n, k=3)` | $1 + k d_3/d_2$ |
+| `get_B3(n, k=3)` | $\max(0, 1 - k \sqrt{1-c_4^2}/c_4)$ |
+| `get_B4(n, k=3)` | $1 + k \sqrt{1-c_4^2}/c_4$ |
+| `get_E2(n, k=3)` | $k / d_2$ |
+
+### SPC control and rules
+
+| Function | Key args | Returns |
+|----------|----------|---------|
+| `calc_control_limits()` | `data, subgroup_size, chart_type` | list with center, sigma, UCL/LCL |
+| `detect_spc_violations()` | `x, center, sigma, rules` | list with violations, rules_triggered |
+| `check_spc_rule()` | `x, rule, center, sigma` | single-rule result |
+| `list_spc_rules()` | — | data.frame of 8 rules |
+| `summarize_spc_rules()` | `result, format` | text or data.frame |
+
+### Capability and quality metrics
+
+| Function | Key args | Returns |
+|----------|----------|---------|
+| `capability_to_ppm()` | `cpk, ppk, usl, lsl, mean` | list(within, overall) |
+| `capability_interpret()` | `cpk, standard` | list(level, color, interpretation) |
+| `ppm_to_sigma()` | `ppm, shift` | numeric |
+| `sigma_to_ppm()` | `sigma, shift` | numeric |
+| `z_bench()` | `p_total, shift` | numeric |
+| `yield_to_dpmo()` | `yield, opportunities` | numeric |
+| `dpmo_to_yield()` | `dpmo, opportunities` | numeric |
+| `throughput_yield()` | `dpu` or `yield` | numeric |
+| `reliability()` | `t, lambda/mtbf, dist, shape, scale` | numeric |
+| `availability()` | `mtbf, mttr` | numeric |
+| `benchmark_compare()` | `metric, value, industry` | list(benchmark, rating, percentile) |
+| `quality_dashboard()` | `cpk, ppm, yield_val, dpmo, availability, industry` | list |
+
+## 13. References
+
+1. Montgomery, D. C. (2013). *Statistical Quality Control: A Modern
+   Introduction* (7th ed.). Wiley. — The canonical reference for X-bar/R,
+   X-bar/S, I-MR charts, capability indices, and the piston-ring dataset used
+   in Section 5.2.
+
+2. Western Electric Company (1956). *Statistical Quality Control Handbook*
+   (1st ed.). AT&T Technologies. — Original source of the eight Western
+   Electric rules implemented in `detect_spc_violations()`.
+
+3. Nelson, L. S. (1984). "The Shewhart Control Chart — Tests for Special
+   Causes." *Journal of Quality Technology*, 16(4), 237-239. — Refinements to
+   the WE rules; the rule-7 and rule-8 tests follow Nelson's formulation.
+
+4. Automotive Industry Action Group (AIAG) (2005). *Statistical Process
+   Control (SPC) Reference Manual* (2nd ed.). — Automotive default for
+   $C_{pk} \geq 1.33$ (new) / $1.67$ (existing) used in
+   `capability_interpret(standard = "automotive")`.
+
+5. Pyzdek, T. & Keller, P. A. (2018). *The Six Sigma Handbook* (5th ed.).
+   McGraw-Hill. — The 1.5$\sigma$ shift convention, $Z_{bench}$, DPMO, and RTY
+   definitions used in Sections 4 and 8.
+
+6. Duncan, A. J. (1986). *Quality Control and Industrial Statistics* (5th
+   ed.). Irwin. — Tabulation and derivation of $d_2$, $d_3$, $c_4$, $A_2$,
+   $D_3$, $D_4$, $B_3$, $B_4$.
+
+7. Howe, W. G. (1969). "Two-Sided Tolerance Limits for Normal Populations —
+   Some Improvements." *Journal of the American Statistical Association*,
+   64(326), 610-620. — Source of the $c_4^{\prime}$ factor for MSSD.
+
+8. Breyfogle, F. W. (2003). *Implementing Six Sigma: Smarter Solutions Using
+   Statistical Methods* (2nd ed.). Wiley. — RTY, DPU, and the relationship
+   between per-stage FPY and end-to-end yield.
+
+## Further Reading
+
+- For the descriptive-statistics foundation that precedes SPC (mean, SD,
+  shape measures, confidence intervals), see
+  `vignette("descriptive-and-distributions", package = "iQualityR.stat")`.
+- For the hypothesis-test counterparts of capability comparison (is $C_{pk}$
+  from line A equal to $C_{pk}$ from line B?), see
+  `vignette("hypothesis-testing-and-intervals", package = "iQualityR.stat")`.
+- For sample-size planning of capability studies (how many subgroups to
+  collect to estimate $C_{pk}$ with a target CI width), see
+  `vignette("sample-size-and-power", package = "iQualityR.stat")`.
+- For ANOVA-based comparison of multiple process lines (a generalisation of
+  the two-sample t-test), see
+  `vignette("anova", package = "iQualityR.stat")`.
+- For regression-based process modelling (predicting a CTQ from process
+  variables) and the diagnostics that surface the same drift patterns
+  detected by SPC, see
+  `vignette("regression-modeling", package = "iQualityR.stat")`.
+- For the visualization infrastructure (control-chart layers, spec-limit
+  annotation, theme switching), see
+  `vignette("plotting-overview", package = "iQualityR.plot")`.

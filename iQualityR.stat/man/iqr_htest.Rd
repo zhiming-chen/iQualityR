@@ -22,6 +22,17 @@ computation (L1 \code{HTestAnalyzer}), plotting (L2 \code{HTestPlotter}), report
 \item \code{wilcoxon_rank_sum}: Wilcoxon rank sum test (Mann-Whitney U)
 \item \code{kruskal_wallis}: Kruskal-Wallis rank sum test (k independent groups)
 \item \code{friedman}: Friedman rank sum test (randomized complete block)
+\item \code{tost_mean}: TOST for mean equivalence (one-sample / two-sample)
+\item \code{tost_proportion}: TOST for two-sample proportion equivalence
+\item \code{non_inferiority}: Non-inferiority test (mean or proportion, one-sided)
+\item \code{superiority}: Superiority test (mean or proportion, one-sided)
+\item \code{poisson_test_1s}: One-sample Poisson rate test (exact)
+\item \code{poisson_test_2s}: Two-sample Poisson rate test (rate ratio, exact)
+\item \code{cor_test_pearson}: Pearson product-moment correlation test
+\item \code{cor_test_spearman}: Spearman's rank correlation test
+\item \code{cor_test_kendall}: Kendall's tau correlation test
+\item \code{levene_test}: Levene's test for equality of variances (k groups, robust)
+\item \code{bartlett_test}: Bartlett's test for equality of variances (k groups, normality assumed)
 }
 
 \strong{Dual interface design} (per Contract 2):
@@ -48,6 +59,40 @@ htest$run("wilcoxon_rank_sum", x = g1, y = g2, alternative = "two.sided")
 
 # Kruskal-Wallis across 3 groups (pass x as a list of vectors)
 htest$run("kruskal_wallis", x = list(g1, g2, rnorm(20, mean = 60, sd = 5)))
+
+# TOST for mean equivalence: is mean of x practically equal to 50 (within +/-1)?
+set.seed(123)
+x <- rnorm(100, mean = 50.3, sd = 5)
+htest$run("tost_mean", x = x, mu = 50, delta = 1.0)
+
+# Non-inferiority test for two proportions (treatment not worse than control by delta)
+htest$run("non_inferiority", type = "proportion",
+          x1 = 45, n1 = 100, x2 = 42, n2 = 100, delta = 0.1)
+
+# One-sample Poisson rate test: 12 defects observed over 2 hours, H0 rate = 5/hour
+htest$run("poisson_test_1s", x = 12, T_exposure = 2, r = 5)
+
+# Two-sample Poisson rate test: compare defect rates of two lines
+htest$run("poisson_test_2s", x1 = 15, T1 = 3, x2 = 25, T2 = 3)
+
+# Pearson correlation test: is temperature correlated with yield?
+set.seed(123)
+temp <- rnorm(30, mean = 80, sd = 5)
+yield <- 50 + 0.6 * temp + rnorm(30, sd = 2)
+htest$run("cor_test_pearson", x = temp, y = yield)
+
+# Spearman rank correlation (robust to non-linear monotonic relations)
+htest$run("cor_test_spearman", x = temp, y = yield)
+
+# Levene's test: do 3 production lines have equal variance in diameter?
+set.seed(123)
+line_a <- rnorm(20, mean = 10, sd = 0.5)
+line_b <- rnorm(20, mean = 10, sd = 0.8)
+line_c <- rnorm(20, mean = 10, sd = 1.2)
+htest$run("levene_test", x = list(line_a, line_b, line_c))
+
+# Bartlett's test: same question, assuming normality (more powerful if normal)
+htest$run("bartlett_test", x = list(line_a, line_b, line_c))
 
 # Plotting requires the iQualityR.plot Suggests package
 if (requireNamespace("iQualityR.plot", quietly = TRUE)) {

@@ -7,39 +7,66 @@
 Responsible for generating PDF/CDF plots, shaded areas, label annotations, etc.
 Uses ggrepel to avoid label overlap, reuses IqrTheme for consistent visual style.
 }
-\section{Public fields}{
-\if{html}{\out{<div class="r6-fields">}}
-\describe{
-\item{\code{theme_obj}}{Active IqrTheme object used to style plots.}
-}
-\if{html}{\out{</div>}}
+\section{Super class}{
+\code{\link[iQualityR.stat:StatPlotter]{iQualityR.stat::StatPlotter}} -> \code{ProbPlotter}
 }
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
-\item \href{#method-ProbPlotter-new}{\code{ProbPlotter$new()}}
+\item \href{#method-ProbPlotter-plot}{\code{ProbPlotter$plot()}}
 \item \href{#method-ProbPlotter-render}{\code{ProbPlotter$render()}}
 \item \href{#method-ProbPlotter-clone}{\code{ProbPlotter$clone()}}
 }
 }
+\if{html}{\out{
+<details open><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="initialize"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-initialize'><code>iQualityR.stat::StatPlotter$initialize()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="set_theme"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-set_theme'><code>iQualityR.stat::StatPlotter$set_theme()</code></a></span></li>
+</ul>
+</details>
+}}
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-ProbPlotter-new"></a>}}
-\if{latex}{\out{\hypertarget{method-ProbPlotter-new}{}}}
-\subsection{Method \code{new()}}{
-Initialize the plotter with a theme
+\if{html}{\out{<a id="method-ProbPlotter-plot"></a>}}
+\if{latex}{\out{\hypertarget{method-ProbPlotter-plot}{}}}
+\subsection{Method \code{plot()}}{
+Unified plot entry point (Contract 2 signature).
+
+Thin delegation layer over \verb{$render()}. \code{result} may be either a list
+bundling \code{nodes} and \code{calc_results} (the natural L3 packaging), or the
+\code{calc_results} list directly with \code{nodes} supplied through \code{...}. The
+\code{show_cdf}, \code{facet} and \code{mode} render options are absorbed through
+\code{...} for backward compatibility with the legacy \code{render()} call.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{ProbPlotter$new(theme = "academic")}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{ProbPlotter$plot(
+  result,
+  plot_type = "auto",
+  show_table = FALSE,
+  theme_obj = NULL,
+  ...
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{theme}}{Theme name (e.g. \code{"academic"}) or an \code{IqrTheme} object.}
+\item{\code{result}}{A list with \verb{$nodes} and \verb{$calc_results}, or the
+\code{calc_results} list directly (nodes then via \code{...}).}
+
+\item{\code{plot_type}}{Reserved for Contract 2 signature uniformity; the
+actual PDF/CDF behaviour is driven by \code{show_cdf} (in \code{...}).}
+
+\item{\code{show_table}}{Logical; reserved for Contract 2 signature uniformity.}
+
+\item{\code{theme_obj}}{Optional \code{IqrTheme} overriding \code{self$theme_obj}.}
+
+\item{\code{...}}{Backward-compat channel: \code{nodes}, \code{show_cdf}, \code{facet},
+\code{mode} are extracted from here when not bundled in \code{result}.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-Invisible self.
+A \code{ggplot} or \code{patchwork} object.
 }
 }
 \if{html}{\out{<hr>}}

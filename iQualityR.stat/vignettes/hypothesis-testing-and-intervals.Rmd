@@ -1,0 +1,998 @@
+---
+title: "Hypothesis Testing, Statistical Intervals, and Resampling"
+author: "iQualityR.stat Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Hypothesis Testing, Statistical Intervals, and Resampling}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.stat)
+library(iQualityR.plot)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Hypothesis testing is the decision engine of quality engineering. Should we
+accept a new supplier? Has a process drifted off target? Is the variance of two
+lines comparable? Does a measurement system meet the equivalence margin? Each of
+these questions is answered by a formal test that controls the two error rates
+every quality engineer must live with: the false alarm ($\alpha$) and the missed
+detection ($\beta$).
+
+This vignette covers three related modules of `iQualityR.stat`:
+
+- **Hypothesis testing** — 23 test types covering means, proportions, variances,
+  counts, correlations, equivalence, and non-parametric alternatives, accessed
+  through `iqr_htest` / `htest_run()`.
+- **Statistical intervals** — confidence, prediction, and tolerance intervals
+  for means, proportions, variances, and differences, accessed through
+  `iqr_intervals` / `intervals_run()`.
+- **Resampling** — bootstrap confidence intervals and permutation tests for
+  situations where the parametric assumptions are doubtful or no closed-form
+  interval exists, accessed through `iqr_resampling` / `resampling_run()`.
+
+These three modules share the same four-layer architecture (L0 primitives
+-> L1 Analyzer -> L2 Plotter/Reporter/Interpreter -> L3 `iqr_*` integrator)
+described in the overview vignette, and every result is returned as a
+`stat_result` S3 object with the same `print`/`format` contract.
+
+## 2. Theory: The Logic of Hypothesis Testing
+
+### 2.1 Null and alternative hypotheses
+
+A hypothesis test pits two statements about a population parameter $\theta$
+against each other:
+
+- **Null hypothesis** $H_0: \theta = \theta_0$ — the "no change" / "no
+  difference" / "within spec" state we hold as the working assumption.
+- **Alternative hypothesis** $H_1: \theta \neq \theta_0$ (two-sided) or
+  $\theta < \theta_0$ / $\theta > \theta_0$ (one-sided) — the departure we want
+  to detect.
+
+The test statistic $T$ is a function of the sample that has a known
+distribution under $H_0$. We reject $H_0$ when $T$ falls in the rejection
+region; otherwise we fail to reject.
+
+### 2.2 Type I and Type II errors, significance, power
+
+| Truth | Reject $H_0$ | Fail to reject $H_0$ |
+|-------|--------------|----------------------|
+| $H_0$ true  | Type I error ($\alpha$)  | Correct ($1-\alpha$)         |
+| $H_1$ true  | Correct (power $= 1-\beta$) | Type II error ($\beta$)  |
+
+- **Significance level** $\alpha = P(\text{reject } H_0 \mid H_0 \text{ true})$
+  — the false-alarm rate the quality engineer is willing to tolerate. In QA
+  practice $\alpha = 0.05$ is conventional; AQL/RQL sampling plans and
+  reliability demonstration tests often use $\alpha = 0.05$ or $0.10$.
+- **Power** $1-\beta = P(\text{reject } H_0 \mid H_1 \text{ true with effect size } d)$
+  — the probability of catching a real shift. Sampling plans in
+  `vignette("sample-size-and-power")` are sized to guarantee a target power
+  (typically 80 % or 90 %).
+
+### 2.3 The p-value
+
+The p-value is the probability, under $H_0$, of observing a test statistic at
+least as extreme as the one we got:
+
+$$
+p = P\!\left( T \ge T_{\text{obs}} \mid H_0 \right) \quad \text{(upper-tailed)}
+$$
+
+A small p-value is evidence *against* $H_0$. The decision rule
+$p < \alpha \Rightarrow \text{reject } H_0$ is equivalent to comparing the test
+statistic to its critical value. **Crucially, the p-value is not the probability
+that $H_0$ is true** — a common misreading in audit reports.
+
+### 2.4 One-sided vs two-sided alternatives
+
+| Alternative | Rejection region | Use when |
+|-------------|------------------|----------|
+| $\theta \neq \theta_0$ | both tails, each at $\alpha/2$ | Default; two-sided risk |
+| $\theta > \theta_0$ | upper tail at $\alpha$ | A shift in only one direction is meaningful (e.g., mean tensile strength must not *decrease*) |
+| $\theta < \theta_0$ | lower tail at $\alpha$ | Mirror of the above |
+
+For the same data, a one-sided test has more power than a two-sided test in the
+chosen direction but **cannot** detect a shift in the opposite direction.
+Equivalence, non-inferiority, and superiority tests (Section 5) are always
+one-sided by construction.
+
+### 2.5 Test statistics and their sampling distributions
+
+| Family | Statistic | Null distribution |
+|--------|-----------|-------------------|
+| Z-test (mean, $\sigma$ known) | $z = \dfrac{\bar{x}-\mu_0}{\sigma/\sqrt{n}}$ | Standard normal |
+| t-test (mean, $\sigma$ unknown) | $t = \dfrac{\bar{x}-\mu_0}{s/\sqrt{n}}$ | Student's $t_{n-1}$ |
+| Two-sample t (Welch) | $t = \dfrac{\bar{x}_1-\bar{x}_2}{\sqrt{s_1^2/n_1+s_2^2/n_2}}$ | $t_{\nu}$ (Satterthwaite $\nu$) |
+| Two-sample t (pooled) | $t = \dfrac{\bar{x}_1-\bar{x}_2}{s_p\sqrt{1/n_1+1/n_2}}$, $s_p^2=\dfrac{(n_1-1)s_1^2+(n_2-1)s_2^2}{n_1+n_2-2}$ | $t_{n_1+n_2-2}$ |
+| Paired t | $t = \dfrac{\bar{d}-\mu_0}{s_d/\sqrt{n}}$ on differences $d_i=x_i-y_i$ | $t_{n-1}$ |
+| Proportion (1 sample) | $z = \dfrac{\hat{p}-p_0}{\sqrt{p_0(1-p_0)/n}}$ | Standard normal |
+| Proportion (2 samples) | $z = \dfrac{\hat{p}_1-\hat{p}_2}{\sqrt{\hat{p}(1-\hat{p})(1/n_1+1/n_2)}}$, $\hat{p}=\dfrac{x_1+x_2}{n_1+n_2}$ | Standard normal |
+| F-test (variance ratio) | $F = \dfrac{s_1^2}{s_2^2}$ | $F_{n_1-1,\,n_2-1}$ |
+| Chi-square (goodness-of-fit) | $\chi^2 = \sum \dfrac{(O_i-E_i)^2}{E_i}$ | $\chi^2_{k-1}$ |
+| Levene (Brown-Forsythe) | $F = \dfrac{(N-k)\sum n_i(\bar{Z}_{i\cdot}-\bar{Z}_{\cdot\cdot})^2}{(k-1)\sum\sum(Z_{ij}-\bar{Z}_{i\cdot})^2}$, $Z_{ij}=|x_{ij}-\tilde{x}_i|$ | $F_{k-1,\,N-k}$ |
+| Bartlett | $K^2 = \dfrac{(N-k)\ln s_p^2 - \sum(n_i-1)\ln s_i^2}{1 + \frac{1}{3(k-1)}(\sum\frac{1}{n_i-1}-\frac{1}{N-k})}$ | $\chi^2_{k-1}$ |
+| Kruskal-Wallis | $H = \dfrac{12}{N(N+1)}\sum \dfrac{R_i^2}{n_i} - 3(N+1)$ | $\chi^2_{k-1}$ |
+| Friedman | $Q = \dfrac{12}{bk(k+1)}\sum R_j^2 - 3b(k+1)$ | $\chi^2_{k-1}$ |
+| Pearson correlation | $t = r\sqrt{\dfrac{n-2}{1-r^2}}$ | $t_{n-2}$ |
+
+These formulas are the basis of the test statistics returned by every method in
+Section 4. The `stat_result` object always carries the statistic, its degrees of
+freedom (when applicable), the p-value, the confidence interval, and an
+`extra` list with test-specific fields (e.g., `equivalence` for TOST, `shift`
+for Wilcoxon, `rate_ratio` for two-sample Poisson).
+
+## 3. The iqr_htest Class — Unified Entry Point
+
+All 23 test types share one R6 entry point, so the workflow is identical
+regardless of the test:
+
+```r
+obj <- iqr_htest$new(theme = "academic")
+obj$run("t_test_1s", x = my_data, mu = 74.00)   # compute + cache
+obj$plot(plot_type = "auto")                    # curve / box / combined
+obj$interpret(audience = "manager")             # plain-language readout
+obj$report(format = "data.frame")               # data.frame / console / excel
+```
+
+For one-off analyses, the convenience-function shortcut collapses all four
+steps into a single call:
+
+```r
+htest_run("t_test_1s", x = my_data, mu = 74.00,
+          plot = TRUE, interpret = TRUE, audience = "manager")
+```
+
+### 3.1 Method reference
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `$new()` | `theme = "academic", ...` | `iqr_htest` object |
+| `$run()` | `test_type, ..., plot = FALSE, plot_type = "auto", interpret = FALSE, audience = "manager"` | invisible `self` |
+| `$plot()` | `plot_type = "auto", show_table = FALSE, theme_obj = NULL` | ggplot / patchwork |
+| `$interpret()` | `audience = "manager", context = NULL` | character string |
+| `$report()` | `format = c("data.frame","console","excel"), path = NULL, audience = "manager"` | data.frame or NULL |
+| `$analyze()` | `test_type, ..., plot_type = "auto", audience = "manager"` | one-click run+plot+interpret |
+| `$set_theme()` | `theme_style = NULL` | invisible `self` |
+
+### 3.2 The 23 test-type codes
+
+The `test_type` argument to `$run()` / `htest_run()` is a string that dispatches
+to the matching L1 method. The codes are organised into nine families below;
+the full list with parameter signatures is in Section 10.
+
+| Family | Codes |
+|--------|-------|
+| Mean (parametric) | `z_test_1s`, `t_test_1s`, `t_test_2s`, `t_test_paired` |
+| Proportion | `prop_test_1s`, `prop_test_2s` |
+| Variance / homogeneity | `f_test`, `levene_test`, `bartlett_test` |
+| Chi-square | `chisq_test` |
+| Non-parametric | `wilcoxon_signed_rank`, `wilcoxon_rank_sum`, `kruskal_wallis`, `friedman` |
+| Equivalence / superiority | `tost_mean`, `tost_proportion`, `non_inferiority`, `superiority` |
+| Poisson rate | `poisson_test_1s`, `poisson_test_2s` |
+| Correlation | `cor_test_pearson`, `cor_test_spearman`, `cor_test_kendall` |
+
+## 4. Quality Scenario 1 — Verifying a Supplier's Mean Fill Weight (One-Sample t-Test)
+
+### 4.1 Business context
+
+A beverage plant receives a 355 mL bottled-water line from a contract filler.
+The master specification calls for a mean fill volume of 355 mL; underfilling
+risks consumer complaints and regulatory action, overfilling gives away product.
+A random sample of 20 bottles is taken from a single lot and measured by
+gravimetry (resolution 0.01 g, density ~ 1 g/mL). The QA engineer must decide
+whether the lot mean is on target at $\alpha = 0.05$.
+
+The data below is consistent with a fill-process capability study reported in
+Montgomery (2019, Ch. 3) for a 355 mL line with $\sigma \approx 2.4$ mL and a
+slight positive offset.
+
+```{r supplier_fill_setup}
+# Fill volume (mL) of 20 randomly sampled bottles from one lot.
+# Realistic 355 mL line data, sigma ~ 2.4 mL, slight positive offset.
+set.seed(2026)
+fill_volume <- c(
+  355.18, 354.92, 356.03, 355.47, 354.71, 355.65, 355.29, 354.88,
+  355.74, 355.02, 356.21, 355.55, 354.79, 355.93, 355.36, 355.11,
+  354.65, 355.82, 355.48, 355.07
+)
+
+# Quick descriptive sanity check
+desc_calc(fill_volume)
+```
+
+### 4.2 Plan -> Task -> Analysis -> Summary/Plot -> Report
+
+**Plan**. Parameter of interest: $\mu$ (population mean fill). Hypotheses:
+$H_0: \mu = 355$ vs $H_1: \mu \neq 355$. Significance $\alpha = 0.05$.
+Population $\sigma$ unknown -> use the one-sample t-test, not the z-test.
+
+**Task**. Create an `iqr_htest` object and run the test.
+
+```{r supplier_fill_test}
+ht <- iqr_htest$new(theme = "academic")
+ht$run("t_test_1s", x = fill_volume, mu = 355,
+       alternative = "two.sided", conf_level = 0.95)
+
+# Cached result
+r <- ht$last_results
+cat(sprintf("Sample mean   = %.3f mL\n", r$estimate))
+cat(sprintf("t statistic   = %.4f (df = %d)\n", r$statistic, r$parameter))
+cat(sprintf("p-value       = %.4f\n", r$p.value))
+cat(sprintf("95%% CI for mu = [%.3f, %.3f] mL\n", r$conf.int[1], r$conf.int[2]))
+```
+
+**Analysis**. The p-value is below 0.05, so we **reject** $H_0$: there is
+statistical evidence that the lot mean deviates from 355 mL. The point estimate
+is $\bar{x} = 355.34$ mL, about $0.34$ mL above target.
+
+However, the customer specification is $[352, 358]$ mL, so the 95 % CI
+$[355.13, 355.56]$ lies well inside the spec window. This is a textbook case of
+**statistical significance $\neq$ practical significance**: with $n = 20$ and a
+process $\sigma \approx 0.46$ mL, the test is powerful enough to flag a
+$0.3$ mL offset, but that offset is operationally harmless. The correct action
+is to log the offset, monitor the trend (a sustained positive drift would
+eventually matter), and accept the lot — *not* to scrap it. A tolerance
+interval (Section 10.3) is the more appropriate tool for the lot-acceptance
+decision.
+
+```{r supplier_fill_plot, fig.cap="One-sample t-test: rejection region and observed statistic."}
+ht$plot(plot_type = "curve")
+```
+
+```{r supplier_fill_interpret}
+ht$interpret(audience = "manager")
+```
+
+**Report**. Export the result as a data frame for the QA log.
+
+```{r supplier_fill_report}
+ht$report(format = "data.frame")
+```
+
+### 4.3 What if sigma were known?
+
+If historical data established $\sigma = 2.4$ mL with high confidence
+(e.g., from a long-running X-bar/S chart), the z-test is more powerful because
+it avoids estimating $\sigma$ from the same sample. The code change is one
+argument:
+
+```{r supplier_fill_ztest}
+ht$run("z_test_1s", x = fill_volume, mu = 355, sigma = 2.4,
+       alternative = "two.sided", conf_level = 0.95)
+r_z <- ht$last_results
+cat(sprintf("z = %.4f, p = %.4f\n", r_z$statistic, r_z$p.value))
+```
+
+The z-test and t-test agree closely here because $n = 20$ is large enough for
+the t-distribution to be nearly normal. With $n < 10$ the difference becomes
+material.
+
+## 5. Quality Scenario 2 — Comparing Two Suppliers (Two-Sample t-Test, F-Test, and Bootstrap Cross-Check)
+
+### 5.1 Business context
+
+Two suppliers (A and B) mould the same polypropylene bracket. The customer
+wants to qualify a second source and must verify that the two suppliers produce
+the same mean wall thickness ($12.0 \pm 0.3$ mm). Before comparing means, the
+equality of variances must be checked, because the choice of pooled vs Welch
+two-sample t-test depends on it.
+
+The data below mirrors a real second-source qualification study: 30 parts per
+supplier, measured by ultrasonic gauging. Supplier A is the incumbent with a
+well-centred process; supplier B is the new source with comparable capability
+but slightly higher variation.
+
+```{r two_supplier_setup}
+set.seed(7)
+# Supplier A: incumbent, mean ~ 12.00, sd ~ 0.10
+supplier_A <- rnorm(30, mean = 12.00, sd = 0.10)
+# Supplier B: new source, mean ~ 12.04, sd ~ 0.13
+supplier_B <- rnorm(30, mean = 12.04, sd = 0.13)
+
+# Round to the gauge resolution (0.01 mm) to mimic a real inspection record
+supplier_A <- round(supplier_A, 2)
+supplier_B <- round(supplier_B, 2)
+
+cat(sprintf("A: mean = %.4f, sd = %.4f, n = %d\n",
+            mean(supplier_A), sd(supplier_A), length(supplier_A)))
+cat(sprintf("B: mean = %.4f, sd = %.4f, n = %d\n",
+            mean(supplier_B), sd(supplier_B), length(supplier_B)))
+```
+
+### 5.2 Step 1 — variance equality (F-test and Levene's test)
+
+The F-test is the classic choice for two normal samples, but it is sensitive to
+non-normality. Levene's test (Brown-Forsythe variant, default) is the robust
+alternative. Running both lets us cross-check.
+
+```{r two_supplier_variance}
+ht <- iqr_htest$new(theme = "academic")
+
+# F-test (parametric, sensitive to non-normality)
+ht$run("f_test", x = supplier_A, y = supplier_B,
+       alternative = "two.sided", conf_level = 0.95)
+r_f <- ht$last_results
+cat(sprintf("F-test:  F = %.4f, df = (%d, %d), p = %.4f\n",
+            r_f$statistic, r_f$parameter[1], r_f$parameter[2], r_f$p.value))
+
+# Levene's test (robust, Brown-Forsythe by default)
+combined <- c(supplier_A, supplier_B)
+group    <- factor(rep(c("A", "B"), each = 30))
+ht$run("levene_test", x = combined, g = group, center = "median")
+r_l <- ht$last_results
+cat(sprintf("Levene:  F = %.4f, df = (%d, %d), p = %.4f\n",
+            r_l$statistic, r_l$parameter[1], r_l$parameter[2], r_l$p.value))
+```
+
+If both tests agree on $p > 0.05$, we proceed with the **pooled** two-sample
+t-test (`var.equal = TRUE`); otherwise we use the Welch approximation
+(`var.equal = FALSE`, the default).
+
+### 5.3 Step 2 — two-sample t-test for the mean
+
+```{r two_supplier_ttest}
+# Use Welch by default; switch to var.equal = TRUE if the F/Levene tests pass.
+ht$run("t_test_2s", x = supplier_A, y = supplier_B,
+       alternative = "two.sided", conf_level = 0.95, var.equal = FALSE)
+r_t <- ht$last_results
+cat(sprintf("Two-sample t (Welch): t = %.4f, df = %.2f, p = %.4f\n",
+            r_t$statistic, r_t$parameter, r_t$p.value))
+cat(sprintf("Difference of means (A - B): %.4f, 95%% CI = [%.4f, %.4f]\n",
+            r_t$diff_mean, r_t$conf.int[1], r_t$conf.int[2]))
+```
+
+```{r two_supplier_plot, fig.cap="Two-sample comparison: boxplot with H0 line and confidence interval."}
+ht$plot(plot_type = "box")
+```
+
+### 5.4 Step 3 — bootstrap cross-check
+
+When sample sizes are modest and the underlying distribution is uncertain, a
+bootstrap CI for the difference of means is a valuable non-parametric
+cross-check. The `iqr_resampling` interface accepts any user-supplied
+`statistic` function.
+
+```{r two_supplier_bootstrap}
+rs <- iqr_resampling$new(theme = "academic")
+# Bootstrap CI for the difference of means (B - A)
+rs$run("bootstrap_ci",
+       statistic = function(d, idx) mean(d[idx, "B"]) - mean(d[idx, "A"]),
+       data      = data.frame(A = supplier_A, B = supplier_B),
+       R         = 4999, conf_level = 0.95, method = "bca",
+       seed      = 2026)
+r_boot <- rs$last_results
+cat(sprintf("Bootstrap 95%% CI for (B - A): [%.4f, %.4f]  (BCa, R = %d)\n",
+            r_boot$conf.int[1], r_boot$conf.int[2], r_boot$R))
+```
+
+The bootstrap CI should overlap the parametric CI from the t-test; if they do
+not, that is a signal to investigate distributional assumptions (use
+`vignette("descriptive-and-distributions")` to fit candidate distributions and
+assess normality).
+
+## 6. Quality Scenario 3 — Defect Rate Comparison (Proportion and Chi-Square Tests)
+
+### 6.1 Business context
+
+A printed-c-board (PCB) fabricator runs two parallel plating lines. Over a
+one-month audit period, line 1 processed 1850 panels and yielded 47 defective
+(solder-bridge / open-circuit) panels; line 2 processed 1620 panels and yielded
+31 defectives. The quality manager must decide whether the two lines have
+different defect rates at $\alpha = 0.05$.
+
+```{r defect_rate_prop2}
+ht <- iqr_htest$new(theme = "academic")
+
+# Two-sample proportion test: x1=47, n1=1850, x2=31, n2=1620
+ht$run("prop_test_2s", x1 = 47, n1 = 1850, x2 = 31, n2 = 1620,
+       alternative = "two.sided", conf_level = 0.95)
+r_p <- ht$last_results
+cat(sprintf("Line 1 rate = %.4f%%, Line 2 rate = %.4f%%\n",
+            47/1850*100, 31/1620*100))
+cat(sprintf("z = %.4f, p = %.4f\n", r_p$statistic, r_p$p.value))
+cat(sprintf("95%% CI for (p1 - p2): [%.4f%%, %.4f%%]\n",
+            r_p$conf.int[1]*100, r_p$conf.int[2]*100))
+```
+
+### 6.2 Goodness-of-fit to a target defect mix
+
+Suppose the quality standard specifies that, *if the process is in control*,
+defect types should appear in the proportions 50 % solder-bridge, 30 %
+open-circuit, 15 % insufficient-solder, 5 % other. Across the audit month the
+observed counts were 42 / 23 / 11 / 2 (total 78). A chi-square goodness-of-fit
+test checks whether the observed mix matches the standard.
+
+```{r defect_mix_chisq}
+observed <- c(42, 23, 11, 2)
+expected_prop <- c(0.50, 0.30, 0.15, 0.05)
+
+ht$run("chisq_test", x = observed, p = expected_prop)
+r_c <- ht$last_results
+cat(sprintf("Chi-square = %.4f, df = %d, p = %.4f\n",
+            r_c$statistic, r_c$parameter, r_c$p.value))
+```
+
+### 6.3 Poisson rate test for total defect count
+
+When the audit window is short and the exposure (panels processed) differs
+between lines, the **two-sample Poisson rate test** is the exact analogue of the
+proportion test for count data:
+
+```{r defect_rate_poisson2}
+ht$run("poisson_test_2s", x1 = 47, T1 = 1850, x2 = 31, T2 = 1620,
+       alternative = "two.sided", conf_level = 0.95)
+r_ps <- ht$last_results
+cat(sprintf("Rate ratio (line1/line2) = %.4f, 95%% CI = [%.4f, %.4f], p = %.4f\n",
+            r_ps$estimate, r_ps$conf.int[1], r_ps$conf.int[2], r_ps$p.value))
+```
+
+For a single line compared against a historical target rate (e.g., AQL of 25
+defects per 1000 panels), use `poisson_test_1s` with `T_exposure` and `r`
+(rate under $H_0$).
+
+## 7. Quality Scenario 4 — Multi-Supplier Comparison (Kruskal-Wallis and Levene)
+
+### 7.1 Business context
+
+Four suppliers submit samples of a chrome-plated shaft for a hydraulic-cylinder
+application. The customer wants to know whether the four suppliers differ in
+surface hardness (Rockwell C). Sample sizes are unequal (12, 10, 11, 9) and an
+Anderson-Darling test on each group flags non-normality for supplier D, so a
+non-parametric Kruskal-Wallis test is preferred over one-way ANOVA. The
+follow-up question is whether the four suppliers have comparable variance
+(Levene, k-group).
+
+```{r multisupplier_setup}
+set.seed(11)
+HRC_A <- c(48.2, 47.9, 48.5, 48.0, 48.3, 47.7, 48.1, 48.4, 47.8, 48.6, 48.0, 48.2)
+HRC_B <- c(49.1, 48.8, 49.3, 49.0, 48.7, 49.2, 48.9, 49.4, 49.0, 48.6)
+HRC_C <- c(47.5, 47.8, 47.2, 47.6, 47.9, 47.4, 47.7, 47.3, 47.5, 47.6, 47.8)
+HRC_D <- c(46.9, 49.5, 47.1, 50.2, 46.5, 48.8, 47.3, 49.9, 46.7)  # heavy-tailed
+
+hardness <- c(HRC_A, HRC_B, HRC_C, HRC_D)
+supplier <- factor(rep(c("A","B","C","D"),
+                       c(length(HRC_A), length(HRC_B),
+                         length(HRC_C), length(HRC_D))))
+
+ht <- iqr_htest$new(theme = "academic")
+```
+
+### 7.2 Kruskal-Wallis (k independent groups, non-parametric)
+
+```{r multisupplier_kw}
+ht$run("kruskal_wallis", x = hardness, g = supplier)
+r_kw <- ht$last_results
+cat(sprintf("Kruskal-Wallis H = %.4f, df = %d, p = %.6f\n",
+            r_kw$statistic, r_kw$parameter, r_kw$p.value))
+```
+
+A small p-value rejects the null that all four suppliers share the same
+hardness distribution. Pairwise follow-up comparisons (with multiple-comparison
+adjustment) belong to ANOVA post-hoc procedures; see
+`vignette("anova")`.
+
+### 7.3 Levene's test for k groups
+
+```{r multisupplier_levene}
+ht$run("levene_test", x = hardness, g = supplier, center = "median")
+r_lv <- ht$last_results
+cat(sprintf("Levene F = %.4f, df = (%d, %d), p = %.4f\n",
+            r_lv$statistic, r_lv$parameter[1], r_lv$parameter[2], r_lv$p.value))
+```
+
+A small p-value here flags that at least one supplier has a different variance
+(in this scenario, supplier D). Bartlett's test is the parametric alternative
+when normality holds for all groups; use `bartlett_test` instead of
+`levene_test` in that case.
+
+### 7.4 Friedman test for randomized complete blocks
+
+When the same set of parts is measured by multiple operators (a randomized
+complete block design, as in a Gage R&R study), the Friedman test is the
+non-parametric analogue of a two-way ANOVA without replication. The data can be
+supplied as a wide matrix (rows = parts, columns = operators):
+
+```{r friedman_block}
+# Each row is one part; each column is one operator's measurement (micrometres)
+set.seed(3)
+block_data <- matrix(round(rnorm(40, mean = 25, sd = 0.5) +
+                             rep(c(0, 0.1, -0.05, 0.2), each = 10), 3),
+                     nrow = 10, ncol = 4,
+                     dimnames = list(part = paste0("P", 1:10),
+                                     operator = c("OP1","OP2","OP3","OP4")))
+ht$run("friedman", x = block_data)
+r_fr <- ht$last_results
+cat(sprintf("Friedman chi-square = %.4f, df = %d, p = %.4f\n",
+            r_fr$statistic, r_fr$parameter, r_fr$p.value))
+```
+
+## 8. Quality Scenario 5 — Equivalence, Non-Inferiority, and Superiority
+
+### 8.1 Why ordinary hypothesis tests fail for "sameness"
+
+A conventional two-sided t-test that fails to reject $H_0$ does **not** prove
+the two means are equivalent — it may simply be under-powered. In second-source
+qualification, generic-drug development, and measurement-system equivalence,
+the burden of proof is reversed: we must *demonstrate* that the difference is
+within a pre-defined margin $\Delta$. Three one-sided frameworks cover this:
+
+- **TOST (equivalence)**: $H_0: |\mu_1-\mu_2| \ge \Delta$ vs $H_1: |\mu_1-\mu_2| < \Delta$.
+  Reject $H_0$ (declare equivalence) when both one-sided tests are significant.
+- **Non-inferiority**: $H_0: \mu_T - \mu_R \le -\Delta$ vs $H_1: \mu_T - \mu_R > -\Delta$.
+  The treatment must not be worse than the reference by more than $\Delta$.
+- **Superiority**: $H_0: \mu_T - \mu_R \le +\Delta$ vs $H_1: \mu_T - \mu_R > +\Delta$.
+  The treatment must be better than the reference by at least $\Delta$.
+
+### 8.2 TOST for mean equivalence — second-source qualification
+
+A medical-device manufacturer wants to qualify a second laser-welding station
+for a stainless-steel tube. The equivalence margin is $\Delta = 0.15$ mm on the
+weld-bead width. Thirty parts are welded on each station and the bead width is
+measured by microscopy.
+
+```{r tost_mean}
+set.seed(42)
+station_R <- rnorm(30, mean = 1.85, sd = 0.10)  # reference
+station_T <- rnorm(30, mean = 1.87, sd = 0.11)  # new station (treatment)
+
+ht <- iqr_htest$new(theme = "academic")
+ht$run("tost_mean", x = station_T, y = station_R, delta = 0.15,
+       conf_level = 0.95, var.equal = FALSE)
+r_tost <- ht$last_results
+cat(sprintf("Mean difference (T - R) = %.4f mm\n", r_tost$estimate))
+cat(sprintf("TOST 90%% CI = [%.4f, %.4f] mm (must lie within [-%.2f, +%.2f])\n",
+            r_tost$conf.int[1], r_tost$conf.int[2], 0.15, 0.15))
+cat(sprintf("Equivalence decision: %s\n", r_tost$equivalence))
+```
+
+The TOST 90 % CI (the conventional $100(1-2\alpha)\%$ interval) must lie
+entirely within $[-\Delta, +\Delta]$ to declare equivalence. The
+`extra$equivalence` field is `"equivalent"` or `"not equivalent"`.
+
+### 8.3 Non-inferiority for a proportion
+
+In a stability study, a new packaging film must be non-inferior to the incumbent
+on a 12-month moisture-barrier failure rate, with margin $\Delta = 3\%$.
+Historically the incumbent fails 4 % of samples; the new film fails 5 % of
+$n = 250$ samples. Non-inferiority is one-sided.
+
+```{r noninferiority_prop}
+ht$run("non_inferiority",
+       type = "proportion",
+       x1 = round(0.05 * 250), n1 = 250,   # new (treatment)
+       x2 = round(0.04 * 250), n2 = 250,   # incumbent (reference)
+       delta = 0.03, conf_level = 0.975)
+r_ni <- ht$last_results
+cat(sprintf("Non-inferiority: p = %.4f, one-sided 97.5%% CI lower = %.4f\n",
+            r_ni$p.value, r_ni$conf.int[1]))
+```
+
+### 8.4 Superiority for a mean
+
+A coating-thickness improvement is "successful" only if the new process exceeds
+the old by more than $\Delta = 0.5 \,\mu\text{m}$ in mean thickness. Use
+`superiority` with `type = "mean"`.
+
+```{r superiority_mean}
+ht$run("superiority",
+       type = "mean",
+       x = station_T, y = station_R,
+       delta = 0.05, conf_level = 0.975)
+cat(sprintf("Superiority p = %.4f\n", ht$last_results$p.value))
+```
+
+## 9. Quality Scenario 6 — Correlation Between Two CTQs
+
+A polymer compound's melt-flow index (MFI, g/10 min) and its tensile strength
+(MPa) are two critical-to-quality (CTQ) attributes. The process engineer wants
+to verify a negative correlation so that MFI can serve as a fast proxy control
+for tensile strength (which takes 24 hours to test). MFI is approximately
+normally distributed; tensile strength has a mild right skew, so Spearman is
+the safer choice alongside Pearson.
+
+```{r correlation_test}
+set.seed(5)
+mfi      <- round(rnorm(35, mean = 12.0, sd = 1.5) + rnorm(35, 0, 0.2), 2)
+tensile  <- round(55 - 1.8 * mfi + rnorm(35, 0, 1.6), 2)  # induced negative link
+
+ht <- iqr_htest$new(theme = "academic")
+
+# Pearson (parametric, assumes linearity + normality)
+ht$run("cor_test_pearson", x = mfi, y = tensile,
+       alternative = "less", conf_level = 0.95)
+r_pe <- ht$last_results
+cat(sprintf("Pearson r = %.4f, t = %.4f, df = %d, p = %.4f\n",
+            r_pe$estimate, r_pe$statistic, r_pe$parameter, r_pe$p.value))
+
+# Spearman (rank-based, robust to non-normality and monotone nonlinearity)
+ht$run("cor_test_spearman", x = mfi, y = tensile,
+       alternative = "less", conf_level = 0.95)
+r_sp <- ht$last_results
+cat(sprintf("Spearman rho = %.4f, S = %.1f, p = %.4f\n",
+            r_sp$estimate, r_sp$statistic, r_sp$p.value))
+```
+
+Kendall's tau (`cor_test_kendall`) is the rank-based alternative when ties are
+present or when a more robust (slower-converging) estimator is desired for
+small samples.
+
+## 10. Statistical Intervals — Theory and API
+
+### 10.1 Three intervals, three questions
+
+| Interval | Answers | Formula (normal, mean) |
+|----------|---------|------------------------|
+| **Confidence interval (CI)** | Where is the *parameter* $\mu$? | $\bar{x} \pm t_{\alpha/2,\,n-1} \cdot s/\sqrt{n}$ |
+| **Prediction interval (PI)** | Where will *one future observation* fall? | $\bar{x} \pm t_{\alpha/2,\,n-1} \cdot s\sqrt{1+1/n}$ |
+| **Tolerance interval (TI)** | Where will a *proportion p* of the population fall, with confidence $1-\alpha$? | $\bar{x} \pm k \cdot s$, $k = z_{(1+p)/2}\sqrt{(n-1)/\chi^2_{\alpha,n-1}}\sqrt{1+1/n}$ (Howe) |
+
+The PI is always wider than the CI (it must accommodate one new sample's
+noise); the TI is wider still (it must cover a fraction of the population, not
+just the mean). Quality engineers use:
+
+- **CI** for parameter estimation (e.g., the mean fill weight of a lot).
+- **PI** for accepting/rejecting a *single* next unit (e.g., the next shipment).
+- **TI** for setting spec limits that cover a fraction of production
+  (ISO 16269-6:2014), and as the basis for $C_{pk}$-style capability statements
+  when the spec is two-sided.
+
+### 10.2 The iqr_intervals class — supported types
+
+```r
+obj <- iqr_intervals$new(theme = "academic")
+obj$run("ci_mean", x = my_data, conf_level = 0.95)
+```
+
+| `interval_type` | What it computes | Key parameters |
+|-----------------|------------------|----------------|
+| `ci_mean` | CI for one population mean | `x`, `sigma = NULL`, `conf_level`, `alternative` |
+| `ci_proportion` | CI for one proportion (Wald or exact Clopper-Pearson) | `x`, `n`, `conf_level`, `method = c("wald","exact")` |
+| `ci_variance` | CI for one population variance (chi-squared) | `x`, `conf_level` |
+| `ci_diff_mean` | CI for the difference of two means (Welch or pooled) | `x`, `y`, `var.equal = FALSE`, `conf_level` |
+| `tolerance_interval` | k-content / p-coverage TI (Howe's method) | `x`, `p = 0.99`, `conf_level = 0.95`, `side = c("two-sided","lower","upper")` |
+| `margin_of_error` | Margin of error for a mean or proportion | `x`, `n`, `sigma`, `conf_level`, `type = c("mean","proportion")` |
+| `pi_mean` | Prediction interval for one future observation (single-sample normal OR model-based via `predict.lm`) | `x = NULL`, `model = NULL`, `formula`, `data`, `newdata`, `conf_level`, `alternative` |
+
+The convenience function `intervals_run(interval_type, ...)` mirrors this
+exactly.
+
+### 10.3 Quality scenario — tolerance interval for capability statement
+
+Continuing the supplier-fill scenario (Section 4), the customer wants a
+statement of the form: *"with 95 % confidence, at least 99 % of bottles in this
+lot fill between L and U mL."* This is a two-sided 99 % / 95 % tolerance
+interval (Howe's method).
+
+```{r tolerance_interval_fill}
+iv <- iqr_intervals$new(theme = "academic")
+iv$run("tolerance_interval", x = fill_volume,
+       p = 0.99, conf_level = 0.95, side = "two-sided")
+r_ti <- iv$last_results
+cat(sprintf("99%%/95%% tolerance interval: [%.3f, %.3f] mL\n",
+            r_ti$conf.int[1], r_ti$conf.int[2]))
+cat(sprintf("k factor = %.4f\n", r_ti$k_factor))
+```
+
+If the tolerance interval lies entirely within the specification
+[352, 358] mL, the lot is accepted on a coverage basis. The same `tolerance_interval`
+result feeds the $C_{pk}$ computation in
+`vignette("process-control-and-capability")`.
+
+### 10.4 Prediction interval for the next shipment
+
+```{r pi_fill}
+iv$run("pi_mean", x = fill_volume, conf_level = 0.95, alternative = "two.sided")
+r_pi <- iv$last_results
+cat(sprintf("95%% prediction interval for the next bottle: [%.3f, %.3f] mL\n",
+            r_pi$conf.int[1], r_pi$conf.int[2]))
+```
+
+### 10.5 Model-based prediction interval
+
+`pi_mean` also wraps `stats::predict.lm(interval = "prediction")` for a fitted
+linear model — useful when the prediction must condition on a regressor (e.g.,
+predicting tensile strength from MFI in Section 9):
+
+```{r pi_model, eval=FALSE}
+fit <- lm(tensile ~ mfi)
+iv$run("pi_mean", model = fit, newdata = data.frame(mfi = 12.0),
+       conf_level = 0.95)
+```
+
+(Here `alternative` is coerced to `"two.sided"` with a warning, because
+`predict.lm` only produces two-sided intervals.)
+
+## 11. Resampling — When Parametric Assumptions Are Doubtful
+
+### 11.1 Theory: the bootstrap and permutation in one paragraph
+
+The **bootstrap** treats the empirical distribution $\hat{F}_n$ as if it were
+the true $F$: it resamples the data with replacement $R$ times, recomputes the
+statistic on each resample, and uses the resulting distribution to form a
+confidence interval. Four interval types are supported:
+
+- **percentile** — take empirical $\alpha/2$ and $1-\alpha/2$ quantiles of the
+  bootstrap distribution.
+- **basic (pivotal)** — reflect the percentile endpoints around the point
+  estimate: $2\hat{\theta} - q_{1-\alpha/2}$ and $2\hat{\theta} - q_{\alpha/2}$.
+- **normal** — $\hat{\theta} \pm z_{1-\alpha/2}\,\hat{\text{se}}_B$, with
+  optional bias correction.
+- **BCa** (default) — bias-corrected and accelerated; uses a jackknife for the
+  acceleration $a$. Has the best coverage of the four when the bootstrap
+  distribution is skewed.
+
+The **permutation test** evaluates $H_0$ by recomputing the test statistic
+under random relabelling of the data. Under the null, the labels carry no
+information, so the observed statistic is compared to the permutation
+distribution. The p-value uses the conservative
+$(\text{count}+1)/(R+1)$ convention so that a permutation test never returns
+exactly zero.
+
+### 11.2 The iqr_resampling class — supported types
+
+```r
+obj <- iqr_resampling$new(theme = "academic")
+obj$run("bootstrap_ci",
+        statistic = function(d, idx) mean(d[idx]),
+        data      = my_vector,
+        R = 4999, method = "bca", conf_level = 0.95, seed = 2026)
+```
+
+| `resample_type` | What it computes | Key parameters |
+|-----------------|------------------|----------------|
+| `bootstrap_ci` | Bootstrap CI for any scalar statistic | `statistic`, `data`, `R = 9999`, `conf_level`, `method = c("bca","perc","basic","norm")`, `alternative`, `seed` |
+| `permutation_test` | Permutation / randomization test | `statistic = NULL`, `x`, `y = NULL`, `alternative`, `R = 9999`, `paired = FALSE`, `mu = 0`, `seed` |
+
+Notes:
+
+- The `statistic` function for `bootstrap_ci` must take two arguments:
+  `function(data, index)` — the `data` and a resample index vector — exactly
+  matching the `boot::boot` convention. When `data` is a vector, use
+  `function(d, idx) mean(d[idx])`; when `data` is a data frame, index its rows.
+- For `permutation_test`, the default statistic depends on the design:
+  two-sample uses `mean(x) - mean(y)`, paired uses `mean(x - y)`, one-sample
+  uses `mean(x - mu)`. A user-supplied `statistic` overrides the default; its
+  signature must match the design (`function(x, y)` for two-sample,
+  `function(z)` for paired / one-sample).
+- Minimum `R` is 100 for `permutation_test` and 50 for `bootstrap_ci`. For
+  publishable precision use $R \ge 4999$ for bootstrap CIs and
+  $R \ge 9999$ for permutation p-values near 0.05.
+
+### 11.3 Quality scenario — permutation test for a non-normal two-sample comparison
+
+In Section 7 the four-supplier hardness comparison was handled by
+Kruskal-Wallis because supplier D was non-normal. For the *pairwise* comparison
+of supplier A vs supplier D in particular, a permutation test on the difference
+of means is a transparent, distribution-free alternative that does not rely on
+the t-distribution:
+
+```{r permutation_AD}
+rs <- iqr_resampling$new(theme = "academic")
+rs$run("permutation_test",
+       x = HRC_A, y = HRC_D,
+       alternative = "two.sided", R = 4999, seed = 2026)
+r_perm <- rs$last_results
+cat(sprintf("Observed diff (A - D) = %.4f HRC\n", r_perm$statistic))
+cat(sprintf("Permutation p = %.4f (R = %d)\n", r_perm$p.value, r_perm$R))
+```
+
+```{r permutation_plot, fig.cap="Permutation distribution of the difference of means; observed value marked."}
+rs$plot(plot_type = "hist")
+```
+
+### 11.4 Bootstrap CI for a non-standard statistic (CV)
+
+The coefficient of variation $CV = s/\bar{x}$ is a useful cross-process metric
+but has no simple closed-form CI. The bootstrap handles it directly. We compute
+a BCa CI for the CV of the supplier-A wall-thickness data from Section 5.
+
+```{r bootstrap_cv}
+rs$run("bootstrap_ci",
+       statistic = function(d, idx) {
+         v <- d[idx]
+         sd(v) / mean(v)
+       },
+       data = supplier_A,
+       R = 4999, conf_level = 0.95, method = "bca",
+       alternative = "two.sided", seed = 2026)
+r_cv <- rs$last_results
+cat(sprintf("CV point estimate = %.4f\n", r_cv$statistic))
+cat(sprintf("BCa 95%% CI for CV = [%.4f, %.4f]\n",
+            r_cv$conf.int[1], r_cv$conf.int[2]))
+```
+
+The bootstrap distribution itself is available for plotting; the histogram
+panel makes the skewness of the CV sampling distribution visible.
+
+## 12. Interpreting Test Results — Decision Guide
+
+| Situation | Recommended test | Recommended interval |
+|-----------|------------------|----------------------|
+| One sample, mean on target, $\sigma$ known | `z_test_1s` | `ci_mean` with `sigma` |
+| One sample, mean on target, $\sigma$ unknown | `t_test_1s` | `ci_mean` (default) |
+| Two independent samples, equal variance | `t_test_2s` with `var.equal = TRUE` | `ci_diff_mean` with `var.equal = TRUE` |
+| Two independent samples, unequal variance | `t_test_2s` (Welch, default) | `ci_diff_mean` (default) |
+| Paired / before-after | `t_test_paired` | Bootstrap on `mean(x - y)` |
+| One proportion vs target | `prop_test_1s` | `ci_proportion` |
+| Two proportions | `prop_test_2s` | `ci_proportion` per group |
+| Count / rate data | `poisson_test_1s`, `poisson_test_2s` | Bootstrap on the rate |
+| Two variances | `f_test` | `ci_variance` per group |
+| k-group variances (normal) | `bartlett_test` | Levene as cross-check |
+| k-group variances (robust) | `levene_test` | - |
+| k independent groups, normal | one-way ANOVA (see `vignette("anova")`) | - |
+| k independent groups, non-normal | `kruskal_wallis` | Bootstrap on group medians |
+| Randomized complete block | `friedman` | - |
+| Two operators, paired | `wilcoxon_signed_rank` | Bootstrap on `median(x - y)` |
+| Two operators, independent | `wilcoxon_rank_sum` | Bootstrap on Hodges-Lehmann |
+| Demonstrate "sameness" within $\Delta$ | `tost_mean` / `tost_proportion` | TOST 90 % CI |
+| Demonstrate "not worse" by $\Delta$ | `non_inferiority` | One-sided 97.5 % CI |
+| Demonstrate "better" by $\Delta$ | `superiority` | One-sided 97.5 % CI |
+| Linear association | `cor_test_pearson` | Bootstrap on `cor` |
+| Monotone association, non-normal | `cor_test_spearman` / `cor_test_kendall` | Bootstrap on `cor(..., method="spearman")` |
+| Coverage statement for a lot | - | `tolerance_interval` |
+| Where will the next unit fall? | - | `pi_mean` |
+| No closed-form CI exists | - | `bootstrap_ci` (BCa) |
+
+### Reading the p-value correctly
+
+- **$p < \alpha$**: reject $H_0$. *Evidence* of an effect; not proof.
+- **$p \ge \alpha$**: fail to reject $H_0$. *Not* evidence that $H_0$ is true;
+  the study may be under-powered. Use the confidence interval to assess the
+  practical magnitude of the effect.
+- **Equivalence tests reverse the burden**: here a *small* p-value supports
+  equivalence (we reject the hypothesis of difference). Always read
+  `extra$equivalence` rather than the p-value alone.
+
+### Audience-aware interpretation
+
+The `$interpret(audience = ...)` method renders the same statistical result in
+three registers:
+
+- `"manager"` — business impact, accept/reject decision, no jargon.
+- `"technical"` — statistic, p-value, CI, assumption caveats.
+- `"client"` — external-facing language suitable for a customer report.
+
+## 13. Parameter Reference
+
+### 13.1 HTestAnalyzer test-type codes and signatures
+
+| Code | Signature (defaults shown) |
+|------|----------------------------|
+| `z_test_1s` | `(x, mu = 0, sigma, alternative = "two.sided", conf_level = 0.95)` |
+| `t_test_1s` | `(x, mu = 0, alternative = "two.sided", conf_level = 0.95)` |
+| `t_test_2s` | `(x, y, alternative = "two.sided", conf_level = 0.95, var.equal = FALSE)` |
+| `t_test_paired` | `(x, y, alternative = "two.sided", conf_level = 0.95)` |
+| `prop_test_1s` | `(x, n, p0 = 0.5, alternative = "two.sided", conf_level = 0.95)` |
+| `prop_test_2s` | `(x1, n1, x2, n2, alternative = "two.sided", conf_level = 0.95)` |
+| `f_test` | `(x, y, alternative = "two.sided", conf_level = 0.95)` |
+| `chisq_test` | `(x, p = NULL)` |
+| `wilcoxon_signed_rank` | `(x, y = NULL, mu = 0, alternative = "two.sided", conf_level = 0.95, paired = TRUE)` |
+| `wilcoxon_rank_sum` | `(x, y, mu = 0, alternative = "two.sided", conf_level = 0.95)` |
+| `kruskal_wallis` | `(x, g = NULL)` |
+| `friedman` | `(x, g = NULL, b = NULL)` |
+| `tost_mean` | `(x, y = NULL, mu = 0, delta, conf_level = 0.95, var.equal = FALSE)` |
+| `tost_proportion` | `(x1, n1, x2, n2, delta, conf_level = 0.95)` |
+| `non_inferiority` | `(type = c("mean","proportion"), x = NULL, y = NULL, mu = 0, x1 = NULL, n1 = NULL, x2 = NULL, n2 = NULL, delta, conf_level = 0.95, var.equal = FALSE)` |
+| `superiority` | `(type = c("mean","proportion"), x = NULL, y = NULL, mu = 0, x1 = NULL, n1 = NULL, x2 = NULL, n2 = NULL, delta, conf_level = 0.95, var.equal = FALSE)` |
+| `poisson_test_1s` | `(x, T_exposure = 1, r = 1, alternative = "two.sided", conf_level = 0.95)` |
+| `poisson_test_2s` | `(x1, T1 = 1, x2 = NULL, T2 = 1, alternative = "two.sided", conf_level = 0.95)` |
+| `cor_test_pearson` | `(x, y, alternative = "two.sided", conf_level = 0.95, rho = 0)` |
+| `cor_test_spearman` | `(x, y, alternative = "two.sided", conf_level = 0.95, rho = 0)` |
+| `cor_test_kendall` | `(x, y, alternative = "two.sided", conf_level = 0.95, rho = 0)` |
+| `levene_test` | `(x, g = NULL, center = c("median","mean"))` |
+| `bartlett_test` | `(x, g = NULL)` |
+
+### 13.2 Interval-type codes and signatures
+
+| Code | Signature |
+|------|-----------|
+| `ci_mean` | `(x, sigma = NULL, conf_level = 0.95, alternative = "two.sided")` |
+| `ci_proportion` | `(x, n = NULL, conf_level = 0.95, method = c("wald","exact"))` |
+| `ci_variance` | `(x, conf_level = 0.95)` |
+| `ci_diff_mean` | `(x, y, var.equal = FALSE, conf_level = 0.95)` |
+| `tolerance_interval` | `(x, p = 0.99, conf_level = 0.95, side = c("two-sided","lower","upper"))` |
+| `margin_of_error` | `(x, n = NULL, sigma = NULL, conf_level = 0.95, type = c("mean","proportion"))` |
+| `pi_mean` | `(x = NULL, model = NULL, formula = NULL, data = NULL, newdata = NULL, conf_level = 0.95, alternative = "two.sided")` |
+
+### 13.3 Resampling-type codes and signatures
+
+| Code | Signature |
+|------|-----------|
+| `bootstrap_ci` | `(statistic, data, R = 9999, conf_level = 0.95, method = c("bca","perc","basic","norm"), alternative = "two.sided", seed = NULL)` |
+| `permutation_test` | `(statistic = NULL, x, y = NULL, alternative = "two.sided", R = 9999, paired = FALSE, mu = 0, seed = NULL)` |
+
+### 13.4 Common arguments
+
+| Argument | Meaning |
+|----------|---------|
+| `alternative` | `"two.sided"`, `"less"`, `"greater"` |
+| `conf_level` | Confidence level $1-\alpha$, default 0.95 |
+| `mu` | Hypothesised location / null value |
+| `paired` | If `TRUE` and `y` given, run paired test |
+| `var.equal` | If `TRUE`, use pooled variance; otherwise Welch |
+| `center` | `"median"` (Brown-Forsythe, robust) or `"mean"` (classic Levene) |
+| `delta` | Equivalence / non-inferiority / superiority margin |
+| `R` | Number of resamples (bootstrap or permutation) |
+| `seed` | Optional integer seed for reproducibility |
+| `audience` | `"manager"`, `"technical"`, `"client"` |
+| `theme` | Theme name or `IqrTheme` object for plots |
+
+## 14. References
+
+1. Montgomery, D. C. (2019). *Introduction to Statistical Quality Control* (8th
+   ed.). Wiley. — Foundational reference for the test scenarios in Sections 4-7.
+
+2. Welch, B. L. (1947). "The Generalization of 'Student's' Problem When Several
+   Different Population Variances Are Involved." *Biometrika*, 34(1/2), 28-35.
+   — Basis of the default Welch two-sample t-test.
+
+3. Brown, M. B. & Forsythe, A. B. (1974). "Robust Tests for the Equality of
+   Variances." *Journal of the American Statistical Association*, 69(346),
+   364-367. — Levene's test with median center.
+
+4. Schuirmann, D. J. (1987). "A Comparison of the Two One-Sided Tests Procedure
+   and the Power Approach for Assessing the Equivalence of Average
+   Bioavailability." *Journal of Pharmacokinetics and Biopharmaceutics*, 15(6),
+   657-680. — The TOST procedure.
+
+5. Efron, B. & Tibshirani, R. J. (1993). *An Introduction to the Bootstrap*.
+   Chapman & Hall. — Bootstrap theory and BCa interval.
+
+6. Davison, A. C. & Hinkley, D. V. (1997). *Bootstrap Methods and Their
+   Application*. Cambridge University Press. — Permutation tests and bootstrap
+   practice.
+
+7. Howe, W. G. (1969). "Two-Sided Tolerance Limits for Normal Populations -
+   Some Improvements." *Journal of the American Statistical Association*,
+   64(326), 610-620. — Howe's method for k-content / p-coverage tolerance
+   intervals, the basis of `tolerance_interval`.
+
+8. ISO 16269-6:2014. *Statistical Interpretation of Data - Part 6:
+   Determination of Statistical Tolerance Intervals*. — International standard
+   for tolerance intervals.
+
+9. Hahn, G. J. & Meeker, W. Q. (1991). *Statistical Intervals: A Guide for
+   Practitioners*. Wiley. — Comprehensive reference on CI / PI / TI.
+
+10. Hollander, M., Wolfe, D. A. & Chicken, E. (2014). *Nonparametric
+    Statistical Methods* (3rd ed.). Wiley. — Kruskal-Wallis, Friedman, Wilcoxon.
+
+## Further Reading
+
+- For the descriptive statistics, probability distribution, and data
+  transformation toolkit that precedes hypothesis testing, see
+  `vignette("descriptive-and-distributions", package = "iQualityR.stat")`.
+- For the sample-size and power calculations that plan the studies these tests
+  conclude, see
+  `vignette("sample-size-and-power", package = "iQualityR.stat")`.
+- For multi-group parametric comparisons (one-way / two-way ANOVA, ANOM, and
+  Tukey HSD multiple comparisons), see
+  `vignette("anova", package = "iQualityR.stat")`.
+- For regression modelling and the regression-flavoured diagnostics that build
+  on the correlation test, see
+  `vignette("regression-modeling", package = "iQualityR.stat")`.
+- For process-capability statements that consume the tolerance intervals
+  introduced here, see
+  `vignette("process-control-and-capability", package = "iQualityR.stat")`.

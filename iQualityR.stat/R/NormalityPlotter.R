@@ -10,39 +10,52 @@
 #'
 #' @export
 NormalityPlotter <- R6::R6Class("NormalityPlotter",
+  inherit = StatPlotter,
   public = list(
-    #' @field theme_obj Theme object
-    theme_obj = NULL,
-
-    #' @description Initialize
-    #' @param theme Theme name or IqrTheme object
-    initialize = function(theme = "academic") {
-      if (inherits(theme, "IqrTheme")) {
-        self$theme_obj <- theme
-      } else {
-        tryCatch({
-          self$theme_obj <- IqrTheme$new(theme)
-        }, error = function(e) {
-          self$theme_obj <<- NULL
-        })
-      }
-    },
-
-    #' @description Automatically plot based on test results
-    #' @param x Sample data
-    #' @param result Test result list (NormalityAnalyzer output)
-    #' @param plot_type Plot type ("auto", "hist", "qq", "pp", "combined")
-    #' @param add_confidence Whether to add confidence band for QQ plot
+    #' @description Unified plot entry point (Contract 2 signature).
+    #'
+    #' Accepts the fixed Contract 2 signature `(result, plot_type, show_table,
+    #' theme_obj)` and dispatches to the appropriate sub-plot. The raw sample
+    #' vector `x` and the `add_confidence` flag are absorbed through `...` for
+    #' backward compatibility with the legacy `plot(x, result, ...)` call:
+    #' when the first argument is a numeric vector it is treated as the old
+    #' `x` sample (so `plot(x, plot_type = "hist")` still works).
+    #'
+    #' @param result A normality test result list (from `NormalityAnalyzer`),
+    #'   or a numeric sample vector for backward compatibility (legacy `x`).
+    #' @param plot_type Plot type ("auto", "hist", "qq", "pp", "combined").
+    #' @param show_table Logical; reserved for Contract 2 signature uniformity
+    #'   (normality plots do not overlay a stats table).
     #' @param theme_obj Optional `IqrTheme` overriding `self$theme_obj`.
-    #' @return ggplot2 or patchwork object
-    plot = function(x, result = NULL, plot_type = "auto",
-                    add_confidence = FALSE, theme_obj = NULL) {
+    #' @param ... Backward-compat channel: `x` (raw sample) and `add_confidence`
+    #'   (logical) are extracted from here when not derivable from `result`.
+    #' @return A `ggplot` or `patchwork` object.
+    plot = function(result, plot_type = "auto", show_table = FALSE,
+                    theme_obj = NULL, ...) {
       .check_plot_available()
       if (!is.null(theme_obj)) self$theme_obj <- theme_obj
       plot_type <- match.arg(plot_type, c("auto", "hist", "qq", "pp", "combined"))
 
+      dots <- list(...)
+      add_confidence <- dots$add_confidence %||% FALSE
+
+      # Backward-compat: legacy signature was plot(x, result = NULL, ...). If
+      # the first argument is a numeric vector, treat it as the old `x` sample.
+      if (is.numeric(result)) {
+        x <- result
+        result_obj <- NULL
+      } else {
+        result_obj <- result
+        x <- dots$x
+      }
+
+      if (is.null(x)) {
+        stop("[NormalityPlotter] Sample data `x` is required (pass via ... ).",
+             call. = FALSE)
+      }
+
       if (plot_type == "auto") {
-        plot_type <- private$.auto_select(result)
+        plot_type <- private$.auto_select(result_obj)
       }
 
       switch(plot_type,

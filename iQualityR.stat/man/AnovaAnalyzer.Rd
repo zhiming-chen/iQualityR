@@ -25,6 +25,7 @@ Supports:
 \item \href{#method-AnovaAnalyzer-anova_repeated}{\code{AnovaAnalyzer$anova_repeated()}}
 \item \href{#method-AnovaAnalyzer-anova_mixed}{\code{AnovaAnalyzer$anova_mixed()}}
 \item \href{#method-AnovaAnalyzer-manova}{\code{AnovaAnalyzer$manova()}}
+\item \href{#method-AnovaAnalyzer-anova_anom}{\code{AnovaAnalyzer$anova_anom()}}
 \item \href{#method-AnovaAnalyzer-analyze}{\code{AnovaAnalyzer$analyze()}}
 \item \href{#method-AnovaAnalyzer-report}{\code{AnovaAnalyzer$report()}}
 \item \href{#method-AnovaAnalyzer-clone}{\code{AnovaAnalyzer$clone()}}
@@ -36,7 +37,7 @@ Supports:
 \subsection{Method \code{anova_oneway()}}{
 One-way ANOVA
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_oneway(formula, data, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_oneway(formula, data, ..., data_name = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -47,6 +48,9 @@ One-way ANOVA
 \item{\code{data}}{Data frame.}
 
 \item{\code{...}}{Additional arguments passed to \code{aov}.}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }
@@ -60,7 +64,7 @@ Structured results list.
 \subsection{Method \code{anova_twoway()}}{
 Two-way ANOVA (with interaction)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_twoway(formula, data, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_twoway(formula, data, ..., data_name = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -71,6 +75,9 @@ Two-way ANOVA (with interaction)
 \item{\code{data}}{Data frame.}
 
 \item{\code{...}}{Additional arguments.}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }
@@ -84,7 +91,7 @@ Structured results list.
 \subsection{Method \code{anova_multifactor()}}{
 Multi-factor ANOVA (3+ factors)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_multifactor(formula, data, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_multifactor(formula, data, ..., data_name = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -95,6 +102,9 @@ Multi-factor ANOVA (3+ factors)
 \item{\code{data}}{Data frame.}
 
 \item{\code{...}}{Additional arguments.}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }
@@ -108,7 +118,7 @@ Structured results list.
 \subsection{Method \code{anova_repeated()}}{
 Repeated measures ANOVA
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_repeated(formula, data, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_repeated(formula, data, ..., data_name = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -119,6 +129,9 @@ Repeated measures ANOVA
 \item{\code{data}}{Data frame.}
 
 \item{\code{...}}{Additional arguments passed to \code{aov}.}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }
@@ -132,7 +145,13 @@ Structured results list.
 \subsection{Method \code{anova_mixed()}}{
 Mixed-effects model (linear mixed model)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_mixed(formula, data, method = "REML", ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_mixed(
+  formula,
+  data,
+  method = "REML",
+  ...,
+  data_name = NULL
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -145,6 +164,9 @@ Mixed-effects model (linear mixed model)
 \item{\code{method}}{Fitting method (\code{"REML"} or \code{"ML"}).}
 
 \item{\code{...}}{Additional arguments passed to \code{lmer}.}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }
@@ -161,7 +183,9 @@ Multivariate ANOVA (MANOVA)
 \if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$manova(
   formula,
   data,
-  test = c("Wilks", "Pillai", "Hotelling-Lawley", "Roy")
+  test = c("Wilks", "Pillai", "Hotelling-Lawley", "Roy"),
+  ...,
+  data_name = NULL
 )}\if{html}{\out{</div>}}
 }
 
@@ -174,6 +198,11 @@ Multivariate ANOVA (MANOVA)
 
 \item{\code{test}}{Test statistic (\code{"Wilks"}, \code{"Pillai"},
 \code{"Hotelling-Lawley"}, or \code{"Roy"}).}
+
+\item{\code{...}}{Additional arguments passed to \code{manova}.}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }
@@ -182,12 +211,49 @@ Structured results list.
 }
 }
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-AnovaAnalyzer-anova_anom"></a>}}
+\if{latex}{\out{\hypertarget{method-AnovaAnalyzer-anova_anom}{}}}
+\subsection{Method \code{anova_anom()}}{
+Analysis of Means (ANOM)
+
+Compares each group mean to the grand mean with simultaneous decision
+limits, identifying which specific levels deviate from the overall mean.
+Unlike ANOVA's global F test, ANOM pinpoints the offending levels.
+
+Supports balanced and unbalanced one-way designs. The critical value
+uses the Studentized-range approximation
+\code{h = qtukey(1 - alpha, k, df_error) / sqrt(2)}, a standard choice when
+exact Nelson tables are unavailable.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$anova_anom(formula, data, conf_level = 0.95, data_name = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{formula}}{Formula (\code{response ~ group}), one-way only.}
+
+\item{\code{data}}{Data frame.}
+
+\item{\code{conf_level}}{Confidence level for the decision limits (default 0.95).}
+
+\item{\code{data_name}}{Internal: override for the data name captured in the
+result. Used by \code{iqr_anova$run()} to forward the user's variable name.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Structured results list with \code{anom_table}, \code{grand_mean},
+\code{ucl}/\code{lcl}, \code{h_alpha}, etc.
+}
+}
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-AnovaAnalyzer-analyze"></a>}}
 \if{latex}{\out{\hypertarget{method-AnovaAnalyzer-analyze}{}}}
 \subsection{Method \code{analyze()}}{
 Unified entry point: auto-selects method from formula structure
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$analyze(formula, data, ...)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{AnovaAnalyzer$analyze(formula, data, ..., method = NULL, data_name = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -198,6 +264,13 @@ Unified entry point: auto-selects method from formula structure
 \item{\code{data}}{Data frame.}
 
 \item{\code{...}}{Additional arguments.}
+
+\item{\code{method}}{Optional analysis method hint. \code{"anom"} forces Analysis of
+Means; \code{NULL} (default) auto-detects from the formula structure.}
+
+\item{\code{data_name}}{Optional character; override for the data name captured
+in the result. Mainly used internally so iqr_anova$run can forward the
+user's original variable name.}
 }
 \if{html}{\out{</div>}}
 }

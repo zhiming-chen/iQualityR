@@ -128,7 +128,7 @@ iqr_normality <- R6::R6Class("iqr_normality",
         x <- self$last_data
       }
 
-      self$plotter$plot(x, result = self$last_results,
+      self$plotter$plot(result = self$last_results, x = x,
                         plot_type = plot_type,
                         add_confidence = add_confidence)
     },

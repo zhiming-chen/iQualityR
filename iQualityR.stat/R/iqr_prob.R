@@ -182,13 +182,12 @@ iqr_prob <- R6::R6Class("iqr_prob",
         self$set_theme(theme_style = theme_obj, ...)
       }
 
-      self$plotter$render(
-        nodes        = self$nodes,
-        calc_results = self$last_results,
-        facet        = facet,
-        show_cdf     = show_cdf,
-        mode         = self$last_results[[1]]$mode,
-        theme_obj    = self$theme_obj
+      self$plotter$plot(
+        result    = list(nodes = self$nodes, calc_results = self$last_results),
+        theme_obj = self$theme_obj,
+        show_cdf  = show_cdf,
+        facet     = facet,
+        mode      = self$last_results[[1]]$mode
       )
     },
 
@@ -224,16 +223,20 @@ iqr_prob <- R6::R6Class("iqr_prob",
       invisible(explanations)
     },
 
-    #' @description Structured data export
-    #' @return Data frame
+    #' @description Structured data export (Contract 2 delegation)
+    #' @param format Output format (`"data.frame"` default, `"console"`, `"excel"`).
+    #' @return Data frame (for `"data.frame"`) or invisible path (for `"excel"`).
     #' @examples
     #' prob <- iqr_prob$new(type = "norm", params = list(mean = 0, sd = 1))
     #' prob$calc(values = 1.96, mode = "prob", calc_type = "upper")
     #' df <- prob$report()
     #' head(df)
-    report = function() {
+    report = function(format = "data.frame") {
       if (is.null(self$last_results)) return(NULL)
-      self$reporter$to_dataframe(self$last_results)
+      self$reporter$report(
+        result = list(calc_results = self$last_results, nodes = self$nodes),
+        format = format
+      )
     },
 
     #' @description Export to Excel report

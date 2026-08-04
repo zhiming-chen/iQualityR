@@ -440,27 +440,27 @@ list(
 ### 阶段 R3：功能补全（4-8 周，按板块推进）
 
 **优先级 A（基础统计补全，2 周）**：
-- R3-A1 htest 非参数（Wilcoxon/Kruskal-Wallis/Friedman）
-- R3-A2 htest 等效性（TOST 均值/比例/非劣效/优效）
-- R3-A3 htest Poisson 率（单/双样本）
-- R3-A4 htest 相关检验（Pearson/Spearman/Kendall）
-- R3-A5 htest 等方差（Levene/Bartlett）
-- R3-A6 intervals 公差区间 + 误差裕度
+- R3-A1 htest 非参数（Wilcoxon/Kruskal-Wallis/Friedman）✅ 已完成
+- R3-A2 htest 等效性（TOST 均值/比例/非劣效/优效）✅ 已完成
+- R3-A3 htest Poisson 率（单/双样本）✅ 已完成
+- R3-A4 htest 相关检验（Pearson/Spearman/Kendall）✅ 已完成
+- R3-A5 htest 等方差（Levene/Bartlett）✅ 已完成：HTestAnalyzer$levene_test（Brown-Forsythe 默认 center="median"，经典 Levene center="mean"，car::leveneTest 回退）+ bartlett_test（封装 stats::bartlett.test）；StatInterpreter 新增 .interpret_variance_equality 分支。
+- R3-A6 intervals 公差区间 + 误差裕度 ✅ 已完成：IntervalAnalyzer$tolerance_interval（正态理论 k-content/p-coverage，支持双侧/下限/上限）+ margin_of_error（均值/比例路径）。
 
 **优先级 B（回归与样本量，3 周）**：
-- R3-B1 regression lm + Logistic + Poisson（质量预测常用）
-- R3-B2 regression Cox + PLS + 逐步 + 子集
-- R3-B3 regression ROC/Lift/PR
-- R3-B4 sample-size 配对 t / 回归 / 置信区间 / 公差 / 可靠性
+- R3-B1 regression lm + Logistic + Poisson（质量预测常用）✅ 已完成
+- R3-B2 regression Cox + PLS + 逐步 + 子集 ✅ 已完成
+- R3-B3 regression ROC/Lift/PR ✅ 已完成
+- R3-B4 sample-size 配对 t / 回归 / 置信区间 / 公差 / 可靠性 ✅ 已完成：sample_size.R 新增 5 项扩展函数——sample_size_paired（配对 t 检验，基于差值 d=y2-y1 的单样本 t，t 校正迭代）、sample_size_regression（回归全局 F 检验，Cohen's f²=R²/(1-R²)，非中心 F 迭代搜索达到目标功效）、sample_size_ci（CI 宽度驱动，支持 mean/proportion 两种类型，n=(z·σ/h)² 或 n=z²·p(1-p)/h²）、sample_size_tolerance（正态公差区间驱动，Howe/精确卡方 k 因子 + c4(n) 期望 s，约束 k·s≤max_half_width·σ）、sample_size_reliability（可靠性/成功运行研究，零失效 n=log(1-γ)/log(R)，允许多失效时二项累积 P(X≤r|n,1-R)≤1-γ 控制消费者风险）。新增 35 项测试覆盖公式正确性、功效达成、趋势单调性、输入校验；全量 2826 测试通过，R CMD check 0 errors/0 notes（1 既有网络 WARNING，1 既有 $set_theme 文档 NOTE）。
 
 **优先级 C（重抽样与效应量，1 周）**：
-- R3-C1 重抽样：Bootstrap（BCa）+ 置换检验
-- R3-C2 效应量补全：ω² / 优势比 / 相对风险
+- R3-C1 重抽样：Bootstrap（BCa）+ 置换检验 ✅ 已完成：ResamplingAnalyzer$bootstrap_ci（BCa/perc/basic/norm，jackknife 加速）+ permutation_test（单样本符号翻转/双样本标签置换/配对）；完整 L1/L2/L3 模块（ResamplingPlotter/Reporter + iqr_resampling）。
+- R3-C2 效应量补全：ω² / 优势比 / 相对风险 ✅ 已完成：effect_size() 统一分派（cohens_d/hedges_g/eta_squared/omega_squared/cohens_h/r）+ odds_ratio() 2×2 表估计；anova.R 内联 .calc_effect_size（eta/partial_eta/omega）。
 
 **优先级 D（高级，2 周）**：
-- R3-D1 regression MARS + 样条
-- R3-D2 intervals 预测区间统一
-- R3-D3 anova ANOM（均值分析）
+- R3-D1 regression MARS + 样条 ✅ 已完成：RegressionAnalyzer 新增 mars_fit（依赖 earth 包，支持 degree/nk/pmethod/thresh 参数，通过预过滤 NA 解决 earth 不接受 na.action 的限制）与 spline_fit（依赖 splines 包，支持 B 样条 bs 与自然样条 ns、df/degree/knots 参数、自动展开首个预测变量为样条 basis、保留额外协变量）。L1 analyze() 分派扩展为 9 种模型类型；L2 RegressionPlotter 新增 spline 绘图类型（自动选择数据散点+拟合曲线，通过原始公式重建数据定位主预测变量）；L2 RegressionReporter 新增 mars_fit/spline_fit 控制台与 data.frame 输出分支；L3 iqr_regression/regression_run 支持 mars_fit/spline_fit；StatInterpreter 新增 mars_fit（广义 R²/GCV/项数）与 spline_fit（basis/df/F 统计量）解读分支。新增 30+ 项测试覆盖功能正确性（非线性结构捕捉、分段线性拟合、交互项）、输入校验、analyze() 分派、L3 整合器、便捷函数、解释器、报告器、绘图器；全量 2763 测试通过，R CMD check 0 errors/0 notes（1 既有网络 WARNING，1 既有 $set_theme 文档 NOTE）。
+- R3-D2 intervals 预测区间统一 ✅ 已完成：IntervalAnalyzer$pi_mean 扩展为统一入口，支持两种模式——Mode 1 单样本正态预测区间（基于 t 分布，x +/- t_{α/2,n-1}·s·√(1+1/n)）与 Mode 2 模型预测区间（封装 stats::predict.lm(interval="prediction")）。私有方法重构为 .pi_mean_sample / .pi_mean_model；通过 pi_mode 字段（"sample"/"model"）区分。模型模式支持显式 lm 对象、formula+data 内部拟合、newdata 多行预测（结果存入 prediction_table），单行时 conf.int 直接对应、多行时 conf.int 跨 min(lwr)/max(upr)。StatInterpreter 按 pi_mode 分支解读；IntervalPlotter .auto_select 模型模式回退至 errorbar（避免直方图路径对 data.frame 的 x 报错）。新增 26 项测试覆盖两种模式的计算正确性、predict.lm 一致性、多预测点、输入校验、单侧强制转双侧、L3 整合器、便捷函数、解释器、绘图器、报告器；全量 2697 测试通过，R CMD check 0 errors/0 notes（仅 1 个既有网络 WARNING）。
+- R3-D3 anova ANOM（均值分析）✅ 已完成：AnovaAnalyzer$anova_anom + AnovaPlotter$plot_anom + AnovaReporter(ANOM sheet) + iqr_anova/anova_run(method="anom") + StatInterpreter(.interpret_anom)；决策限采用 Studentized range 近似 h=qtukey(1-α,k,df_e)/√2，支持均衡/非均衡设计；新增 30 项测试，全量 2639 测试通过。
 
 ### 阶段 R4：跨包复用推进（2-4 周）
 

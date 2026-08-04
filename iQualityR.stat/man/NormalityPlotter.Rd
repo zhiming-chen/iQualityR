@@ -7,17 +7,12 @@
 Automatically select appropriate visualization based on test results.
 All plotting functions reuse iQualityR.plot package functions.
 }
-\section{Public fields}{
-\if{html}{\out{<div class="r6-fields">}}
-\describe{
-\item{\code{theme_obj}}{Theme object}
-}
-\if{html}{\out{</div>}}
+\section{Super class}{
+\code{\link[iQualityR.stat:StatPlotter]{iQualityR.stat::StatPlotter}} -> \code{NormalityPlotter}
 }
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
-\item \href{#method-NormalityPlotter-new}{\code{NormalityPlotter$new()}}
 \item \href{#method-NormalityPlotter-plot}{\code{NormalityPlotter$plot()}}
 \item \href{#method-NormalityPlotter-plot_hist}{\code{NormalityPlotter$plot_hist()}}
 \item \href{#method-NormalityPlotter-plot_qq}{\code{NormalityPlotter$plot_qq()}}
@@ -26,55 +21,55 @@ All plotting functions reuse iQualityR.plot package functions.
 \item \href{#method-NormalityPlotter-clone}{\code{NormalityPlotter$clone()}}
 }
 }
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-NormalityPlotter-new"></a>}}
-\if{latex}{\out{\hypertarget{method-NormalityPlotter-new}{}}}
-\subsection{Method \code{new()}}{
-Initialize
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{NormalityPlotter$new(theme = "academic")}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{theme}}{Theme name or IqrTheme object}
-}
-\if{html}{\out{</div>}}
-}
-}
+\if{html}{\out{
+<details open><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="initialize"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-initialize'><code>iQualityR.stat::StatPlotter$initialize()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="set_theme"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-set_theme'><code>iQualityR.stat::StatPlotter$set_theme()</code></a></span></li>
+</ul>
+</details>
+}}
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-NormalityPlotter-plot"></a>}}
 \if{latex}{\out{\hypertarget{method-NormalityPlotter-plot}{}}}
 \subsection{Method \code{plot()}}{
-Automatically plot based on test results
+Unified plot entry point (Contract 2 signature).
+
+Accepts the fixed Contract 2 signature \verb{(result, plot_type, show_table, theme_obj)} and dispatches to the appropriate sub-plot. The raw sample
+vector \code{x} and the \code{add_confidence} flag are absorbed through \code{...} for
+backward compatibility with the legacy \code{plot(x, result, ...)} call:
+when the first argument is a numeric vector it is treated as the old
+\code{x} sample (so \code{plot(x, plot_type = "hist")} still works).
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{NormalityPlotter$plot(
-  x,
-  result = NULL,
+  result,
   plot_type = "auto",
-  add_confidence = FALSE,
-  theme_obj = NULL
+  show_table = FALSE,
+  theme_obj = NULL,
+  ...
 )}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{x}}{Sample data}
+\item{\code{result}}{A normality test result list (from \code{NormalityAnalyzer}),
+or a numeric sample vector for backward compatibility (legacy \code{x}).}
 
-\item{\code{result}}{Test result list (NormalityAnalyzer output)}
+\item{\code{plot_type}}{Plot type ("auto", "hist", "qq", "pp", "combined").}
 
-\item{\code{plot_type}}{Plot type ("auto", "hist", "qq", "pp", "combined")}
-
-\item{\code{add_confidence}}{Whether to add confidence band for QQ plot}
+\item{\code{show_table}}{Logical; reserved for Contract 2 signature uniformity
+(normality plots do not overlay a stats table).}
 
 \item{\code{theme_obj}}{Optional \code{IqrTheme} overriding \code{self$theme_obj}.}
+
+\item{\code{...}}{Backward-compat channel: \code{x} (raw sample) and \code{add_confidence}
+(logical) are extracted from here when not derivable from \code{result}.}
 }
 \if{html}{\out{</div>}}
 }
 \subsection{Returns}{
-ggplot2 or patchwork object
+A \code{ggplot} or \code{patchwork} object.
 }
 }
 \if{html}{\out{<hr>}}

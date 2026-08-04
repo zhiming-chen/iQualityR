@@ -1453,3 +1453,540 @@ test_that("HTestPlotter renders Poisson two-sample text panel", {
   p <- plotter$plot(result, plot_type = "auto")
   expect_true(inherits(p, "ggplot"))
 })
+
+# ----------------------------------------------------------------------------
+# Correlation tests (R3-A4): Pearson / Spearman / Kendall
+# ----------------------------------------------------------------------------
+
+test_that("Pearson correlation test returns stat_result", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(30, mean = 80, sd = 5)
+  y <- 50 + 0.6 * x + rnorm(30, sd = 2)
+  result <- analyzer$cor_test_pearson(x = x, y = y)
+  expect_s3_class(result, "stat_result")
+  expect_s3_class(result, "htest_result")
+  expect_equal(result$domain, "htest")
+  expect_equal(result$test_type, "cor_test_pearson")
+  expect_equal(result$method_name, "pearson")
+  expect_equal(result$dist_type, "t")
+  expect_equal(result$alternative, "two.sided")
+  expect_equal(result$n, 30L)
+  expect_true(!is.na(result$p.value))
+  expect_true(!is.null(result$statistic))
+  expect_true(!is.null(result$estimate))
+  expect_true(!is.null(result$conf.int))   # Pearson returns CI
+  expect_equal(as.numeric(result$null.value["correlation"]), 0)
+  expect_false(is.null(result$data$x))
+  expect_false(is.null(result$data$y))
+})
+
+test_that("Pearson correlation detects strong positive association", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(50, mean = 0, sd = 1)
+  y <- 2 * x + rnorm(50, sd = 0.2)   # very strong positive correlation
+  result <- analyzer$cor_test_pearson(x = x, y = y)
+  expect_true(result$p.value < 0.001)
+  expect_true(as.numeric(result$estimate[1]) > 0.9)
+})
+
+test_that("Pearson correlation detects strong negative association", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(50, mean = 0, sd = 1)
+  y <- -2 * x + rnorm(50, sd = 0.2)
+  result <- analyzer$cor_test_pearson(x = x, y = y, alternative = "less")
+  expect_equal(result$alternative, "less")
+  expect_true(as.numeric(result$estimate[1]) < -0.9)
+  expect_true(result$p.value < 0.05)
+})
+
+test_that("Pearson correlation does not reject when uncorrelated", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(100, mean = 0, sd = 1)
+  y <- rnorm(100, mean = 0, sd = 1)   # independent
+  result <- analyzer$cor_test_pearson(x = x, y = y)
+  expect_true(result$p.value > 0.05)
+})
+
+test_that("Pearson correlation rejects invalid inputs", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$cor_test_pearson(x = NULL, y = 1:10), "required")
+  expect_error(analyzer$cor_test_pearson(x = 1:10, y = "a"), "numeric")
+  expect_error(analyzer$cor_test_pearson(x = 1:10, y = 1:5), "same length")
+  expect_error(analyzer$cor_test_pearson(x = 1:2, y = 1:2), "at least 3")
+})
+
+test_that("Spearman correlation test returns stat_result", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(30, mean = 80, sd = 5)
+  y <- 50 + 0.6 * x + rnorm(30, sd = 2)
+  result <- analyzer$cor_test_spearman(x = x, y = y)
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$test_type, "cor_test_spearman")
+  expect_equal(result$method_name, "spearman")
+  expect_equal(result$dist_type, "asymptotic")
+  expect_equal(result$n, 30L)
+  expect_true(!is.na(result$p.value))
+  expect_true(!is.null(result$estimate))
+  expect_null(result$conf.int)   # Spearman cor.test does not return CI
+})
+
+test_that("Spearman correlation detects monotonic but non-linear relation", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- runif(50, min = 1, max = 10)
+  y <- log(x) + rnorm(50, sd = 0.05)   # monotonic but non-linear
+  result <- analyzer$cor_test_spearman(x = x, y = y)
+  expect_true(result$p.value < 0.001)
+  expect_true(as.numeric(result$estimate[1]) > 0.9)
+})
+
+test_that("Spearman correlation rejects invalid inputs", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$cor_test_spearman(x = NULL, y = 1:10), "required")
+  expect_error(analyzer$cor_test_spearman(x = 1:5, y = 1:10), "same length")
+  expect_error(analyzer$cor_test_spearman(x = 1:2, y = 1:2), "at least 3")
+})
+
+test_that("Kendall correlation test returns stat_result", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(30, mean = 80, sd = 5)
+  y <- 50 + 0.6 * x + rnorm(30, sd = 2)
+  result <- analyzer$cor_test_kendall(x = x, y = y)
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$test_type, "cor_test_kendall")
+  expect_equal(result$method_name, "kendall")
+  expect_equal(result$dist_type, "asymptotic")
+  expect_equal(result$n, 30L)
+  expect_true(!is.na(result$p.value))
+  expect_true(!is.null(result$estimate))
+  expect_null(result$conf.int)   # Kendall cor.test does not return CI
+})
+
+test_that("Kendall correlation detects significant association", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(50, mean = 0, sd = 1)
+  y <- 1.5 * x + rnorm(50, sd = 0.3)
+  result <- analyzer$cor_test_kendall(x = x, y = y)
+  expect_true(result$p.value < 0.001)
+  expect_true(as.numeric(result$estimate[1]) > 0.5)
+})
+
+test_that("Kendall correlation rejects invalid inputs", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$cor_test_kendall(x = NULL, y = 1:10), "required")
+  expect_error(analyzer$cor_test_kendall(x = 1:5, y = 1:10), "same length")
+  expect_error(analyzer$cor_test_kendall(x = 1:2, y = 1:2), "at least 3")
+})
+
+test_that("analyze() dispatches correlation test types", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(30, mean = 0, sd = 1)
+  y <- 0.8 * x + rnorm(30, sd = 0.5)
+
+  r1 <- analyzer$analyze("cor_test_pearson", x = x, y = y)
+  expect_equal(r1$test_type, "cor_test_pearson")
+
+  r2 <- analyzer$analyze("cor_test_spearman", x = x, y = y)
+  expect_equal(r2$test_type, "cor_test_spearman")
+
+  r3 <- analyzer$analyze("cor_test_kendall", x = x, y = y)
+  expect_equal(r3$test_type, "cor_test_kendall")
+})
+
+test_that("StatInterpreter handles Pearson correlation result", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  set.seed(123)
+  x <- rnorm(50, mean = 0, sd = 1)
+  y <- 2 * x + rnorm(50, sd = 0.2)
+  result <- analyzer$cor_test_pearson(x = x, y = y)
+  out <- interpreter$interpret(result, audience = "manager")
+  expect_type(out, "character")
+  expect_true(grepl("correlation", out, ignore.case = TRUE))
+  expect_true(grepl("positive", out, ignore.case = TRUE))
+})
+
+test_that("StatInterpreter handles Spearman correlation result (technical)", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  set.seed(123)
+  x <- runif(40, min = 1, max = 10)
+  y <- log(x) + rnorm(40, sd = 0.05)
+  result <- analyzer$cor_test_spearman(x = x, y = y)
+  out <- interpreter$interpret(result, audience = "technical")
+  expect_type(out, "character")
+  expect_true(grepl("rho|correlation", out, ignore.case = TRUE))
+})
+
+test_that("StatInterpreter handles Kendall correlation result (client)", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  set.seed(123)
+  x <- rnorm(40, mean = 0, sd = 1)
+  y <- 1.5 * x + rnorm(40, sd = 0.3)
+  result <- analyzer$cor_test_kendall(x = x, y = y)
+  out <- interpreter$interpret(result, audience = "client")
+  expect_type(out, "character")
+  expect_true(grepl("Correlation|tau", out, ignore.case = TRUE))
+})
+
+# ---- HTestPlotter coverage for correlation tests ----
+
+test_that("HTestPlotter renders Pearson scatter plot (auto)", {
+  skip_if_not_installed("iQualityR.plot")
+  set.seed(123)
+  x <- rnorm(30, mean = 80, sd = 5)
+  y <- 50 + 0.6 * x + rnorm(30, sd = 2)
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$cor_test_pearson(x = x, y = y)
+  p <- plotter$plot(result, plot_type = "auto")
+  expect_true(inherits(p, "ggplot"))
+})
+
+test_that("HTestPlotter renders Spearman scatter plot (box)", {
+  skip_if_not_installed("iQualityR.plot")
+  set.seed(123)
+  x <- runif(40, min = 1, max = 10)
+  y <- log(x) + rnorm(40, sd = 0.05)
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$cor_test_spearman(x = x, y = y)
+  p <- plotter$plot(result, plot_type = "box")
+  expect_true(inherits(p, "ggplot"))
+})
+
+test_that("HTestPlotter renders Kendall text panel (curve)", {
+  skip_if_not_installed("iQualityR.plot")
+  set.seed(123)
+  x <- rnorm(40, mean = 0, sd = 1)
+  y <- 1.5 * x + rnorm(40, sd = 0.3)
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$cor_test_kendall(x = x, y = y)
+  p <- plotter$plot(result, plot_type = "curve")
+  expect_true(inherits(p, "ggplot"))
+})
+
+test_that("HTestPlotter combined plot works for Pearson correlation", {
+  skip_if_not_installed("iQualityR.plot")
+  skip_if_not_installed("patchwork")
+  set.seed(123)
+  x <- rnorm(30, mean = 80, sd = 5)
+  y <- 50 + 0.6 * x + rnorm(30, sd = 2)
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$cor_test_pearson(x = x, y = y)
+  p <- plotter$plot(result, plot_type = "combined")
+  expect_true(inherits(p, "ggplot") || inherits(p, "patchwork"))
+})
+
+# ----------------------------------------------------------------------------
+# Variance-equality tests (R3-A5): Levene / Bartlett
+# ----------------------------------------------------------------------------
+
+# ---- HTestAnalyzer: levene_test ----
+
+test_that("HTestAnalyzer levene_test returns stat_result (vector + grouping)", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- c(rnorm(20, sd = 1), rnorm(20, sd = 2), rnorm(20, sd = 3))
+  g <- rep(c("A", "B", "C"), each = 20)
+  result <- analyzer$levene_test(x = x, g = g)
+  expect_s3_class(result, "stat_result")
+  expect_s3_class(result, "htest_result")
+  expect_equal(result$domain, "htest")
+  expect_equal(result$test_type, "levene_test")
+  expect_equal(result$k, 3L)
+  expect_equal(result$center, "median")
+  expect_equal(result$dist_type, "f")
+  expect_equal(result$alternative, "two.sided")
+  expect_true("F" %in% names(result$statistic))
+  expect_true(all(c("num_df", "den_df") %in% names(result$parameter)))
+  expect_equal(as.numeric(result$parameter["num_df"]), 2)        # k - 1
+  expect_equal(as.numeric(result$parameter["den_df"]), 57)       # n - k = 60 - 3
+  expect_length(result$group_n, 3)
+  expect_length(result$group_var, 3)
+  expect_true(!is.na(result$p.value))
+  expect_false(is.null(result$data$x))
+  expect_false(is.null(result$data$y))
+})
+
+test_that("HTestAnalyzer levene_test accepts list-of-vectors input", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  g1 <- rnorm(15, sd = 1)
+  g2 <- rnorm(15, sd = 1)
+  result <- analyzer$levene_test(x = list(g1, g2))
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$k, 2L)
+  expect_equal(as.numeric(result$parameter["num_df"]), 1)
+  expect_equal(as.numeric(result$parameter["den_df"]), 28)
+  # Equal variances -> should not reject at 0.05
+  expect_true(result$p.value > 0.05)
+})
+
+test_that("HTestAnalyzer levene_test detects unequal variances", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  g1 <- rnorm(30, sd = 1)
+  g2 <- rnorm(30, sd = 5)
+  result <- analyzer$levene_test(x = list(g1, g2))
+  expect_true(result$p.value < 0.01)
+})
+
+test_that("HTestAnalyzer levene_test center='mean' gives classic Levene", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- c(rnorm(20, sd = 1), rnorm(20, sd = 3))
+  g <- rep(c("A", "B"), each = 20)
+  result <- analyzer$levene_test(x = x, g = g, center = "mean")
+  expect_equal(result$center, "mean")
+  expect_true(grepl("center = mean", result$method))
+})
+
+test_that("HTestAnalyzer levene_test center='median' labels Brown-Forsythe", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- c(rnorm(20, sd = 1), rnorm(20, sd = 3))
+  g <- rep(c("A", "B"), each = 20)
+  result <- analyzer$levene_test(x = x, g = g, center = "median")
+  expect_true(grepl("Brown-Forsythe", result$method))
+})
+
+test_that("HTestAnalyzer levene_test dispatches via analyze()", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  g1 <- rnorm(15, sd = 1)
+  g2 <- rnorm(15, sd = 2)
+  result <- analyzer$analyze("levene_test", x = list(g1, g2))
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$test_type, "levene_test")
+})
+
+# ---- HTestAnalyzer: levene_test input validation ----
+
+test_that("HTestAnalyzer levene_test errors when g is missing for vector x", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- rnorm(20)
+  expect_error(analyzer$levene_test(x = x), "grouping vector 'g' is required")
+})
+
+test_that("HTestAnalyzer levene_test errors when x and g lengths differ", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$levene_test(x = 1:10, g = rep("A", 8)),
+               "must have the same length")
+})
+
+test_that("HTestAnalyzer levene_test errors when fewer than 2 groups", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$levene_test(x = rnorm(10), g = rep("A", 10)),
+               "need at least 2 groups")
+})
+
+test_that("HTestAnalyzer levene_test errors when total n <= k", {
+  analyzer <- HTestAnalyzer$new()
+  # 2 groups, 1 observation each -> df_within = 0
+  expect_error(analyzer$levene_test(x = c(1, 2), g = c("A", "B")),
+               "not enough observations")
+})
+
+# ---- HTestAnalyzer: bartlett_test ----
+
+test_that("HTestAnalyzer bartlett_test returns stat_result (vector + grouping)", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- c(rnorm(20, sd = 1), rnorm(20, sd = 2), rnorm(20, sd = 3))
+  g <- rep(c("A", "B", "C"), each = 20)
+  result <- analyzer$bartlett_test(x = x, g = g)
+  expect_s3_class(result, "stat_result")
+  expect_s3_class(result, "htest_result")
+  expect_equal(result$test_type, "bartlett_test")
+  expect_equal(result$k, 3L)
+  expect_equal(result$dist_type, "chisq")
+  # stats::bartlett.test names the statistic "Bartlett's K-squared"
+  expect_true(grepl("K-squared", names(result$statistic)[1]))
+  expect_true("df" %in% names(result$parameter))
+  expect_equal(as.numeric(result$parameter["df"]), 2)           # k - 1
+  expect_length(result$group_n, 3)
+  expect_length(result$group_var, 3)
+  expect_true(!is.na(result$p.value))
+})
+
+test_that("HTestAnalyzer bartlett_test accepts list-of-vectors input", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  g1 <- rnorm(15, sd = 1)
+  g2 <- rnorm(15, sd = 1)
+  result <- analyzer$bartlett_test(x = list(g1, g2))
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$k, 2L)
+  expect_equal(as.numeric(result$parameter["df"]), 1)
+  # Equal variances -> should not reject
+  expect_true(result$p.value > 0.05)
+})
+
+test_that("HTestAnalyzer bartlett_test detects unequal variances", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  g1 <- rnorm(30, sd = 1)
+  g2 <- rnorm(30, sd = 5)
+  result <- analyzer$bartlett_test(x = list(g1, g2))
+  expect_true(result$p.value < 0.01)
+})
+
+test_that("HTestAnalyzer bartlett_test matches stats::bartlett.test", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  x <- c(rnorm(20, sd = 1), rnorm(20, sd = 2))
+  g <- rep(c("A", "B"), each = 20)
+  ref <- stats::bartlett.test(x, as.factor(g))
+  result <- analyzer$bartlett_test(x = x, g = g)
+  expect_equal(as.numeric(result$statistic[1]), as.numeric(ref$statistic))
+  expect_equal(result$p.value, ref$p.value)
+})
+
+test_that("HTestAnalyzer bartlett_test dispatches via analyze()", {
+  analyzer <- HTestAnalyzer$new()
+  set.seed(123)
+  g1 <- rnorm(15, sd = 1)
+  g2 <- rnorm(15, sd = 2)
+  result <- analyzer$analyze("bartlett_test", x = list(g1, g2))
+  expect_s3_class(result, "stat_result")
+  expect_equal(result$test_type, "bartlett_test")
+})
+
+# ---- HTestAnalyzer: bartlett_test input validation ----
+
+test_that("HTestAnalyzer bartlett_test errors when g is missing for vector x", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$bartlett_test(x = rnorm(20)),
+               "grouping vector 'g' is required")
+})
+
+test_that("HTestAnalyzer bartlett_test errors when x and g lengths differ", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$bartlett_test(x = 1:10, g = rep("A", 8)),
+               "must have the same length")
+})
+
+test_that("HTestAnalyzer bartlett_test errors when fewer than 2 groups", {
+  analyzer <- HTestAnalyzer$new()
+  expect_error(analyzer$bartlett_test(x = rnorm(10), g = rep("A", 10)),
+               "need at least 2 groups")
+})
+
+# ---- iqr_htest L3 integrator ----
+
+test_that("iqr_htest runs levene_test end-to-end", {
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  htest <- iqr_htest$new()
+  htest$run("levene_test", x = list(g1, g2))
+  expect_s3_class(htest$last_results, "stat_result")
+  expect_equal(htest$last_results$test_type, "levene_test")
+})
+
+test_that("iqr_htest runs bartlett_test end-to-end", {
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  htest <- iqr_htest$new()
+  htest$run("bartlett_test", x = list(g1, g2))
+  expect_s3_class(htest$last_results, "stat_result")
+  expect_equal(htest$last_results$test_type, "bartlett_test")
+})
+
+test_that("htest_run convenience function works for levene_test", {
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  result <- htest_run("levene_test", x = list(g1, g2))
+  expect_s3_class(result, "stat_result")
+})
+
+# ---- StatInterpreter ----
+
+test_that("StatInterpreter handles levene_test result (manager)", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  result <- analyzer$levene_test(x = list(g1, g2))
+  out <- interpreter$interpret(result, audience = "manager")
+  expect_type(out, "character")
+  expect_true(grepl("Variance Equality", out))
+  expect_true(grepl("P Value", out))
+})
+
+test_that("StatInterpreter handles bartlett_test result (technical)", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  result <- analyzer$bartlett_test(x = list(g1, g2))
+  out <- interpreter$interpret(result, audience = "technical")
+  expect_type(out, "character")
+  expect_true(grepl("K-squared|Bartlett", out))
+  expect_true(grepl("normality", out))
+})
+
+test_that("StatInterpreter variance-equality output includes per-group variances", {
+  analyzer <- HTestAnalyzer$new()
+  interpreter <- StatInterpreter$new()
+  set.seed(123)
+  x <- c(rnorm(15, sd = 1), rnorm(15, sd = 2))
+  g <- rep(c("A", "B"), each = 15)
+  result <- analyzer$levene_test(x = x, g = g)
+  out <- interpreter$interpret(result, audience = "manager")
+  expect_true(grepl("Per-Group Variances", out))
+  expect_true(grepl("Variance ratio", out))
+})
+
+# ---- HTestPlotter ----
+
+test_that("HTestPlotter auto-selects box for levene_test", {
+  skip_if_not_installed("iQualityR.plot")
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$levene_test(x = list(g1, g2))
+  p <- plotter$plot(result, plot_type = "auto")
+  expect_true(inherits(p, "ggplot"))
+})
+
+test_that("HTestPlotter renders bartlett_test box plot", {
+  skip_if_not_installed("iQualityR.plot")
+  set.seed(123)
+  g1 <- rnorm(20, sd = 1)
+  g2 <- rnorm(20, sd = 3)
+  plotter <- HTestPlotter$new()
+  result <- HTestAnalyzer$new()$bartlett_test(x = list(g1, g2))
+  p <- plotter$plot(result, plot_type = "box")
+  expect_true(inherits(p, "ggplot"))
+})
+
+test_that("HTestPlotter variance_box errors when data is missing", {
+  # Build a result without data$x / data$y to trigger the error path.
+  # Call plot_box() directly to bypass resolve_plot_type's curve fallback
+  # (which would otherwise redirect NULL-data results to plot_curve).
+  skip_if_not_installed("iQualityR.plot")
+  fake_result <- structure(
+    list(test_type = "levene_test", method = "Levene",
+         statistic = c(F = 1), parameter = c(num_df = 1, den_df = 10),
+         p.value = 0.5, group_var = c(1, 1), data = list(x = NULL, y = NULL)),
+    class = c("stat_result", "htest_result")
+  )
+  plotter <- HTestPlotter$new()
+  expect_error(plotter$plot_box(fake_result),
+               "requires data\\$x and data\\$y")
+})

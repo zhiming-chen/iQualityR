@@ -9,7 +9,46 @@
 #'
 #' @export
 NormalityReporter <- R6::R6Class("NormalityReporter",
+  inherit = StatReporter,
   public = list(
+    #' @description Unified report entry point (Contract 2 signature).
+    #'
+    #' Dispatches on `format`:
+    #' - `"console"`: prints a human-readable summary to stdout.
+    #' - `"data.frame"`: returns a tidy data frame.
+    #' - `"excel"`: writes a themed xlsx file via `ExcelExporter`.
+    #'
+    #' Legacy `$print_console` / `$to_dataframe` / `$to_excel` methods are kept
+    #' as thin wrappers for back-compat with existing callers.
+    #'
+    #' @param result A normality test result list (from `NormalityAnalyzer`).
+    #' @param format Output format: `"data.frame"` (default), `"console"`, or `"excel"`.
+    #' @param path File path for `format = "excel"`.
+    #' @param audience Audience level forwarded to the interpreter when
+    #'   `format = "console"`.
+    #' @return For `"data.frame"`: a data frame. For `"console"`/`"excel"`:
+    #'   invisible(NULL) / invisible(path).
+    report = function(result, format = c("data.frame", "console", "excel"),
+                      path = NULL, audience = "manager") {
+      format <- match.arg(format)
+      switch(format,
+        "console"    = self$print_console(result, audience = audience),
+        "data.frame" = self$to_dataframe(result),
+        "excel"      = {
+          if (!requireNamespace("iQualityR.core", quietly = TRUE)) {
+            stop("[NormalityReporter] iQualityR.core is required for Excel export.",
+                 call. = FALSE)
+          }
+          config <- IqrTheme$new("academic")$config
+          exporter <- iQualityR.core::ExcelExporter$new(config)
+          path <- path %||% "normality_report.xlsx"
+          self$to_excel(result, path = path, excel_exporter = exporter)
+          invisible(path)
+        },
+        stop("Unknown format: ", format)
+      )
+    },
+
     #' @description Print console report
     #' @param result Test result
     #' @param diagnose Diagnostic result (optional)
@@ -72,15 +111,23 @@ NormalityReporter <- R6::R6Class("NormalityReporter",
     },
 
     #' @description Convert results to data frame
-    #' @param results Test result list (supports multiple variables)
+    #' @param results Test result list (single result or list of results for multiple variables)
     #' @return Data frame
     to_dataframe = function(results) {
       if (!is.list(results) || length(results) == 0) {
         return(data.frame())
       }
 
-      # Single variable result
-      if (is.null(names(results)) || all(names(results) == "")) {
+      # Detect single result vs list-of-results.
+      # A single result carries scalar fields like $method / $test_type / $p.value
+      # directly at the top level; a batch result (from test_multiple) is a named
+      # list whose elements are each single-result lists. Without this check,
+      # iterating names() of a single result would treat atomic fields (e.g.
+      # test_type = "Normality Test") as result objects and crash on $error.
+      if (!is.null(results$method) || !is.null(results$test_type) || !is.null(results$p.value)) {
+        var_name <- results$variable %||% "Variable_1"
+        results <- stats::setNames(list(results), var_name)
+      } else if (is.null(names(results)) || all(names(results) == "")) {
         results <- list("Variable_1" = results)
       }
 

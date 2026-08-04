@@ -8,6 +8,7 @@ anova_run(
   formula,
   data,
   ...,
+  method = NULL,
   plot = FALSE,
   plot_type = "auto",
   interpret = FALSE,
@@ -21,6 +22,9 @@ anova_run(
 \item{data}{Data frame.}
 
 \item{...}{Additional arguments passed to AnovaAnalyzer.}
+
+\item{method}{Optional analysis method hint (\code{"anom"} for Analysis of
+Means; \code{NULL} auto-detects from the formula).}
 
 \item{plot}{Whether to auto-plot after analysis.}
 

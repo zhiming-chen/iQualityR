@@ -11,13 +11,76 @@ Responsible for outputting calculation results in table and text format, support
 \item Excel report export
 }
 }
+\section{Super classes}{
+\code{\link[iQualityR.core:IqrReporter]{iQualityR.core::IqrReporter}} -> \code{\link[iQualityR.stat:StatReporter]{iQualityR.stat::StatReporter}} -> \code{ProbReporter}
+}
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
+\item \href{#method-ProbReporter-report}{\code{ProbReporter$report()}}
 \item \href{#method-ProbReporter-print_console}{\code{ProbReporter$print_console()}}
 \item \href{#method-ProbReporter-to_dataframe}{\code{ProbReporter$to_dataframe()}}
 \item \href{#method-ProbReporter-export_excel}{\code{ProbReporter$export_excel()}}
 \item \href{#method-ProbReporter-clone}{\code{ProbReporter$clone()}}
+}
+}
+\if{html}{\out{
+<details open><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export'><code>iQualityR.core::IqrReporter$export()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export_rmd"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export_rmd'><code>iQualityR.core::IqrReporter$export_rmd()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="register"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-register'><code>iQualityR.core::IqrReporter$register()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="render"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-render'><code>iQualityR.core::IqrReporter$render()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatReporter" data-id="initialize"><a href='../../iQualityR.stat/html/StatReporter.html#method-StatReporter-initialize'><code>iQualityR.stat::StatReporter$initialize()</code></a></span></li>
+</ul>
+</details>
+}}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-ProbReporter-report"></a>}}
+\if{latex}{\out{\hypertarget{method-ProbReporter-report}{}}}
+\subsection{Method \code{report()}}{
+Unified report entry point (Contract 2 signature).
+
+Dispatches on \code{format}:
+\itemize{
+\item \code{"console"}: prints a human-readable summary to stdout.
+\item \code{"data.frame"}: returns a tidy data frame.
+\item \code{"excel"}: writes a themed xlsx file via \code{ExcelExporter}.
+}
+
+\code{result} may be either a list bundling \code{calc_results} and \code{nodes} (the
+natural L3 packaging), or the \code{calc_results} list directly with \code{nodes}
+supplied through \code{...} (needed only for Excel export).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{ProbReporter$report(
+  result,
+  format = c("data.frame", "console", "excel"),
+  path = NULL,
+  audience = "manager",
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{result}}{A list with \verb{$calc_results} and optionally \verb{$nodes}, or the
+\code{calc_results} list directly.}
+
+\item{\code{format}}{Output format: \code{"data.frame"} (default), \code{"console"}, or \code{"excel"}.}
+
+\item{\code{path}}{File path for \code{format = "excel"}.}
+
+\item{\code{audience}}{Audience level (reserved for future interpretation sheet).}
+
+\item{\code{...}}{Backward-compat channel: \code{nodes} is extracted from here when
+not bundled in \code{result} (required for Excel export).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+For \code{"data.frame"}: a data frame. For \code{"console"}/\code{"excel"}:
+invisible(NULL) / invisible(path).
 }
 }
 \if{html}{\out{<hr>}}

@@ -42,6 +42,73 @@ test_that("sigma_estimate moving range without subgroup", {
   expect_gt(result, 0)
 })
 
+test_that("sigma_estimate with n_size parameter", {
+  set.seed(123)
+  x <- rnorm(50, mean = 10, sd = 2)
+  result <- sigma_estimate(x, n_size = 5, method = "r_bar")
+  expect_type(result, "double")
+  expect_gt(result, 0)
+})
+
+test_that("sigma_estimate with data.frame input", {
+  set.seed(123)
+  x <- rnorm(50, mean = 10, sd = 2)
+  subgroup <- rep(1:10, each = 5)
+  df <- data.frame(value = x, group = subgroup)
+  result <- sigma_estimate(df, x_col = "value", subgroup_col = "group",
+                           method = "pooled_s")
+  expect_type(result, "double")
+  expect_gt(result, 0)
+})
+
+test_that("sigma_estimate data.frame input errors without column names", {
+  df <- data.frame(value = 1:10, group = rep(1:2, each = 5))
+  expect_error(sigma_estimate(df, method = "r_bar"), "x_col")
+})
+
+test_that("sigma_estimate errors on subgroup length mismatch", {
+  x <- rnorm(10)
+  subgroup <- rep(1:2, each = 4)  # length 8, not 10
+  expect_error(sigma_estimate(x, subgroup = subgroup, method = "r_bar"),
+               "mismatch")
+})
+
+test_that("sigma_estimate with use_unbiased=FALSE", {
+  set.seed(123)
+  x <- rnorm(50, mean = 10, sd = 2)
+  subgroup <- rep(1:10, each = 5)
+  res_unbiased <- sigma_estimate(x, subgroup = subgroup, method = "s_bar",
+                                  use_unbiased = TRUE)
+  res_biased <- sigma_estimate(x, subgroup = subgroup, method = "s_bar",
+                                use_unbiased = FALSE)
+  # Unbiased should generally be larger (dividing by c4 < 1)
+  expect_true(is.numeric(res_unbiased))
+  expect_true(is.numeric(res_biased))
+})
+
+test_that("sigma_decomposition returns data.frame with all components", {
+  set.seed(123)
+  between_var <- rnorm(10, mean = 0, sd = 1.5)
+  data <- unlist(lapply(between_var, function(x) rnorm(5, mean = x, sd = 1)))
+  subgroup <- rep(1:10, each = 5)
+  result <- sigma_decomposition(data, subgroup = subgroup)
+  expect_s3_class(result, "data.frame")
+  expect_true("sigma_within" %in% names(result))
+  expect_true("sigma_between" %in% names(result))
+  expect_true("sigma_between_within" %in% names(result))
+  expect_true("sigma_total" %in% names(result))
+  expect_true("n_subgroup" %in% names(result))
+  expect_equal(result$n_subgroup, 5)
+})
+
+test_that("sigma_decomposition with n_size parameter", {
+  set.seed(123)
+  x <- rnorm(50, mean = 10, sd = 2)
+  result <- sigma_decomposition(x, n_size = 5)
+  expect_s3_class(result, "data.frame")
+  expect_equal(result$n_subgroup, 5)
+})
+
 # ----------------------------------------------------------------------------
 # SPC constants (constant.R)
 # ----------------------------------------------------------------------------

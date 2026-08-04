@@ -126,6 +126,14 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
                     "non_inferiority", "superiority")) {
         return("curve")
       }
+      # Correlation tests: scatter plot is the natural visualization
+      if (tt %in% c("cor_test_pearson", "cor_test_spearman", "cor_test_kendall")) {
+        return("box")
+      }
+      # Variance-equality tests: grouped boxplot of the raw data
+      if (tt %in% c("levene_test", "bartlett_test")) {
+        return("box")
+      }
       "combined"
     },
 
@@ -147,6 +155,13 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
              identical(result$type, "proportion"))) {
           warning("[HTestPlotter] plot_type = '", plot_type,
                   "' not available for '", tt, "' (proportion). Falling back to 'curve'.",
+                  call. = FALSE)
+          return("curve")
+        }
+        # Poisson tests are summary-only; no raw data for box / combined
+        if (tt %in% c("poisson_test_1s", "poisson_test_2s")) {
+          warning("[HTestPlotter] plot_type = '", plot_type,
+                  "' not available for '", tt, "'. Falling back to 'curve'.",
                   call. = FALSE)
           return("curve")
         }
@@ -221,6 +236,11 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
       # --- Poisson rate tests: summary-only, text panel ---
       if (tt %in% c("poisson_test_1s", "poisson_test_2s")) {
         return(private$.poisson_text_panel(result, theme))
+      }
+
+      # --- Correlation tests: text panel summary (scatter handled by box) ---
+      if (tt %in% c("cor_test_pearson", "cor_test_spearman", "cor_test_kendall")) {
+        return(private$.cor_text_panel(result, theme))
       }
 
       stop("[HTestPlotter] Unsupported test_type: ", tt, call. = FALSE)
@@ -318,6 +338,16 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
       # --- Friedman: per-block treatment profile (inline) ---
       if (tt == "friedman") {
         return(private$.friedman_profile(result, theme))
+      }
+
+      # --- Correlation tests: scatter plot with smooth fit ---
+      if (tt %in% c("cor_test_pearson", "cor_test_spearman", "cor_test_kendall")) {
+        return(private$.cor_scatter(result, theme))
+      }
+
+      # --- Variance-equality tests: grouped boxplot across k groups ---
+      if (tt %in% c("levene_test", "bartlett_test")) {
+        return(private$.variance_box(result, show_table, theme))
       }
 
       # --- TOST mean (one-sample with raw x): box plot vs reference mu ---
@@ -478,6 +508,83 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
         )
     },
 
+    # Correlation test text-panel fallback (used when plot_type = "curve").
+    # Shows the estimate, statistic, p-value, and CI (if any).
+    .cor_text_panel = function(result, theme) {
+      p_val <- result$p.value
+      ci <- result$conf.int
+      stat_vals <- result$statistic
+      stat_name <- names(stat_vals)[1] %||% "statistic"
+      stat_str <- sprintf("%s = %.4f", stat_name, as.numeric(stat_vals[1]))
+
+      est_name <- names(result$estimate)[1] %||% "estimate"
+      est_str <- sprintf("%s = %.4f", est_name, as.numeric(result$estimate[1]))
+
+      ci_str <- if (!is.null(ci) && length(ci) == 2L)
+        sprintf("\n%.1f%% CI: [%.4f, %.4f]",
+                100 * (result$conf.level %||% 0.95), ci[1], ci[2]) else ""
+
+      df_str <- if (!is.null(result$parameter) && length(result$parameter) > 0L)
+        sprintf("\n%s = %s",
+                names(result$parameter)[1],
+                format(result$parameter[1])) else ""
+
+      label <- sprintf("%s\n%s\n%s\np-value = %.4f%s%s",
+                       result$method %||% result$test_type,
+                       stat_str, est_str, p_val, df_str, ci_str)
+
+      ggplot2::ggplot(data.frame(x = 0, y = 0, label = label)) +
+        ggplot2::geom_text(ggplot2::aes(x = x, y = y, label = label),
+                           size = 4, hjust = 0.5) +
+        ggplot2::theme_void() +
+        ggplot2::labs(
+          title = result$method %||% result$test_type,
+          caption = "Correlation test summary."
+        )
+    },
+
+    # Correlation scatter plot with optional linear fit.  Used for both
+    # box / auto / combined dispatch for all three correlation methods.
+    .cor_scatter = function(result, theme) {
+      x <- result$data$x
+      y <- result$data$y
+      if (is.null(x) || is.null(y)) {
+        stop("[HTestPlotter] correlation scatter requires data$x and data$y.",
+             call. = FALSE)
+      }
+      df_plot <- data.frame(x = as.numeric(x), y = as.numeric(y))
+
+      est_name <- names(result$estimate)[1] %||% "estimate"
+      est_val <- as.numeric(result$estimate[1])
+      p_val <- result$p.value
+      stat_val <- as.numeric(result$statistic[1])
+      stat_name <- names(result$statistic)[1] %||% "statistic"
+
+      subtitle <- sprintf("%s = %.4f, %s = %.4f, p-value = %.4f",
+                          est_name, est_val, stat_name, stat_val, p_val)
+
+      p <- ggplot2::ggplot(df_plot, ggplot2::aes(x = x, y = y)) +
+        ggplot2::geom_point(alpha = 0.6, size = 2.0) +
+        ggplot2::labs(
+          title = result$method %||% result$test_type,
+          subtitle = subtitle,
+          x = "x", y = "y"
+        ) +
+        ggplot2::theme_minimal()
+
+      # Add a smooth fit only for Pearson (linear). For Spearman/Kendall a
+      # linear fit can be misleading on monotonic-but-nonlinear relations.
+      if (result$test_type == "cor_test_pearson") {
+        p <- p + ggplot2::geom_smooth(method = "lm", se = TRUE,
+                                      colour = "steelblue", fill = "lightblue",
+                                      alpha = 0.2)
+      } else {
+        p <- p + ggplot2::geom_smooth(method = "loess", se = FALSE,
+                                      colour = "darkorange")
+      }
+      p
+    },
+
     # Kruskal-Wallis: grouped box plot across k groups.
     .kruskal_box = function(result, show_table, theme) {
       x <- result$data$x
@@ -532,6 +639,67 @@ HTestPlotter <- R6::R6Class("HTestPlotter",
           x = "Treatment", y = "Response", colour = "Block"
         ) +
         ggplot2::theme_minimal()
+    },
+
+    # Levene / Bartlett: grouped boxplot across k groups with per-group
+    # variances annotated. Visualizes the spread difference that the test
+    # quantifies.
+    .variance_box = function(result, show_table, theme) {
+      x <- result$data$x
+      g <- result$data$y
+      if (is.null(x) || is.null(g)) {
+        stop("[HTestPlotter] variance-equality test requires data$x and data$y (grouping).",
+             call. = FALSE)
+      }
+      g <- as.factor(g)
+      df_plot <- data.frame(value = as.numeric(x), group = g)
+
+      stat_name <- names(result$statistic)[1] %||% "statistic"
+      stat_val  <- as.numeric(result$statistic[1])
+      p_val     <- result$p.value
+      group_var <- result$group_var
+
+      # Subtitle carries the test statistic and p-value
+      param_str <- if (!is.null(result$parameter) && length(result$parameter) > 0L) {
+        paste(names(result$parameter), as.integer(result$parameter),
+              sep = " = ", collapse = ", ")
+      } else {
+        ""
+      }
+      subtitle <- sprintf("%s = %.4f%s, p-value = %.4f",
+                          stat_name, stat_val,
+                          if (nzchar(param_str)) paste0(", ", param_str) else "",
+                          p_val)
+
+      p <- ggplot2::ggplot(df_plot,
+                           ggplot2::aes(x = group, y = value, fill = group)) +
+        ggplot2::geom_boxplot(alpha = 0.7) +
+        ggplot2::geom_jitter(width = 0.15, alpha = 0.5, size = 1.2) +
+        ggplot2::labs(
+          title = result$method %||% result$test_type,
+          subtitle = subtitle,
+          x = "Group", y = "Value"
+        ) +
+        ggplot2::theme_minimal() +
+        ggplot2::theme(legend.position = "none")
+
+      # Annotate per-group variance below each group label
+      if (!is.null(group_var) && length(group_var) > 0L) {
+        var_labels <- sprintf("var = %.3f", as.numeric(group_var))
+        df_anno <- data.frame(
+          group = factor(names(group_var), levels = levels(g)),
+          label = var_labels
+        )
+        p <- p + ggplot2::annotate(
+          "text",
+          x = seq_along(levels(g)),
+          y = -Inf, vjust = -1.5,
+          label = var_labels,
+          size = 3.2
+        )
+      }
+
+      p
     }
   )
 )

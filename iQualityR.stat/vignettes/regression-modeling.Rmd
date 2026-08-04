@@ -1,0 +1,1017 @@
+---
+title: "Regression Modelling, Diagnostics, and Outlier Detection"
+author: "iQualityR.stat Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Regression Modelling, Diagnostics, and Outlier Detection}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.stat)
+library(iQualityR.plot)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Regression modelling is the workhorse of quality engineering: it quantifies
+how a critical-to-quality (CTQ) response depends on controllable process
+variables, predicts outcomes at untested settings, and flags observations that
+deviate from the fitted relationship. This vignette covers three related
+modules of `iQualityR.stat`:
+
+- **Regression fitting** — nine model types from OLS to MARS, accessed through
+  `iqr_regression` / `regression_run()`.
+- **Diagnostics** — formal tests of the LINE assumptions (Linearity,
+  Independence, Normality, Equal variance) plus multicollinearity and
+  influential-point detection, accessed through `diagnose_lm()` and family.
+- **Outlier detection** — six methods from the simple IQR fence to the
+  multivariate Mahalanobis distance, accessed through `detect_outliers_*()`.
+
+Together these tools implement the Plan -> Task -> Analysis -> Summary/Plot ->
+Report workflow for the regression layer: fit a model, check its assumptions,
+identify unusual observations, and export a report.
+
+## 2. Theory: Regression in Quality Engineering
+
+### 2.1 The linear model and OLS
+
+The classical linear regression model is:
+
+$$
+y_i = \beta_0 + \beta_1 x_{i1} + \dots + \beta_p x_{ip} + \varepsilon_i, \qquad
+\varepsilon_i \stackrel{iid}{\sim} N(0, \sigma^2)
+$$
+
+The ordinary least squares (OLS) estimator minimises the residual sum of
+squares:
+
+$$
+\hat{\boldsymbol\beta} = \arg\min_{\boldsymbol\beta} \sum_{i=1}^n (y_i - \mathbf{x}_i^\top \boldsymbol\beta)^2
+= (\mathbf{X}^\top \mathbf{X})^{-1} \mathbf{X}^\top \mathbf{y}
+$$
+
+The coefficient standard errors are the square roots of the diagonal of
+$\hat\sigma^2 (\mathbf{X}^\top \mathbf{X})^{-1}$, where
+$\hat\sigma^2 = SS_{res} / (n - p - 1)$.
+
+### 2.2 The LINE assumptions
+
+| Assumption | Meaning | Diagnostic |
+|------------|---------|------------|
+| **L**inearity | $E(y \mid x)$ is a linear function of the $\beta$'s | Residuals vs fitted (no curve) |
+| **I**ndependence | Observations are uncorrelated | Design (randomization); Durbin-Watson |
+| **N**ormality | $\varepsilon_i \sim N(0, \sigma^2)$ | Q-Q plot of residuals; Shapiro-Wilk / Anderson-Darling |
+| **E**qual variance | $\text{Var}(\varepsilon_i)$ is constant | Scale-location plot; Breusch-Pagan / NCV / White |
+
+Violations do not bias $\hat{\boldsymbol\beta}$ (OLS is unbiased under
+exogeneity alone) but they invalidate the standard errors, confidence
+intervals, and p-values. The diagnostics in Section 11 surface each violation
+with a formal test.
+
+### 2.3 Generalized linear models (GLM)
+
+When the response is binary (pass/fail), a count (defects), or a positive
+continuous, the normality and equal-variance assumptions fail by construction.
+A GLM replaces the normal likelihood with a member of the exponential family
+and links the mean to the linear predictor via a link function $g$:
+
+$$
+g(E(y \mid \mathbf{x})) = \mathbf{x}^\top \boldsymbol\beta
+$$
+
+| Response | Family | Link | `model_type` |
+|----------|--------|------|--------------|
+| Binary (0/1) | Binomial | logit | `logit_fit` |
+| Count ($0, 1, 2, \dots$) | Poisson | log | `poisson_fit` |
+| Time-to-event (censored) | Cox PH | log-hazard | `cox_fit` |
+
+Coefficients in GLMs are estimated by maximum likelihood (iteratively
+reweighted least squares), and inference uses asymptotic (Wald) standard
+errors.
+
+### 2.4 Interpreting coefficients on the natural scale
+
+| Model | Coefficient $\hat\beta_j$ | Natural-scale interpretation |
+|-------|--------------------------|------------------------------|
+| OLS | slope | $\Delta y$ per unit $\Delta x_j$ |
+| Logistic | log-odds | $\exp(\hat\beta_j)$ = odds ratio (OR) |
+| Poisson | log-rate | $\exp(\hat\beta_j)$ = rate ratio (IRR) |
+| Cox | log-hazard | $\exp(\hat\beta_j)$ = hazard ratio (HR) |
+
+The `iqr_regression` module returns these exponentiated quantities and their
+confidence intervals alongside the raw coefficients for GLM family models.
+
+### 2.5 Model selection: stepwise and best-subset
+
+When many candidate predictors are available, two complementary strategies
+apply:
+
+- **Stepwise** (`stepwise_fit`): greedily adds/removes terms by AIC
+  ($k = 2$) or BIC ($k = \log n$). Fast, but can miss the global optimum.
+- **Best-subset** (`best_subset_fit`): evaluates all $2^p$ subsets of
+  predictors and reports the best model at each subset size (by $R^2$,
+  adjusted $R^2$, $C_p$, BIC). Exhaustive but feasible only for $p \lesssim 30$.
+
+### 2.6 Nonlinear and flexible regression
+
+When the relationship is nonlinear, two options avoid manual polynomial
+specification:
+
+- **Spline regression** (`spline_fit`): fits a B-spline or natural-spline
+  basis of specified degrees of freedom. Local and interpretable.
+- **MARS** (`mars_fit`): Multivariate Adaptive Regression Splines automatically
+  discovers hinge functions and interactions. Global, flexible, but less
+  interpretable.
+
+## 3. The iqr_regression Class — Nine Model Types
+
+All nine model types share one R6 entry point:
+
+```r
+obj <- iqr_regression$new(theme = "academic")
+obj$run("lm_fit", formula = y ~ x1 + x2, data = df)
+obj$plot(plot_type = "auto")
+obj$interpret(audience = "manager")
+obj$report(format = "data.frame")
+```
+
+### 3.1 Method reference
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `$new()` | `theme = "academic"` | `iqr_regression` object |
+| `$run()` | `model_type, ..., plot = FALSE, plot_type = "auto", interpret = FALSE, audience = "manager"` | invisible `self` |
+| `$plot()` | `plot_type = "auto", show_table = FALSE, theme_obj = NULL` | ggplot |
+| `$interpret()` | `audience = "manager"` | character string |
+| `$report()` | `format = c("data.frame","console","excel"), path = NULL, audience = "manager"` | data.frame or NULL |
+| `$analyze()` | `model_type, ..., plot_type = "auto", audience = "manager"` | one-click run+plot+interpret |
+| `$set_theme()` | `theme_style = NULL` | invisible `self` |
+
+### 3.2 The nine `model_type` codes
+
+| Code | Underlying R fit | Required package | Typical quality use case |
+|------|------------------|------------------|--------------------------|
+| `lm_fit` | `stats::lm` | base | Process modelling, calibration curves |
+| `logit_fit` | `stats::glm(binomial)` | base | Pass/fail yield modelling |
+| `poisson_fit` | `stats::glm(poisson)` | base | Defect-count modelling |
+| `cox_fit` | `survival::coxph` | survival | Reliability / time-to-failure |
+| `pls_fit` | `pls::plsr` | pls | Spectroscopic calibration, collinear predictors |
+| `stepwise_fit` | `MASS::stepAIC` | MASS | Variable selection by AIC/BIC |
+| `best_subset_fit` | `leaps::regsubsets` | leaps | Exhaustive subset search |
+| `mars_fit` | `earth::earth` | earth | Flexible nonlinear fitting |
+| `spline_fit` | `stats::lm` + `splines::bs`/`ns` | splines | Smooth nonlinear curves |
+
+### 3.3 Result structure
+
+Every `model_type` returns a `stat_result` S3 object
+(`c("stat_result", "regression_result")`) with these core fields:
+
+| Field | Content |
+|-------|---------|
+| `test_type` | The model-type code |
+| `method` | Human-readable method name |
+| `model` | The raw fitted model object (lm, glm, coxph, etc.) |
+| `coefficients` | data.frame: `Term, Estimate, Std_Error, Statistic, p_value` |
+| `model_stats` | List: `n`, `r_squared`, `adj_r_squared`, `sigma`, `aic`, `bic`, ... |
+| `fitted`, `residuals` | Numeric vectors |
+| `formula` | The model formula |
+
+GLM family models add exponentiated coefficient summaries:
+`odds_ratios`/`odds_ratio_ci` (logit), `rate_ratios`/`rate_ratio_ci` (poisson),
+`hazard_ratios`/`hazard_ratio_ci` (cox).
+
+### 3.4 Plot types
+
+| `plot_type` | What it shows |
+|-------------|---------------|
+| `"auto"` | Smart selection based on model type |
+| `"residual"` | Residuals vs fitted with loess smooth |
+| `"coef"` | Forest plot of coefficients $\pm$ 1.96 SE |
+| `"subset"` | BIC vs number of predictors (best-subset only) |
+| `"roc"` | ROC curve + AUC (logit only) |
+| `"pr"` | Precision-Recall curve (logit only) |
+| `"lift"` | Lift / cumulative-capture curve (logit only) |
+| `"spline"` | Scatter + fitted curve (spline / MARS only) |
+
+## 4. Quality Scenario 1 — OLS for Process Modelling (lm_fit)
+
+### 4.1 Business context
+
+A polymer-compounding plant produces an elastomer whose **Mooney viscosity**
+(target $45 \pm 5$ ML) is the primary CTQ. The process engineer hypothesises
+that viscosity is driven by **reaction temperature** (°C) and **catalyst
+concentration** (phr). Data from 30 production runs is collected; the goal is
+to fit a predictive model, check the assumptions, and estimate the effect of
+each factor.
+
+The data below mirrors a real elastomer-process study: temperature
+155–185 °C, catalyst 0.8–1.6 phr, viscosity approximately linear in both
+factors with mild interaction, residual SD ~ 1.2 ML.
+
+```{r viscosity_setup}
+set.seed(23)
+n <- 30
+temp <- runif(n, 155, 185)
+catalyst <- runif(n, 0.8, 1.6)
+# True model: viscosity = -20 + 0.35*temp + 12*catalyst + 0.5*temp*catalyst/10
+viscosity <- -20 + 0.35 * temp + 12 * catalyst +
+             0.05 * (temp - 170) * (catalyst - 1.2) +
+             rnorm(n, 0, 1.2)
+polymer <- data.frame(viscosity = round(viscosity, 2),
+                       temp = round(temp, 1),
+                       catalyst = round(catalyst, 3))
+head(polymer, 5)
+```
+
+### 4.2 Fit and inspect
+
+```{r viscosity_lm}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("lm_fit", formula = viscosity ~ temp + catalyst, data = polymer)
+r <- rg$last_results
+
+cat("== Coefficients ==\n")
+print(r$coefficients)
+cat(sprintf("\nR-squared = %.4f, Adj R-squared = %.4f\n",
+            r$model_stats$r_squared, r$model_stats$adj_r_squared))
+cat(sprintf("Residual SE (sigma) = %.4f, n = %d\n",
+            r$model_stats$sigma, r$model_stats$n))
+cat(sprintf("AIC = %.2f, BIC = %.2f\n",
+            r$model_stats$aic, r$model_stats$bic))
+```
+
+### 4.3 Interpretation
+
+```{r viscosity_interpret}
+rg$interpret(audience = "manager")
+```
+
+### 4.4 Residual diagnostics plot
+
+```{r viscosity_residual_plot, fig.cap="OLS residual diagnostics: residuals vs fitted with loess smooth."}
+rg$plot(plot_type = "residual")
+```
+
+```{r viscosity_coef_plot, fig.cap="Coefficient forest plot: point estimates with 1.96 SE bars."}
+rg$plot(plot_type = "coef")
+```
+
+## 5. Quality Scenario 2 — Logistic Regression for Pass/Fail Yield (logit_fit)
+
+### 5.1 Business context
+
+A semiconductor wafer fab tracks **die yield** (pass/fail at final test) as a
+function of **deposition temperature** (°C) and **chamber pressure** (mTorr).
+Each wafer is one observation (pass = 1, fail = 0). The process engineer
+wants to model the probability of a passing die as a function of the two
+process variables, and to identify the settings that maximise yield.
+
+The data below mirrors a realistic semiconductor yield study: 120 wafers,
+temperature centred at 450 °C, pressure at 5 mTorr, with a positive
+temperature effect and a negative pressure effect on yield probability.
+
+```{r yield_setup}
+set.seed(29)
+n_wafer <- 120
+dep_temp <- rnorm(n_wafer, 450, 8)
+chamber_pressure <- rnorm(n_wafer, 5.0, 0.4)
+# Logit of pass probability: linear in both factors
+logit_p <- -12 + 0.025 * dep_temp - 0.8 * chamber_pressure
+p_pass <- 1 / (1 + exp(-logit_p))
+pass <- rbinom(n_wafer, 1, p_pass)
+wafer <- data.frame(pass = pass,
+                    dep_temp = round(dep_temp, 1),
+                    pressure = round(chamber_pressure, 3))
+cat(sprintf("Overall pass rate: %.1f%%\n", 100 * mean(pass)))
+```
+
+### 5.2 Fit and inspect
+
+```{r yield_logit}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("logit_fit", formula = pass ~ dep_temp + pressure, data = wafer)
+r2 <- rg$last_results
+
+cat("== Coefficients ==\n")
+print(r2$coefficients)
+cat("\n== Odds Ratios with 95% CI ==\n")
+or_df <- data.frame(
+  Term = names(r2$odds_ratios),
+  OR = round(r2$odds_ratios, 4),
+  OR_lower = round(r2$odds_ratio_ci[, 1], 4),
+  OR_upper = round(r2$odds_ratio_ci[, 2], 4)
+)
+print(or_df)
+cat(sprintf("\nAIC = %.2f, Deviance = %.2f, Null deviance = %.2f\n",
+            r2$model_stats$aic, r2$model_stats$deviance,
+            r2$model_stats$null_deviance))
+```
+
+### 5.3 ROC curve and AUC
+
+```{r yield_roc, fig.cap="ROC curve for the logistic yield model. AUC summarises discrimination."}
+rg$plot(plot_type = "roc")
+```
+
+### 5.4 Interpretation
+
+The odds ratio for `dep_temp` is the factor by which the **odds** of a passing
+die multiply for each 1 °C increase in deposition temperature, holding pressure
+constant. An OR > 1 means higher temperature improves yield; an OR < 1 means it
+hurts. The 95 % CI not crossing 1 is equivalent to the Wald p-value being
+below 0.05.
+
+## 6. Quality Scenario 3 — Poisson Regression for Defect Counts (poisson_fit)
+
+### 6.1 Business context
+
+A PCB fabricator monitors **solder-defect counts per panel** as a function of
+**line speed** (m/min) and **solder-paste viscosity** (Pa·s). Higher line speed
+is expected to increase defects; higher paste viscosity may reduce them. The
+response is a count (0, 1, 2, ...), so a Poisson GLM with log link is the
+natural choice. The rate ratio (IRR) quantifies the multiplicative effect of
+each factor on the defect rate.
+
+```{r defects_setup}
+set.seed(31)
+n_panels <- 80
+line_speed <- runif(n_panels, 0.8, 1.6)
+paste_visc <- runif(n_panels, 180, 240)
+# Log-rate model: log(lambda) = 1.5 + 1.2*speed - 0.015*visc
+log_rate <- 1.5 + 1.2 * line_speed - 0.015 * paste_visc
+defects <- rpois(n_panels, exp(log_rate))
+pcb <- data.frame(defects = defects,
+                  line_speed = round(line_speed, 2),
+                  paste_visc = round(paste_visc, 1))
+cat(sprintf("Mean defects/panel = %.2f (range %d-%d)\n",
+            mean(defects), min(defects), max(defects)))
+```
+
+### 6.2 Fit and inspect
+
+```{r defects_poisson}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("poisson_fit", formula = defects ~ line_speed + paste_visc, data = pcb)
+r3 <- rg$last_results
+
+cat("== Coefficients ==\n")
+print(r3$coefficients)
+cat("\n== Rate Ratios (IRR) with 95% CI ==\n")
+irr_df <- data.frame(
+  Term = names(r3$rate_ratios),
+  IRR = round(r3$rate_ratios, 4),
+  IRR_lower = round(r3$rate_ratio_ci[, 1], 4),
+  IRR_upper = round(r3$rate_ratio_ci[, 2], 4)
+)
+print(irr_df)
+```
+
+The IRR for `line_speed` is the factor by which the defect **rate** multiplies
+for each 1 m/min increase in line speed. An IRR of 3.0, for example, means
+doubling the speed triples the expected defect count per panel, all else equal.
+
+## 7. Quality Scenario 4 — Variable Selection (stepwise_fit and best_subset_fit)
+
+### 7.1 Business context
+
+A chemical process has six candidate predictors (temperature, pressure, flow
+rate, catalyst concentration, reactor volume, agitation speed) and one response
+(yield %). The engineer wants to find the most parsimonious model that
+explains yield, avoiding overfitting. Two complementary strategies apply:
+stepwise AIC selection and exhaustive best-subset by BIC.
+
+```{r selection_setup}
+set.seed(37)
+n_batch <- 50
+process <- data.frame(
+  yield = round(72 + 0.4 * (temp <- runif(n_batch, 150, 200)) +
+                    0.02 * (press <- runif(n_batch, 10, 30)) +
+                    1.5 * (flow <- runif(n_batch, 2, 6)) +
+                    rnorm(n_batch, 0, 1.5), 2),
+  temp = round(temp, 1),
+  pressure = round(press, 1),
+  flow = round(flow, 2),
+  catalyst = round(runif(n_batch, 0.5, 1.5), 2),
+  volume = round(runif(n_batch, 4, 8), 1),
+  agitation = round(runif(n_batch, 100, 300), 0)
+)
+```
+
+### 7.2 Stepwise selection by AIC
+
+```{r stepwise}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("stepwise_fit",
+       formula = yield ~ temp + pressure + flow + catalyst + volume + agitation,
+       data = process, direction = "both", k = 2)
+r4 <- rg$last_results
+cat("Selected terms:", paste(r4$selected_terms, collapse = ", "), "\n\n")
+print(r4$coefficients)
+cat(sprintf("\nR-squared = %.4f, AIC = %.2f\n",
+            r4$model_stats$r_squared, r4$model_stats$aic))
+```
+
+### 7.3 Best-subset selection by BIC
+
+```{r best_subset}
+rg$run("best_subset_fit",
+       formula = yield ~ temp + pressure + flow + catalyst + volume + agitation,
+       data = process, nvmax = 6)
+r5 <- rg$last_results
+
+# The subset_summary data.frame shows the best model at each subset size.
+print(r5$subset_summary)
+
+cat(sprintf("\nBest by BIC: %d variables (%s)\n",
+            r5$best_by_bic$n_vars,
+            paste(r5$best_by_bic$variables, collapse = ", ")))
+cat(sprintf("BIC = %.2f, R-squared = %.4f\n",
+            r5$best_by_bic$bic, r5$best_by_bic$r_squared))
+```
+
+```{r best_subset_plot, fig.cap="Best-subset selection: BIC vs number of predictors. The minimum identifies the most parsimonious adequate model."}
+rg$plot(plot_type = "subset")
+```
+
+**Note.** `best_subset_fit` returns `NULL` for `coefficients`, `fitted`, and
+`residuals` (it does not refit the selected model). To obtain coefficient
+estimates for the chosen subset, refit with `lm_fit` using only the selected
+variables.
+
+## 8. Quality Scenario 5 — Spline Regression for Nonlinear Tool Wear (spline_fit)
+
+### 8.1 Business context
+
+A CNC turning operation studies **tool flank wear** (mm) as a function of
+**cutting distance** (m). The wear curve is known to be nonlinear: an initial
+break-in region (steep), a steady-state region (shallow), and an accelerated
+wear region (steep again). A linear model would misfit; a B-spline with
+moderate degrees of freedom captures the shape without manual knot placement.
+
+The data below mirrors a Taylor-type tool-wear study: 40 measurements over
+0–800 m of cutting distance, with the characteristic three-region shape.
+
+```{r wear_setup}
+set.seed(41)
+distance <- seq(10, 800, length.out = 40)
+# True wear: piecewise - break-in, steady, accelerated
+wear_true <- 0.05 + 0.0008 * distance +
+             0.0000015 * pmax(distance - 300, 0)^2
+wear <- wear_true + rnorm(40, 0, 0.012)
+tool <- data.frame(wear = round(wear, 4), distance = round(distance, 1))
+```
+
+### 8.2 Fit a B-spline
+
+```{r wear_spline}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("spline_fit", formula = wear ~ distance, data = tool,
+       df = 5, basis = "bs", degree = 3)
+r6 <- rg$last_results
+cat("Method:", r6$method, "\n")
+cat(sprintf("R-squared = %.4f, Residual SE = %.4f\n",
+            r6$model_stats$r_squared, r6$model_stats$sigma))
+cat("Spline predictor:", r6$spline_predictor, "\n")
+cat("Spline df:", r6$spline_df, " basis:", r6$spline_basis, "\n")
+```
+
+```{r wear_spline_plot, fig.cap="Spline regression: observed tool wear vs cutting distance with the fitted B-spline curve."}
+rg$plot(plot_type = "spline")
+```
+
+For a natural spline (linear tail constraint, better extrapolation), set
+`basis = "ns"`.
+
+## 9. Quality Scenario 6 — PLS and MARS for Spectroscopic Calibration
+
+### 9.1 PLS for collinear predictors (pls_fit)
+
+Near-infrared (NIR) spectroscopy produces hundreds of highly collinear
+absorbance values; OLS fails because $\mathbf{X}^\top \mathbf{X}$ is
+near-singular. Partial Least Squares extracts orthogonal latent components
+that maximise covariance with the response, producing a stable calibration
+even with $p \gg n$.
+
+```{r pls_setup}
+# PLS regression requires the pls package (Suggests dependency)
+library(pls)
+set.seed(43)
+n_spec <- 60
+n_wave <- 20
+# 20 highly correlated "wavelength" channels (simulated NIR)
+base <- matrix(rnorm(n_spec * 3), n_spec, 3)
+loading <- matrix(runif(3 * n_wave, 0.5, 1.5), 3, n_wave)
+X <- base %*% loading + matrix(rnorm(n_spec * n_wave, 0, 0.1), n_spec, n_wave)
+colnames(X) <- paste0("wl", 1:n_wave)
+moisture <- 3 + 0.5 * base[, 1] - 0.3 * base[, 2] + rnorm(n_spec, 0, 0.15)
+nir <- as.data.frame(cbind(moisture = round(moisture, 3), round(X, 3)))
+```
+
+```{r pls_fit}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("pls_fit",
+       formula = moisture ~ ., data = nir, ncomp = 3)
+r7 <- rg$last_results
+cat("Method:", r7$method, "\n")
+cat(sprintf("X explained variance: %s\n",
+            paste(round(r7$model_stats$x_explained_var, 2), collapse = ", ")))
+cat(sprintf("RMSEP (CV): %.4f\n", r7$model_stats$rmsep_cv))
+```
+
+### 9.2 MARS for flexible nonlinear modelling (mars_fit)
+
+```{r mars_fit}
+rg$run("mars_fit",
+       formula = wear ~ distance, data = tool,
+       degree = 1)
+r8 <- rg$last_results
+cat("Method:", r8$method, "\n")
+cat(sprintf("Generalized R-squared = %.4f, GCV = %.4f, n_terms = %d\n",
+            r8$model_stats$generalized_rsq, r8$model_stats$gcv,
+            r8$model_stats$n_terms))
+cat("Selected terms:", paste(head(r8$selected_terms, 5), collapse = " | "), "...\n")
+```
+
+```{r mars_plot, fig.cap="MARS fit: observed tool wear with the fitted MARS hinge function model."}
+rg$plot(plot_type = "spline")
+```
+
+## 10. Quality Scenario 7 — Cox Regression for Reliability (cox_fit)
+
+### 10.1 Business context
+
+A reliability engineer tests three mould designs (A, B, C) for a fatigue-critical
+bracket under cyclic load. The response is **cycles to failure**, and some
+units survive past the test window (right-censored). Cox proportional-hazards
+regression models the hazard as a function of mould design, without assuming a
+parametric baseline survival distribution. The hazard ratio (HR) quantifies the
+relative failure rate of each design vs the reference.
+
+```{r cox_setup}
+# Cox regression requires the survival package (Suggests dependency)
+library(survival)
+set.seed(47)
+n_units <- 60
+mould <- factor(sample(c("A", "B", "C"), n_units, replace = TRUE),
+                levels = c("A", "B", "C"))
+# True hazard ratios: B = 0.6 (better), C = 1.8 (worse) vs A
+true_lp <- 0 + ifelse(mould == "B", -0.51, 0) + ifelse(mould == "C", 0.59, 0)
+# Weibull baseline hazard -> exponential of linear predictor scales failure time
+cycles <- rexp(n_units, rate = exp(true_lp) / 5000)
+# 20% of units are censored at 20000 cycles
+censor_time <- 20000
+censored <- cycles > censor_time
+cycles_obs <- pmin(cycles, censor_time)
+status <- as.integer(!censored)
+
+fatigue <- data.frame(
+  cycles = round(cycles_obs),
+  status = status,
+  mould = mould
+)
+cat(sprintf("Events observed: %d / %d (%.0f%% censored)\n",
+            sum(status), n_units, 100 * mean(!status)))
+```
+
+### 10.2 Fit and inspect
+
+```{r cox_fit}
+rg <- iqr_regression$new(theme = "academic")
+rg$run("cox_fit", formula = Surv(cycles, status) ~ mould, data = fatigue)
+r9 <- rg$last_results
+
+cat("== Coefficients ==\n")
+print(r9$coefficients)
+cat("\n== Hazard Ratios with 95% CI ==\n")
+# hazard_ratios: named numeric vector; hazard_ratio_ci: matrix [lower, upper]
+hr_df <- data.frame(
+  Term     = names(r9$hazard_ratios),
+  HR       = round(r9$hazard_ratios, 4),
+  HR_lower = round(r9$hazard_ratio_ci[, "lower"], 4),
+  HR_upper = round(r9$hazard_ratio_ci[, "upper"], 4)
+)
+print(hr_df)
+cat(sprintf("\nConcordance = %.4f, n_events = %d\n",
+            r9$model_stats$concordance, r9$model_stats$n_events))
+```
+
+A HR < 1 for mould B means B fails at a lower rate than A (the reference);
+a HR > 1 for mould C means C fails faster. The 95 % CI not crossing 1
+indicates significance at the 0.05 level.
+
+## 11. Theory: Regression Diagnostics
+
+### 11.1 Multicollinearity — VIF
+
+The **variance inflation factor** for predictor $j$ is:
+
+$$
+VIF_j = \frac{1}{1 - R_j^2}
+$$
+
+where $R_j^2$ is the $R^2$ of regressing $x_j$ on all other predictors. A VIF
+above 5–10 indicates problematic collinearity: the coefficient's standard
+error is inflated, making it hard to detect a real effect even when the model
+fits well.
+
+### 11.2 Influence — leverage and Cook's distance
+
+- **Leverage** $h_{ii}$ measures how far an observation's $x$-values are from
+  the centroid. High-leverage points have the *potential* to influence the
+  fit. Threshold: $h_{ii} > 2p/n$.
+- **Cook's distance** $D_i$ combines leverage with residual magnitude:
+
+$$
+D_i = \frac{e_i^2}{p \cdot MSE} \cdot \frac{h_{ii}}{(1 - h_{ii})^2}
+$$
+
+  A point with $D_i > 4/n$ is worth investigating; it may be an influential
+  outlier or a legitimate high-leverage observation.
+
+### 11.3 Heteroscedasticity — Breusch-Pagan, NCV, White
+
+The null hypothesis is constant variance. The Breusch-Pagan test regresses
+squared residuals on the fitted values; the NCV test (Breusch-Pagan with a
+flexible variance function); the White test uses all predictors plus their
+squares and cross-products. A small p-value means the variance changes with the
+fitted value, invalidating OLS standard errors. Remedies: transform the
+response, use weighted least squares, or switch to robust (sandwich) standard
+errors.
+
+## 12. The diagnose_lm Family
+
+These functions operate on an `lm` object (not on the `stat_result`). They
+will `stop()` if given a `glm`, `coxph`, or other non-`lm` model.
+
+### 12.1 Function reference
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `diagnose_lm()` | `model, alpha = 0.05` | List: residuals, normality, heteroscedasticity, multicollinearity, influence, assumptions, model_summary |
+| `test_residual_normality()` | `model, method = "auto", alpha = 0.05` | List: method, statistic, p.value, is_normal, skewness, excess_kurtosis |
+| `test_heteroscedasticity()` | `model, test = c("bp","ncv","white"), alpha = 0.05` | List: method, statistic, p.value, is_heteroscedastic |
+| `diagnose_multicollinearity()` | `model` | List: vif (named vector), condition_index, has_multicollinearity, max_vif |
+| `diagnose_influential_points()` | `model, cook_threshold = NULL` | List: high_leverage, outliers, influential (indices), cook_distances, hat_values, dffits, dfbetas, thresholds |
+| `summarize_assumptions()` | `model, alpha = 0.05` | data.frame: assumption, test, statistic, p.value, passed |
+
+### 12.2 Comprehensive diagnostics on the viscosity model
+
+```{r diagnose_viscosity}
+# Refit the viscosity model to obtain the raw lm object
+vis_lm <- lm(viscosity ~ temp + catalyst, data = polymer)
+
+diag <- diagnose_lm(vis_lm, alpha = 0.05)
+cat("== Residual summary ==\n")
+cat(sprintf("Mean = %.4f, SD = %.4f, Skewness = %.4f, Excess kurtosis = %.4f\n",
+            diag$residuals$mean, diag$residuals$sd,
+            diag$residuals$skewness, diag$residuals$excess_kurtosis))
+
+cat("\n== Normality ==\n")
+cat(sprintf("Method = %s, statistic = %.4f, p = %.4f, normal = %s\n",
+            diag$normality$method, diag$normality$statistic,
+            diag$normality$p.value, diag$normality$is_normal))
+
+cat("\n== Heteroscedasticity ==\n")
+cat(sprintf("Method = %s, statistic = %.4f, p = %.4f, heteroscedastic = %s\n",
+            diag$heteroscedasticity$method, diag$heteroscedasticity$statistic,
+            diag$heteroscedasticity$p.value,
+            diag$heteroscedasticity$is_heteroscedastic))
+
+cat("\n== Multicollinearity ==\n")
+cat("VIF:", paste(round(diag$multicollinearity$vif, 3), collapse = ", "), "\n")
+cat(sprintf("Max VIF = %.4f, Condition index = %.4f\n",
+            diag$multicollinearity$max_vif,
+            max(diag$multicollinearity$condition_index)))
+
+cat("\n== Influence ==\n")
+cat(sprintf("High-leverage points: %s\n",
+            if (length(diag$influence$high_leverage) > 0)
+              paste(diag$influence$high_leverage, collapse = ", ")
+            else "none"))
+cat(sprintf("Influential points (Cook's D > 4/n): %s\n",
+            if (length(diag$influence$influential) > 0)
+              paste(diag$influence$influential, collapse = ", ")
+            else "none"))
+```
+
+### 12.3 One-line assumption summary
+
+```{r summarize_assumptions}
+summarize_assumptions(vis_lm, alpha = 0.05)
+```
+
+### 12.4 Individual tests
+
+```{r individual_tests}
+# Residual normality (Anderson-Darling, more sensitive to tails)
+nr <- test_residual_normality(vis_lm, method = "ad")
+cat(sprintf("AD test: statistic = %.4f, p = %.4f, normal = %s\n",
+            nr$statistic, nr$p.value, nr$is_normal))
+
+# Heteroscedasticity (White test, most general)
+ht <- test_heteroscedasticity(vis_lm, test = "white")
+cat(sprintf("White test: statistic = %.4f, p = %.4f, heteroscedastic = %s\n",
+            ht$statistic, ht$p.value, ht$is_heteroscedastic))
+
+# Multicollinearity
+mc <- diagnose_multicollinearity(vis_lm)
+cat(sprintf("VIF: %s; has multicollinearity: %s\n",
+            paste(round(mc$vif, 3), collapse = ", "),
+            mc$has_multicollinearity))
+
+# Influential points
+ip <- diagnose_influential_points(vis_lm)
+cat(sprintf("Max Cook's distance = %.4f (threshold 4/n = %.4f)\n",
+            max(ip$cook_distances), ip$thresholds$cook))
+```
+
+## 13. Theory: Outlier Detection Methods
+
+| Method | Statistic | Assumption | Best for |
+|--------|-----------|------------|----------|
+| IQR fence | $x < Q_1 - k \cdot IQR$ or $x > Q_3 + k \cdot IQR$ | None (distribution-free) | Quick screening, skewed data |
+| Z-score | $\lvert z \rvert = \lvert (x - \bar{x}) / s \rvert > 3$ | Normality, large $n$ | Symmetric data, $n > 30$ |
+| Modified Z-score (MAD) | $\lvert 0.6745 (x - \tilde{x}) / MAD \rvert > 3.5$ | None (robust) | Skewed data, small $n$ |
+| Grubbs' test | $G = \max \lvert x_i - \bar{x} \rvert / s$ vs $g_{n,\alpha}$ | Normality | One extreme value, $n \ge 3$ |
+| Dixon's Q | $Q = \text{gap} / \text{range}$ | Normality, $3 \le n \le 30$ | Small samples, one outlier |
+| Mahalanobis | $D^2 = (\mathbf{x} - \boldsymbol\mu)^\top \boldsymbol\Sigma^{-1} (\mathbf{x} - \boldsymbol\mu)$ | Multivariate normality | Multivariate outliers |
+
+**Key distinction**: IQR, Z-score, Grubbs, and Dixon operate on a single
+variable; Mahalanobis operates on a multivariate data frame and detects points
+that are unusual in their *combination* of values (not necessarily extreme on
+any single axis).
+
+## 14. The detect_outliers_* Family
+
+### 14.1 Function reference
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `detect_outliers_iqr()` | `x, k = 1.5, na.rm = TRUE` | List: outliers, indices, lower_bound, upper_bound, n_outliers, proportion, k |
+| `detect_outliers_zscore()` | `x, threshold = 3, robust = FALSE` | List: outliers, indices, z_scores, threshold, n_outliers, proportion |
+| `detect_outliers_grubbs()` | `x, alpha = 0.05, type = c("extreme","min","max")` | List: outlier (scalar), index, G, critical_value, p.value, is_outlier |
+| `detect_outliers_dixon()` | `x, alpha = 0.05, type = c("both","min","max")` | List: outlier, results (list with $min/$max), is_outlier, Q, critical_value |
+| `detect_outliers_mahalanobis()` | `data, alpha = 0.05` | List: outliers (row indices), mahalanobis_dist, critical_value, n_outliers, p |
+| `detect_outliers_all()` | `x, methods = c("iqr","zscore","grubbs"), alpha = 0.05` | List: consensus, all_outliers, all_results, summary (data.frame) |
+
+### 14.2 Quality scenario — calibration data with anomalous readings
+
+A flow-meter calibration produces 25 readings of indicated flow (L/min) vs
+reference flow. Three readings look suspicious: two are high outliers
+(possible bubble interference) and one is a low outlier (possible sensor
+stall). The engineer screens the indicated-flow column with multiple methods.
+
+```{r outlier_setup}
+set.seed(53)
+# 22 normal calibration readings + 3 anomalous
+flow_normal <- rnorm(22, mean = 10.0, sd = 0.15)
+flow_anomalous <- c(10.85, 10.92, 9.25)   # 2 high, 1 low
+flow_all <- c(flow_normal, flow_anomalous)
+# Shuffle the order so the outliers are not at the end
+set.seed(59)
+flow_all <- sample(flow_all)
+cat(sprintf("n = %d, mean = %.3f, sd = %.3f\n",
+            length(flow_all), mean(flow_all), sd(flow_all)))
+```
+
+```{r outlier_iqr}
+oi <- detect_outliers_iqr(flow_all, k = 1.5)
+cat(sprintf("IQR method: %d outliers at indices %s\n",
+            oi$n_outliers,
+            if (oi$n_outliers > 0) paste(oi$indices, collapse = ", ") else "(none)"))
+cat(sprintf("  bounds: [%.3f, %.3f]\n", oi$lower_bound, oi$upper_bound))
+cat(sprintf("  outlier values: %s\n",
+            if (oi$n_outliers > 0) paste(round(oi$outliers, 3), collapse = ", ")
+            else "(none)"))
+```
+
+```{r outlier_zscore}
+oz <- detect_outliers_zscore(flow_all, threshold = 3, robust = FALSE)
+cat(sprintf("Z-score method: %d outliers at indices %s\n",
+            oz$n_outliers,
+            if (oz$n_outliers > 0) paste(oz$indices, collapse = ", ") else "(none)"))
+
+# Robust variant (MAD-based, better for small samples / skewed data)
+oz_r <- detect_outliers_zscore(flow_all, threshold = 3.5, robust = TRUE)
+cat(sprintf("Robust Z-score (MAD): %d outliers at indices %s\n",
+            oz_r$n_outliers,
+            if (oz_r$n_outliers > 0) paste(oz_r$indices, collapse = ", ") else "(none)"))
+```
+
+```{r outlier_grubbs}
+og <- detect_outliers_grubbs(flow_all, alpha = 0.05, type = "extreme")
+cat(sprintf("Grubbs (extreme): G = %.4f, critical = %.4f, p = %.4f, is_outlier = %s\n",
+            og$G, og$critical_value, og$p.value, og$is_outlier))
+if (og$is_outlier) {
+  cat(sprintf("  Outlier value = %.3f at index %d\n", og$outlier, og$index))
+}
+```
+
+```{r outlier_dixon}
+od <- detect_outliers_dixon(flow_all, alpha = 0.05, type = "both")
+cat(sprintf("Dixon Q (both ends): is_outlier = %s\n", od$is_outlier))
+if (!is.null(od$results$min)) {
+  cat(sprintf("  Min: Q = %.4f, critical = %.4f, outlier = %s\n",
+              od$results$min$Q, od$results$min$critical_value,
+              od$results$min$is_outlier))
+}
+if (!is.null(od$results$max)) {
+  cat(sprintf("  Max: Q = %.4f, critical = %.4f, outlier = %s\n",
+              od$results$max$Q, od$results$max$critical_value,
+              od$results$max$is_outlier))
+}
+```
+
+### 14.3 Consensus across methods
+
+`detect_outliers_all` runs IQR, Z-score, and Grubbs simultaneously and reports
+the consensus (flagged by at least half the methods) plus the full per-method
+breakdown.
+
+```{r outlier_all}
+oa <- detect_outliers_all(flow_all,
+                          methods = c("iqr", "zscore", "grubbs"),
+                          alpha = 0.05)
+cat(sprintf("Consensus outliers: %d values (%s)\n",
+            oa$n_consensus,
+            if (oa$n_consensus > 0) paste(round(oa$consensus, 3), collapse = ", ")
+            else "(none)"))
+cat("\nPer-method summary:\n")
+print(oa$summary)
+```
+
+### 14.4 Multivariate outlier detection (Mahalanobis)
+
+When two or more variables are measured per unit, a point can be a multivariate
+outlier without being extreme on any single axis. The Mahalanobis distance
+accounts for the correlation structure:
+
+```{r outlier_mahalanobis}
+# Two correlated CTQs: viscosity and hardness
+set.seed(61)
+n_ok <- 40
+visc <- rnorm(n_ok, 45, 2)
+hard <- 0.4 * visc + rnorm(n_ok, 30, 1.5)  # positively correlated
+# Inject 3 multivariate outliers: high viscosity but low hardness (off-correlation)
+mv_data <- data.frame(
+  viscosity = c(visc, 52, 53, 50),
+  hardness = c(hard, 25, 26, 24)
+)
+om <- detect_outliers_mahalanobis(mv_data, alpha = 0.05)
+cat(sprintf("Mahalanobis: %d outliers at rows %s (critical D^2 = %.3f)\n",
+            om$n_outliers,
+            if (om$n_outliers > 0) paste(om$outliers, collapse = ", ") else "(none)",
+            om$critical_value))
+```
+
+## 15. Interpreting Regression Results — Decision Guide
+
+| Situation | Recommended model | Diagnostic follow-up |
+|-----------|-------------------|----------------------|
+| Continuous response, linear relationship, $p < n$ | `lm_fit` | `diagnose_lm()` |
+| Binary pass/fail response | `logit_fit` | ROC + calibration |
+| Count response | `poisson_fit` | Check overdispersion (deviance/df >> 1) |
+| Time-to-event with censoring | `cox_fit` | PH assumption (Schoenfeld) |
+| Many collinear predictors, $p \approx n$ | `pls_fit` | RMSEP CV |
+| Need parsimonious model from many candidates | `stepwise_fit` or `best_subset_fit` | Compare AIC/BIC |
+| Nonlinear, smooth relationship | `spline_fit` | Residuals vs fitted |
+| Nonlinear, unknown structure | `mars_fit` | GCV |
+| Multivariate response | MANOVA (see `vignette("anova")`) | Per-response follow-up |
+
+### Reading the coefficient table
+
+- **Estimate**: the fitted coefficient $\hat\beta_j$.
+- **Std_Error**: $\widehat{SE}(\hat\beta_j)$; smaller is better.
+- **Statistic**: $t = \hat\beta_j / SE$ (OLS) or $z$ (GLM).
+- **p_value**: significance of the term. Small p $\Rightarrow$ the predictor
+  has a detectable effect.
+
+### GLM coefficient interpretation cheat sheet
+
+| Model | $\exp(\hat\beta_j)$ | Interpretation |
+|-------|---------------------|----------------|
+| `logit_fit` | Odds ratio (OR) | Multiplicative effect on the odds of success |
+| `poisson_fit` | Rate ratio (IRR) | Multiplicative effect on the expected count |
+| `cox_fit` | Hazard ratio (HR) | Multiplicative effect on the failure hazard |
+
+## 16. Parameter Reference
+
+### 16.1 `iqr_regression$run()` arguments
+
+| Argument | Type | Default | Meaning |
+|----------|------|---------|---------|
+| `model_type` | character | (required) | One of the 9 codes in Section 3.2 |
+| `formula` | formula | (required) | R formula, e.g. `y ~ x1 + x2` |
+| `data` | data.frame | (required) | Data frame |
+| `plot` | logical | `FALSE` | Whether to plot immediately |
+| `plot_type` | character | `"auto"` | See Section 3.4 |
+| `interpret` | logical | `FALSE` | Print interpretation |
+| `audience` | character | `"manager"` | `"manager"`, `"technical"`, `"client"` |
+
+### 16.2 Model-specific extra arguments
+
+| `model_type` | Extra args | Default |
+|--------------|-----------|---------|
+| `pls_fit` | `ncomp` | `NULL` (auto) |
+| `stepwise_fit` | `direction`, `family`, `k` | `"both"`, `NULL`, `2` |
+| `best_subset_fit` | `nvmax` | `NULL` (all) |
+| `mars_fit` | `degree`, `nk`, `thresh`, `pmethod` | `1`, `NULL`, `0.001`, `"backward"` |
+| `spline_fit` | `df`, `basis`, `knots`, `degree` | `4`, `c("bs","ns")`, `NULL`, `3` |
+
+### 16.3 Diagnostics function arguments
+
+| Function | Key args |
+|----------|----------|
+| `diagnose_lm()` | `model`, `alpha = 0.05` |
+| `test_residual_normality()` | `model`, `method = "auto"`, `alpha = 0.05` |
+| `test_heteroscedasticity()` | `model`, `test = c("bp","ncv","white")`, `alpha = 0.05` |
+| `diagnose_multicollinearity()` | `model` |
+| `diagnose_influential_points()` | `model`, `cook_threshold = NULL` |
+| `summarize_assumptions()` | `model`, `alpha = 0.05` |
+
+### 16.4 Outlier function arguments
+
+| Function | Key args |
+|----------|----------|
+| `detect_outliers_iqr()` | `x`, `k = 1.5`, `na.rm = TRUE` |
+| `detect_outliers_zscore()` | `x`, `threshold = 3`, `robust = FALSE` |
+| `detect_outliers_grubbs()` | `x`, `alpha = 0.05`, `type = c("extreme","min","max")` |
+| `detect_outliers_dixon()` | `x`, `alpha = 0.05`, `type = c("both","min","max")` |
+| `detect_outliers_mahalanobis()` | `data` (data.frame), `alpha = 0.05` |
+| `detect_outliers_all()` | `x`, `methods = c("iqr","zscore","grubbs")`, `alpha = 0.05` |
+
+## 17. References
+
+1. Montgomery, D. C., Peck, E. A. & Vining, G. G. (2021). *Introduction to
+   Linear Regression Analysis* (6th ed.). Wiley. — Foundational reference for
+   OLS, diagnostics, and variable selection.
+
+2. Dobson, A. J. & Barnett, A. G. (2018). *An Introduction to Generalized
+   Linear Models* (4th ed.). Chapman & Hall/CRC. — GLM theory underlying
+   `logit_fit` and `poisson_fit`.
+
+3. Therneau, T. M. & Grambsch, P. M. (2000). *Modeling Survival Data: Extending
+   the Cox Model*. Springer. — Cox regression and proportional hazards.
+
+4. Wold, S., Sjostrom, M. & Eriksson, L. (2001). "PLS-regression: a basic tool
+   of chemometrics." *Chemometrics and Intelligent Laboratory Systems*, 58,
+   109-130. — PLS for spectroscopic calibration.
+
+5. Friedman, J. H. (1991). "Multivariate Adaptive Regression Splines."
+   *The Annals of Statistics*, 19(1), 1-67. — The MARS algorithm.
+
+6. Hastie, T., Tibshirani, R. & Friedman, J. (2009). *The Elements of
+   Statistical Learning* (2nd ed.). Springer. — Splines, MARS, and model
+   selection.
+
+7. Belsley, D. A., Kuh, E. & Welsch, R. E. (1980). *Regression Diagnostics*.
+   Wiley. — VIF, condition index, and influence measures.
+
+8. Cook, R. D. (1977). "Detection of Influential Observation in Linear
+   Regression." *Technometrics*, 19(1), 15-18. — Cook's distance.
+
+9. Grubbs, F. E. (1969). "Procedures for Detecting Outlying Observations in
+   Samples." *Technometrics*, 11(1), 1-21. — Grubbs' test.
+
+10. Dixon, W. J. (1950). "Analysis of Extreme Values." *The Annals of
+    Mathematical Statistics*, 21(4), 488-506. — Dixon's Q test.
+
+11. Mahalanobis, P. C. (1936). "On the Generalised Distance in Statistics."
+    *Proceedings of the National Institute of Sciences of India*, 2(1), 49-55.
+
+## Further Reading
+
+- For the hypothesis-test counterparts of regression inference (correlation
+  tests, equivalence of slopes), see
+  `vignette("hypothesis-testing-and-intervals", package = "iQualityR.stat")`.
+- For ANOVA - the categorical-predictor special case of regression - see
+  `vignette("anova", package = "iQualityR.stat")`.
+- For the descriptive statistics and data-transformation toolkit that precedes
+  regression modelling, see
+  `vignette("descriptive-and-distributions", package = "iQualityR.stat")`.
+- For the sample-size calculations that plan regression studies, see
+  `vignette("sample-size-and-power", package = "iQualityR.stat")`.
+- For the regression visualization infrastructure (residual, coefficient, ROC,
+  spline plots), see
+  `vignette("plotting-overview", package = "iQualityR.plot")`.

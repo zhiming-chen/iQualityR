@@ -33,6 +33,11 @@
 #' - `superiority`: Superiority test (mean or proportion, one-sided)
 #' - `poisson_test_1s`: One-sample Poisson rate test (exact)
 #' - `poisson_test_2s`: Two-sample Poisson rate test (rate ratio, exact)
+#' - `cor_test_pearson`: Pearson product-moment correlation test
+#' - `cor_test_spearman`: Spearman's rank correlation test
+#' - `cor_test_kendall`: Kendall's tau correlation test
+#' - `levene_test`: Levene's test for equality of variances (k groups, robust)
+#' - `bartlett_test`: Bartlett's test for equality of variances (k groups, normality assumed)
 #'
 #' **Dual interface design** (per Contract 2):
 #' - R6 class interface: `iqr_htest$new()$run()$plot()` (suitable for chaining)
@@ -71,6 +76,25 @@
 #'
 #' # Two-sample Poisson rate test: compare defect rates of two lines
 #' htest$run("poisson_test_2s", x1 = 15, T1 = 3, x2 = 25, T2 = 3)
+#'
+#' # Pearson correlation test: is temperature correlated with yield?
+#' set.seed(123)
+#' temp <- rnorm(30, mean = 80, sd = 5)
+#' yield <- 50 + 0.6 * temp + rnorm(30, sd = 2)
+#' htest$run("cor_test_pearson", x = temp, y = yield)
+#'
+#' # Spearman rank correlation (robust to non-linear monotonic relations)
+#' htest$run("cor_test_spearman", x = temp, y = yield)
+#'
+#' # Levene's test: do 3 production lines have equal variance in diameter?
+#' set.seed(123)
+#' line_a <- rnorm(20, mean = 10, sd = 0.5)
+#' line_b <- rnorm(20, mean = 10, sd = 0.8)
+#' line_c <- rnorm(20, mean = 10, sd = 1.2)
+#' htest$run("levene_test", x = list(line_a, line_b, line_c))
+#'
+#' # Bartlett's test: same question, assuming normality (more powerful if normal)
+#' htest$run("bartlett_test", x = list(line_a, line_b, line_c))
 #'
 #' # Plotting requires the iQualityR.plot Suggests package
 #' if (requireNamespace("iQualityR.plot", quietly = TRUE)) {

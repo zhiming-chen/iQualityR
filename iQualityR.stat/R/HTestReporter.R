@@ -25,15 +25,13 @@
 #'
 #' @export
 HTestReporter <- R6::R6Class("HTestReporter",
+  inherit = StatReporter,
   public = list(
-    #' @field theme_obj Active `IqrTheme` for Excel styling (NULL = default).
-    theme_obj = NULL,
-
     #' @description Initialize with a theme
     #' @param theme Theme name or `IqrTheme` object. NULL is allowed -- Excel
     #'   export will then fall back to the default ThemeConfig.
     initialize = function(theme = NULL) {
-      self$theme_obj <- .resolve_theme(theme)
+      super$initialize(theme)
     },
 
     #' @description Unified report entry point (Contract 2)

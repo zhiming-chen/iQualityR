@@ -17,12 +17,8 @@ Excel export uses \code{iQualityR.core::ExcelExporter} (soft dependency via
 \code{requireNamespace}) so the reporter still works in environments that only
 need console / data.frame output.
 }
-\section{Public fields}{
-\if{html}{\out{<div class="r6-fields">}}
-\describe{
-\item{\code{theme_obj}}{Active \code{IqrTheme} for Excel styling (NULL = default).}
-}
-\if{html}{\out{</div>}}
+\section{Super classes}{
+\code{\link[iQualityR.core:IqrReporter]{iQualityR.core::IqrReporter}} -> \code{\link[iQualityR.stat:StatReporter]{iQualityR.stat::StatReporter}} -> \code{HTestReporter}
 }
 \section{Methods}{
 \subsection{Public methods}{
@@ -35,6 +31,16 @@ need console / data.frame output.
 \item \href{#method-HTestReporter-clone}{\code{HTestReporter$clone()}}
 }
 }
+\if{html}{\out{
+<details open><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export'><code>iQualityR.core::IqrReporter$export()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export_rmd"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export_rmd'><code>iQualityR.core::IqrReporter$export_rmd()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="register"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-register'><code>iQualityR.core::IqrReporter$register()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="render"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-render'><code>iQualityR.core::IqrReporter$render()</code></a></span></li>
+</ul>
+</details>
+}}
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HTestReporter-new"></a>}}
 \if{latex}{\out{\hypertarget{method-HTestReporter-new}{}}}

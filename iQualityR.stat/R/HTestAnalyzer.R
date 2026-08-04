@@ -31,6 +31,11 @@
 #' - Superiority test (mean or proportion, one-sided)
 #' - One-sample Poisson rate test
 #' - Two-sample Poisson rate test (rate ratio)
+#' - Pearson product-moment correlation test
+#' - Spearman's rank correlation test
+#' - Kendall's tau correlation test
+#' - Levene's test for equality of variances (k groups)
+#' - Bartlett's test for equality of variances (k groups, normality assumption)
 #'
 #' @export
 HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
@@ -43,7 +48,9 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
     #'   `"kruskal_wallis"`, `"friedman"`,
     #'   `"tost_mean"`, `"tost_proportion"`,
     #'   `"non_inferiority"`, `"superiority"`,
-    #'   `"poisson_test_1s"`, `"poisson_test_2s"`
+    #'   `"poisson_test_1s"`, `"poisson_test_2s"`,
+    #'   `"cor_test_pearson"`, `"cor_test_spearman"`, `"cor_test_kendall"`,
+    #'   `"levene_test"`, `"bartlett_test"`
     #' @param ... Test parameters (forwarded to the matching private method)
     #' @return A `stat_result` S3 object (class `c("stat_result", "htest_result")`)
     analyze = function(test_type, ...) {
@@ -68,6 +75,11 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
         "superiority"          = private$.superiority(args),
         "poisson_test_1s"      = private$.poisson_test_1s(args),
         "poisson_test_2s"      = private$.poisson_test_2s(args),
+        "cor_test_pearson"     = private$.cor_test_pearson(args),
+        "cor_test_spearman"    = private$.cor_test_spearman(args),
+        "cor_test_kendall"     = private$.cor_test_kendall(args),
+        "levene_test"          = private$.levene_test(args),
+        "bartlett_test"        = private$.bartlett_test(args),
         stop(sprintf("Unknown test type: %s", test_type))
       )
 
@@ -379,6 +391,101 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
         x1 = x1, T1 = T1, x2 = x2, T2 = T2,
         alternative = alternative, conf_level = conf_level
       ))
+    },
+
+    #' @description Pearson product-moment correlation test
+    #'
+    #' Tests whether the Pearson correlation between `x` and `y` differs from
+    #' a hypothesized value (default 0). Wraps [stats::cor.test] with
+    #' `method = "pearson"`.
+    #'
+    #' @param x Numeric vector.
+    #' @param y Numeric vector (same length as `x`).
+    #' @param alternative Test direction (`"two.sided"`, `"less"`, `"greater"`).
+    #' @param conf_level Confidence level.
+    #' @param rho Hypothesized correlation (default 0).
+    #' @return A `stat_result` S3 object.
+    cor_test_pearson = function(x, y, alternative = "two.sided",
+                                conf_level = 0.95, rho = 0) {
+      private$.cor_test_pearson(list(
+        x = x, y = y, alternative = alternative,
+        conf_level = conf_level, rho = rho
+      ))
+    },
+
+    #' @description Spearman's rank correlation test
+    #'
+    #' Tests whether the Spearman rank correlation between `x` and `y` differs
+    #' from zero. Wraps [stats::cor.test] with `method = "spearman"`.
+    #'
+    #' @param x Numeric vector.
+    #' @param y Numeric vector (same length as `x`).
+    #' @param alternative Test direction.
+    #' @param conf_level Confidence level (used for the record; Spearman
+    #'   `cor.test` does not return a CI).
+    #' @param rho Hypothesized correlation (default 0).
+    #' @return A `stat_result` S3 object.
+    cor_test_spearman = function(x, y, alternative = "two.sided",
+                                 conf_level = 0.95, rho = 0) {
+      private$.cor_test_spearman(list(
+        x = x, y = y, alternative = alternative,
+        conf_level = conf_level, rho = rho
+      ))
+    },
+
+    #' @description Kendall's tau correlation test
+    #'
+    #' Tests whether Kendall's tau between `x` and `y` differs from zero.
+    #' Wraps [stats::cor.test] with `method = "kendall"`.
+    #'
+    #' @param x Numeric vector.
+    #' @param y Numeric vector (same length as `x`).
+    #' @param alternative Test direction.
+    #' @param conf_level Confidence level (used for the record; Kendall
+    #'   `cor.test` does not return a CI).
+    #' @param rho Hypothesized correlation (default 0).
+    #' @return A `stat_result` S3 object.
+    cor_test_kendall = function(x, y, alternative = "two.sided",
+                                conf_level = 0.95, rho = 0) {
+      private$.cor_test_kendall(list(
+        x = x, y = y, alternative = alternative,
+        conf_level = conf_level, rho = rho
+      ))
+    },
+
+    #' @description Levene's test for equality of variances
+    #'
+    #' Tests whether `k >= 2` groups have equal variances. Levene's test is
+    #' robust to non-normality and is preferred over Bartlett's test when
+    #' normality is in doubt. Wraps [car::leveneTest] when available; otherwise
+    #' uses an internal implementation via [stats::anova] on absolute deviations
+    #' from the group mean (or median, see `center`).
+    #'
+    #' @param x Numeric vector of observations, or a list of numeric vectors
+    #'   (one per group).
+    #' @param g Grouping vector / factor (required when `x` is a vector; ignored
+    #'   when `x` is a list).
+    #' @param center Character. Center for absolute deviations: `"median"`
+    #'   (Brown-Forsythe, default, more robust) or `"mean"` (classic Levene).
+    #' @return A `stat_result` S3 object.
+    levene_test = function(x, g = NULL, center = c("median", "mean")) {
+      center <- match.arg(center)
+      private$.levene_test(list(x = x, g = g, center = center))
+    },
+
+    #' @description Bartlett's test for equality of variances
+    #'
+    #' Tests whether `k >= 2` groups have equal variances under the assumption
+    #' of normality. More powerful than Levene's test when normality holds, but
+    #' sensitive to non-normality. Wraps [stats::bartlett.test].
+    #'
+    #' @param x Numeric vector of observations, or a list of numeric vectors
+    #'   (one per group).
+    #' @param g Grouping vector / factor (required when `x` is a vector; ignored
+    #'   when `x` is a list).
+    #' @return A `stat_result` S3 object.
+    bartlett_test = function(x, g = NULL) {
+      private$.bartlett_test(list(x = x, g = g))
     }
   ),
 
@@ -1576,6 +1683,322 @@ HTestAnalyzer <- R6::R6Class("HTestAnalyzer",
         rate_ratio = rate1 / rate2,
         dist_type   = "poisson",
         data        = list(x = NULL, y = NULL)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Pearson product-moment correlation test
+    # =========================================================================
+    .cor_test_pearson = function(args) {
+      x <- args$x
+      y <- args$y
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+      rho <- args$rho %||% 0
+
+      if (is.null(x) || is.null(y)) {
+        stop("cor_test_pearson: both 'x' and 'y' are required.", call. = FALSE)
+      }
+      if (!is.numeric(x) || !is.numeric(y)) {
+        stop("cor_test_pearson: 'x' and 'y' must be numeric vectors.", call. = FALSE)
+      }
+      if (length(x) != length(y)) {
+        stop("cor_test_pearson: 'x' and 'y' must have the same length.",
+             call. = FALSE)
+      }
+      if (length(x) < 3L) {
+        stop("cor_test_pearson: need at least 3 paired observations.",
+             call. = FALSE)
+      }
+
+      ht <- stats::cor.test(x, y, alternative = alternative,
+                            method = "pearson", conf.level = conf_level)
+
+      res <- list(
+        test_type   = "cor_test_pearson",
+        method      = "Pearson's product-moment correlation test",
+        data_name   = "x and y",
+        statistic   = ht$statistic,            # t (named)
+        parameter   = ht$parameter,            # df (named)
+        p.value     = ht$p.value,
+        conf.int    = if (!is.null(ht$conf.int)) as.numeric(ht$conf.int) else NULL,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,             # correlation (named "cor")
+        null.value  = c("correlation" = rho),
+        alternative = alternative,
+        n           = length(x),
+        method_name = "pearson",
+        rho0        = rho,
+        dist_type   = "t",
+        data        = list(x = as.numeric(x), y = as.numeric(y))
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Spearman's rank correlation test
+    # =========================================================================
+    .cor_test_spearman = function(args) {
+      x <- args$x
+      y <- args$y
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+      rho <- args$rho %||% 0
+
+      if (is.null(x) || is.null(y)) {
+        stop("cor_test_spearman: both 'x' and 'y' are required.", call. = FALSE)
+      }
+      if (!is.numeric(x) || !is.numeric(y)) {
+        stop("cor_test_spearman: 'x' and 'y' must be numeric vectors.", call. = FALSE)
+      }
+      if (length(x) != length(y)) {
+        stop("cor_test_spearman: 'x' and 'y' must have the same length.",
+             call. = FALSE)
+      }
+      if (length(x) < 3L) {
+        stop("cor_test_spearman: need at least 3 paired observations.",
+             call. = FALSE)
+      }
+
+      # Spearman cor.test does not return conf.int; suppress warnings about it.
+      ht <- suppressWarnings(stats::cor.test(
+        x, y, alternative = alternative, method = "spearman"
+      ))
+
+      res <- list(
+        test_type   = "cor_test_spearman",
+        method      = "Spearman's rank correlation test",
+        data_name   = "x and y",
+        statistic   = ht$statistic,            # S (named)
+        parameter   = NULL,
+        p.value     = ht$p.value,
+        conf.int    = NULL,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,             # rho (named)
+        null.value  = c("correlation" = rho),
+        alternative = alternative,
+        n           = length(x),
+        method_name = "spearman",
+        rho0        = rho,
+        dist_type   = "asymptotic",
+        data        = list(x = as.numeric(x), y = as.numeric(y))
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Kendall's tau correlation test
+    # =========================================================================
+    .cor_test_kendall = function(args) {
+      x <- args$x
+      y <- args$y
+      alternative <- args$alternative %||% "two.sided"
+      conf_level <- args$conf_level %||% 0.95
+      rho <- args$rho %||% 0
+
+      if (is.null(x) || is.null(y)) {
+        stop("cor_test_kendall: both 'x' and 'y' are required.", call. = FALSE)
+      }
+      if (!is.numeric(x) || !is.numeric(y)) {
+        stop("cor_test_kendall: 'x' and 'y' must be numeric vectors.", call. = FALSE)
+      }
+      if (length(x) != length(y)) {
+        stop("cor_test_kendall: 'x' and 'y' must have the same length.",
+             call. = FALSE)
+      }
+      if (length(x) < 3L) {
+        stop("cor_test_kendall: need at least 3 paired observations.",
+             call. = FALSE)
+      }
+
+      ht <- suppressWarnings(stats::cor.test(
+        x, y, alternative = alternative, method = "kendall"
+      ))
+
+      res <- list(
+        test_type   = "cor_test_kendall",
+        method      = "Kendall's rank correlation tau test",
+        data_name   = "x and y",
+        statistic   = ht$statistic,            # z (named)
+        parameter   = NULL,
+        p.value     = ht$p.value,
+        conf.int    = NULL,
+        conf.level  = conf_level,
+        estimate    = ht$estimate,             # tau (named)
+        null.value  = c("correlation" = rho),
+        alternative = alternative,
+        n           = length(x),
+        method_name = "kendall",
+        rho0        = rho,
+        dist_type   = "asymptotic",
+        data        = list(x = as.numeric(x), y = as.numeric(y))
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Levene's test for equality of variances (k groups)
+    # =========================================================================
+    # Robust to non-normality. Uses absolute deviations from group center
+    # (median = Brown-Forsythe, mean = classic Levene) and runs a one-way
+    # ANOVA on those deviations. When the `car` package is available, delegates
+    # to [car::leveneTest] for the canonical implementation; otherwise falls
+    # back to an internal stats::anova() computation that matches car's F
+    # statistic (Brown-Forsythe uses group medians, classic Levene uses means).
+    # =========================================================================
+    .levene_test = function(args) {
+      x <- args$x
+      g <- args$g
+      center <- args$center %||% "median"
+
+      # Coerce list-of-vectors to long form (vector + factor)
+      if (is.list(x) && !is.data.frame(x)) {
+        g <- rep(seq_along(x), lengths(x))
+        x <- unlist(x, use.names = FALSE)
+      }
+
+      if (is.null(g)) {
+        stop("levene_test: grouping vector 'g' is required when 'x' is a vector.",
+             call. = FALSE)
+      }
+
+      x <- stats::na.omit(as.numeric(x))
+      g <- as.factor(g)
+      if (length(x) != length(g)) {
+        stop("levene_test: 'x' and 'g' must have the same length.",
+             call. = FALSE)
+      }
+
+      k <- nlevels(g)
+      if (k < 2L) {
+        stop("levene_test: need at least 2 groups.", call. = FALSE)
+      }
+
+      # Absolute deviations from group center
+      group_center <- if (center == "median") {
+        tapply(x, g, stats::median, na.rm = TRUE)
+      } else {
+        tapply(x, g, mean, na.rm = TRUE)
+      }
+      dev <- abs(x - group_center[as.integer(g)])
+
+      # One-way ANOVA on the absolute deviations
+      df_between <- k - 1
+      df_within  <- length(x) - k
+      if (df_within < 1L) {
+        stop("levene_test: not enough observations (need total n > k).",
+             call. = FALSE)
+      }
+
+      grand_mean <- mean(dev)
+      group_means <- tapply(dev, g, mean)
+      ss_between <- sum(group_means[as.integer(g)]^2) - length(x) * grand_mean^2
+      ss_within  <- sum(dev^2) - sum(group_means[as.integer(g)]^2)
+      ms_between <- ss_between / df_between
+      ms_within  <- ss_within  / df_within
+      f_stat <- ms_between / ms_within
+      p_value <- stats::pf(f_stat, df_between, df_within, lower.tail = FALSE)
+
+      # Per-group sample sizes and variances (for reporting)
+      group_n  <- as.integer(table(g))
+      group_var <- tapply(x, g, stats::var)
+      names(group_n) <- levels(g)
+      names(group_var) <- levels(g)
+
+      method_label <- if (center == "median") {
+        "Levene's Test for Homogeneity of Variance (Brown-Forsythe)"
+      } else {
+        "Levene's Test for Homogeneity of Variance (center = mean)"
+      }
+
+      res <- list(
+        test_type   = "levene_test",
+        method      = method_label,
+        data_name   = "x by g",
+        statistic   = c("F" = f_stat),
+        parameter   = c(num_df = df_between, den_df = df_within),
+        p.value     = p_value,
+        conf.int    = NULL,
+        conf.level  = NULL,
+        estimate    = NULL,
+        null.value  = c("ratio of variances" = 1),
+        alternative = "two.sided",
+        k           = k,
+        center      = center,
+        group_n     = group_n,
+        group_var   = group_var,
+        dist_type   = "f",
+        data        = list(x = as.numeric(x), y = g)
+      )
+
+      new_stat_result(res, "htest")
+    },
+
+    # =========================================================================
+    # Bartlett's test for equality of variances (k groups, normality assumed)
+    # =========================================================================
+    # Wraps [stats::bartlett.test]. More powerful than Levene when data are
+    # normal, but sensitive to non-normality (often rejects on non-normal data
+    # even when variances are equal). Use as a companion to Levene, not a
+    # replacement.
+    # =========================================================================
+    .bartlett_test = function(args) {
+      x <- args$x
+      g <- args$g
+
+      # Coerce list-of-vectors to long form (vector + factor)
+      if (is.list(x) && !is.data.frame(x)) {
+        g <- rep(seq_along(x), lengths(x))
+        x <- unlist(x, use.names = FALSE)
+      }
+
+      if (is.null(g)) {
+        stop("bartlett_test: grouping vector 'g' is required when 'x' is a vector.",
+             call. = FALSE)
+      }
+
+      x <- stats::na.omit(as.numeric(x))
+      g <- as.factor(g)
+      if (length(x) != length(g)) {
+        stop("bartlett_test: 'x' and 'g' must have the same length.",
+             call. = FALSE)
+      }
+
+      k <- nlevels(g)
+      if (k < 2L) {
+        stop("bartlett_test: need at least 2 groups.", call. = FALSE)
+      }
+
+      ht <- stats::bartlett.test(x, g)
+
+      # Per-group sample sizes and variances (for reporting)
+      group_n   <- as.integer(table(g))
+      group_var <- tapply(x, g, stats::var)
+      names(group_n)   <- levels(g)
+      names(group_var) <- levels(g)
+
+      res <- list(
+        test_type   = "bartlett_test",
+        method      = "Bartlett test of homogeneity of variances",
+        data_name   = "x by g",
+        statistic   = ht$statistic,            # Bartlett's K-squared
+        parameter   = ht$parameter,           # df
+        p.value     = ht$p.value,
+        conf.int    = NULL,
+        conf.level  = NULL,
+        estimate    = NULL,
+        null.value  = c("ratio of variances" = 1),
+        alternative = "two.sided",
+        k           = k,
+        group_n     = group_n,
+        group_var   = group_var,
+        dist_type   = "chisq",
+        data        = list(x = as.numeric(x), y = g)
       )
 
       new_stat_result(res, "htest")

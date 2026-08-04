@@ -1,0 +1,641 @@
+---
+title: "Descriptive Statistics, Probability Distributions, and Data Transformation"
+author: "iQualityR.stat Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Descriptive Statistics, Probability Distributions, and Data Transformation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.stat)
+library(iQualityR.plot)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+Before we can test, compare, or control a process, we must first **understand**
+it. This vignette covers three foundational tools for characterizing quality
+data:
+
+- **Descriptive statistics** — summarize the central tendency, dispersion, and
+  shape of a sample.
+- **Probability distributions** — model the theoretical population from which
+  the sample is drawn.
+- **Distribution fitting and data transformation** — match data to a theoretical
+  distribution and, when necessary, transform non-normal data to meet the
+  normality assumptions required by SPC, capability analysis, and parametric
+  tests.
+
+These three topics form a natural workflow: *describe → model → transform*.
+
+## 2. Theory: Measures and Distributions
+
+### 2.1 Measures of Central Tendency
+
+| Measure | Formula | When to Use |
+|---------|---------|-------------|
+| Mean | $\bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i$ | Symmetric data; sensitive to outliers |
+| Median | $\tilde{x} = x_{((n+1)/2)}$ | Skewed data; robust to outliers |
+| Mode | Most frequent value | Categorical or discrete data |
+
+In quality engineering, the **mean** is the primary measure because it directly
+relates to process targeting ($\bar{x}$ vs. target) and capability indices
+($C_{pk}$ uses $\hat{\mu}$). The **median** is valuable for skewed processes
+(e.g., cycle time, time-to-failure).
+
+### 2.2 Measures of Dispersion
+
+| Measure | Formula | Interpretation |
+|---------|---------|---------------|
+| Standard deviation | $s = \sqrt{\frac{1}{n-1}\sum(x_i - \bar{x})^2}$ | Absolute spread; same units as data |
+| Variance | $s^2$ | Squared spread |
+| Range | $R = x_{max} - x_{min}$ | Quick estimate; used in R charts |
+| IQR | $Q_3 - Q_1$ | Robust spread; used in box plots |
+| CV | $CV = s / \bar{x}$ | Relative spread; cross-process comparison |
+
+The **standard error** of the mean, $SE = s / \sqrt{n}$, is critical for
+confidence intervals and hypothesis tests.
+
+### 2.3 Measures of Shape
+
+**Skewness** (Fisher-Pearson coefficient):
+
+$$
+g_1 = \frac{\frac{1}{n}\sum_{i=1}^{n}(x_i - \bar{x})^3}{\left(\frac{1}{n}\sum_{i=1}^{n}(x_i - \bar{x})^2\right)^{3/2}}
+$$
+
+- $g_1 \approx 0$: symmetric (normal-like)
+- $g_1 > 0$: right-skewed (common in cycle time, fatigue life)
+- $g_1 < 0$: left-skewed
+
+**Excess kurtosis**:
+
+$$
+g_2 = \frac{\frac{1}{n}\sum(x_i - \bar{x})^4}{\left(\frac{1}{n}\sum(x_i - \bar{x})^2\right)^2} - 3
+$$
+
+- $g_2 \approx 0$: mesokurtic (normal-like)
+- $g_2 > 0$: leptokurtic (heavy tails; more extreme values)
+- $g_2 < 0$: platykurtic (light tails)
+
+### 2.4 Confidence Interval for the Mean
+
+For a sample from a normal distribution, the $100(1-\alpha)\%$ confidence
+interval for the mean is:
+
+$$
+\bar{x} \pm t_{\alpha/2, \, n-1} \cdot \frac{s}{\sqrt{n}}
+$$
+
+where $t_{\alpha/2, \, n-1}$ is the critical value from Student's t-distribution
+with $n-1$ degrees of freedom.
+
+### 2.5 Probability Distributions in Quality Engineering
+
+The table below maps common quality-engineering scenarios to the appropriate
+distribution:
+
+| Distribution | PDF/PMF | Quality Application |
+|-------------|---------|-------------------|
+| Normal | $\frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{(x-\mu)^2}{2\sigma^2}}$ | Dimensional measurements; natural variation |
+| Exponential | $\lambda e^{-\lambda x}$ | Time between failures (constant failure rate) |
+| Weibull | $\frac{\beta}{\eta}\left(\frac{x}{\eta}\right)^{\beta-1} e^{-(x/\eta)^\beta}$ | Time-to-failure (flexible failure rate) |
+| Lognormal | $\frac{1}{x\sigma\sqrt{2\pi}} e^{-\frac{(\ln x - \mu)^2}{2\sigma^2}}$ | Cycle time; particle size |
+| Gamma | $\frac{\beta^\alpha}{\Gamma(\alpha)} x^{\alpha-1} e^{-\beta x}$ | Time to $\alpha$ events; queueing |
+| Beta | $\frac{x^{\alpha-1}(1-x)^{\beta-1}}{B(\alpha,\beta)}$ | Proportions; Bayesian priors |
+| Binomial | $\binom{n}{p} p^x (1-p)^{n-x}$ | Defective counts in $n$ items |
+| Poisson | $\frac{\lambda^x e^{-\lambda}}{x!}$ | Defects per unit; rare events |
+| t | — | Small-sample inference on means |
+| F | — | Variance comparison; ANOVA |
+| Chi-square | — | Goodness-of-fit; variance CI |
+
+### 2.6 The Need for Data Transformation
+
+Many quality-engineering tools (t-tests, control charts, capability indices)
+assume normality. When the underlying process is inherently non-normal (e.g.,
+cycle time is lognormal), applying these tools directly leads to incorrect
+conclusions. The **Box-Cox transformation** is the most widely used remedy:
+
+$$
+y^{(\lambda)} = \begin{cases} \frac{y^\lambda - 1}{\lambda} & \lambda \neq 0 \\ \ln(y) & \lambda = 0 \end{cases}
+$$
+
+The optimal $\lambda$ is found by maximizing the normality of the transformed
+data (typically via MLE). The **Yeo-Johnson** transformation extends Box-Cox to
+handle negative values, and the **Johnson system** (SU/SB/SL) provides a
+three-parameter family for extreme non-normality.
+
+## 3. Descriptive Statistics
+
+### 3.1 The `desc_calc()` Function
+
+`desc_calc()` provides a one-call summary of a numeric vector:
+
+```{r}
+# CNC turned shaft diameter (mm)
+# Process: target = 25.00 mm, sigma ~ 0.015 mm
+# Reference: Montgomery (2013), ISQC 7th Ed., turning operation case
+set.seed(2026)
+shaft_dia <- rnorm(60, mean = 25.002, sd = 0.015)
+
+d <- desc_calc(shaft_dia)
+cat(sprintf("n         = %d\n",   d$n))
+cat(sprintf("Mean      = %.4f\n", d$mean))
+cat(sprintf("Std dev   = %.4f\n", d$stdev))
+cat(sprintf("Median    = %.4f\n", d$median))
+cat(sprintf("Min/Max   = %.4f / %.4f\n", d$min, d$max))
+cat(sprintf("Q1/Q3     = %.4f / %.4f\n", d$q1, d$q3))
+cat(sprintf("IQR       = %.4f\n", d$iqr))
+cat(sprintf("Skewness  = %.4f\n", d$skew))
+cat(sprintf("Kurtosis  = %.4f (excess)\n", d$kurt))
+cat(sprintf("CV        = %.4f%%\n", d$cv * 100))
+cat(sprintf("SE        = %.4f\n", d$se))
+cat(sprintf("95%% CI    = [%.4f, %.4f]\n", d$ci_mean[1], d$ci_mean[2]))
+cat(sprintf("AD stat   = %.4f (p=%.4f)\n", d$ad_stat, d$p_value))
+```
+
+The function also returns an Anderson-Darling normality statistic (`ad_stat`)
+and its p-value (`p_value`) as a quick normality screen.
+
+### 3.2 Multi-Variable Analysis with `desc_analyze()`
+
+For data frames with multiple measurement columns, `desc_analyze()` computes
+descriptive statistics for every numeric variable:
+
+```{r}
+# Multi-characteristic measurement: shaft diameter, surface roughness, hardness
+set.seed(2026)
+measure_df <- data.frame(
+  diameter_mm   = rnorm(60, 25.002, 0.015),
+  roughness_um  = rnorm(60, 1.60, 0.20),
+  hardness_hrc  = rnorm(60, 45.0, 1.5)
+)
+
+multi <- desc_analyze(measure_df)
+
+# Summary table
+cat(sprintf("%-16s %8s %8s %8s %8s %8s\n",
+            "Variable", "Mean", "SD", "CV%", "Skew", "Kurt"))
+cat(rep("-", 64), "\n", sep = "")
+for (v in names(multi)) {
+  r <- multi[[v]]
+  cat(sprintf("%-16s %8.4f %8.4f %8.2f %8.4f %8.4f\n",
+              v, r$mean, r$stdev, r$cv * 100, r$skew, r$kurt))
+}
+```
+
+### 3.3 Visualization with `desc_hist()` and `desc_box()`
+
+```{r, fig.width=8, fig.height=4}
+# Histogram with density overlay and normal curve
+p_hist <- base_plot(data.frame(x = shaft_dia), aes(x)) +
+  layers_histogram_density(fill = "steelblue", alpha = 0.6) +
+  labs(title = "CNC Shaft Diameter Distribution",
+       x = "Diameter (mm)", y = "Density")
+p_hist
+```
+
+```{r, fig.width=8, fig.height=4}
+# Box plot for multi-variable comparison (scale-standardized for visibility)
+plot_df <- data.frame(
+  Value = c(scale(measure_df$diameter_mm),
+            scale(measure_df$roughness_um),
+            scale(measure_df$hardness_hrc)),
+  Characteristic = rep(names(measure_df), each = nrow(measure_df))
+)
+
+p_box <- base_plot(plot_df, aes(Characteristic, Value, fill = Characteristic)) +
+  layers_boxplot(add_jitter = TRUE) +
+  labs(title = "Multi-Characteristic Comparison (Standardized)",
+       x = "Characteristic", y = "Standardized Value") +
+  theme(legend.position = "none")
+p_box
+```
+
+### 3.4 Decision Guide: Interpreting Descriptive Statistics
+
+| Observation | Possible Cause | Recommended Action |
+|-------------|---------------|-------------------|
+| Mean far from target | Process drift; tool wear | Check control chart; recalibrate |
+| High CV (>10%) | Excessive variation | Investigate 4M1E sources |
+| |Skew| > 1 | Non-normal process | Transform data; use nonparametric methods |
+| Kurtosis > 3 (excess) | Heavy tails; mixed populations | Stratify data; check for mixtures |
+| AD p-value < 0.05 | Non-normal | Formal normality test; consider transformation |
+
+## 4. Probability Distributions
+
+### 4.1 The `iqr_prob` Entry Class
+
+The `iqr_prob` R6 class provides an interactive interface for probability
+calculations. You register one or more distributions, then compute probabilities
+or quantiles.
+
+```{r}
+# Create a probability engine
+prob <- iqr_prob$new()
+
+# Register a normal distribution: mean = 25.00, sd = 0.015
+prob$add_dist(type = "norm", params = list(mean = 25.00, sd = 0.015), reset = TRUE)
+
+# P(X <= 25.03) — probability of a part within upper spec
+result <- prob$calc(values = 25.03, mode = "prob", calc_type = "lower")
+p_val <- result$all_res[[1]]$result_p
+cat(sprintf("P(X <= 25.03) = %.4f\n", p_val))
+```
+
+### 4.2 The 12 Registered Distributions
+
+The package supports the following distribution types (using short codes):
+
+| Code | Distribution | Key Parameters | Quality Application |
+|------|-------------|----------------|-------------------|
+| `norm` | Normal | mean, sd | Dimensional measurements |
+| `exp` | Exponential | rate | Constant failure rate |
+| `weibull` | Weibull | shape, scale | Time-to-failure |
+| `lnorm` | Lognormal | meanlog, sdlog | Cycle time |
+| `gamma` | Gamma | shape, rate | Time to $\alpha$ events |
+| `beta` | Beta | shape1, shape2 | Proportions |
+| `unif` | Uniform | min, max | Random sampling |
+| `cauchy` | Cauchy | location, scale | Robust statistics |
+| `t` | Student t | df | Small-sample inference |
+| `f` | F | df1, df2 | Variance comparison |
+| `chisq` | Chi-square | df | Goodness-of-fit |
+| `binom` | Binomial | size, prob | Defective counts |
+| `pois` | Poisson | lambda | Defects per unit |
+| `nbinom` | Negative binomial | size, prob | Overdispersed counts |
+| `hyper` | Hypergeometric | m, n, k | Sampling without replacement |
+| `geom` | Geometric | prob | Trials until first success |
+
+```{r}
+# List all available distributions
+list_prob_distributions()
+```
+
+### 4.3 Quality Scenario: LED Luminaire Failure Time
+
+**Background.** A manufacturer of LED street luminaires needs to estimate the
+probability that a unit survives 50,000 hours of operation. Accelerated life
+testing (ALT) at elevated temperature has yielded a Weibull model with shape
+parameter $\beta = 2.5$ (indicating wear-out failure mode) and scale parameter
+$\eta = 60{,}000$ hours. These parameters are consistent with the L70 lumen
+maintenance data reported in IES TM-21-11 for high-quality LED packages
+operated at 25°C case temperature.
+
+```{r}
+# Weibull model for LED luminaire lifetime
+# shape (beta) = 2.5, scale (eta) = 60000 hours
+# Reference: IES TM-21-11, extrapolated L70 data for mid-power LEDs
+
+# P(T <= 50000) — probability of failure before 50,000 hours
+result <- prob_calc(type = "weibull", x = 50000,
+                    params = list(shape = 2.5, scale = 60000))
+p_fail <- result$all_res[[1]]$result_p
+cat(sprintf("P(failure by 50,000h) = %.4f = %.2f%%\n", p_fail, p_fail * 100))
+cat(sprintf("Reliability R(50,000h) = %.4f = %.2f%%\n", 1 - p_fail, (1 - p_fail) * 100))
+```
+
+```{r}
+# What lifetime corresponds to 1% failure probability (B1 life)?
+result_b1 <- prob_calc(type = "weibull", x = 0.01,
+                       params = list(shape = 2.5, scale = 60000),
+                       mode = "quantile")
+b1_life <- result_b1$all_res[[1]]$result_x
+cat(sprintf("B1 life (1%% failure) = %.0f hours\n", b1_life))
+```
+
+### 4.4 Probability Calculation Modes
+
+The `mode` parameter controls the calculation direction:
+
+| Mode | Input | Output | Question Answered |
+|------|-------|--------|------------------|
+| `"prob"` | x value | P(X ≤ x) | What is the probability of observing this value? |
+| `"quantile"` | probability p | x = F⁻¹(p) | What value corresponds to this probability? |
+| `"interval"` | x1, x2 | P(x1 ≤ X ≤ x2) | What is the probability of falling in this range? |
+
+```{r, eval=FALSE}
+# Interval probability: P(24.985 <= X <= 25.025) for shaft diameter
+prob_calc(type = "norm", x = c(24.985, 25.025),
+          params = list(mean = 25.00, sd = 0.015), mode = "interval")
+```
+
+## 5. Distribution Fitting
+
+### 5.1 Fitting a Single Distribution
+
+`fit_distribution()` fits a specified distribution to data using maximum
+likelihood estimation (MLE) and provides goodness-of-fit statistics:
+
+```{r}
+# Fit Weibull to simulated LED failure data
+set.seed(2026)
+fail_times <- rweibull(80, shape = 2.5, scale = 60000)
+
+fit <- fit_distribution(fail_times, dist = "weibull")
+cat(sprintf("Distribution:  %s\n", fit$dist))
+cat(sprintf("Shape (beta):  %.4f\n", fit$params$shape))
+cat(sprintf("Scale (eta):   %.4f\n", fit$params$scale))
+cat(sprintf("Log-likelihood: %.2f\n", fit$logLik))
+cat(sprintf("AIC:           %.2f\n", fit$AIC))
+cat(sprintf("BIC:           %.2f\n", fit$BIC))
+cat(sprintf("KS p-value:    %.4f\n", fit$ks_test$p.value))
+```
+
+### 5.2 Auto-Fitting Multiple Candidates
+
+When the underlying distribution is unknown, `auto_fit_distribution()` fits
+multiple candidates and ranks them by information criterion:
+
+```{r}
+# Auto-fit: try all applicable distributions and rank
+afit <- auto_fit_distribution(fail_times)
+
+cat("=== Distribution Ranking ===\n")
+for (i in 1:nrow(afit$ranking)) {
+  cat(sprintf("  %d. %-12s  AIC = %.2f  KS p = %.4f\n", i,
+              afit$ranking$dist[i], afit$ranking$AIC[i], afit$ranking$ks_p[i]))
+}
+cat(sprintf("\nBest fit: %s\n", afit$best_dist))
+```
+
+### 5.3 Comparing Fits
+
+```{r}
+# Compare Weibull vs Lognormal vs Gamma for the same data
+fits <- list(
+  weibull  = fit_distribution(fail_times, dist = "weibull"),
+  lognorm  = fit_distribution(fail_times, dist = "lnorm"),
+  gamma    = fit_distribution(fail_times, dist = "gamma")
+)
+
+cat(sprintf("%-12s %10s %10s %10s %10s\n", "Distribution", "LogLik", "AIC", "BIC", "KS p"))
+cat(rep("-", 56), "\n", sep = "")
+for (nm in names(fits)) {
+  f <- fits[[nm]]
+  cat(sprintf("%-12s %10.2f %10.2f %10.2f %10.4f\n",
+              nm, f$logLik, f$AIC, f$BIC, f$ks_test$p.value))
+}
+```
+
+The Weibull fit should have the lowest AIC and the highest KS p-value, since
+the data was generated from a Weibull distribution.
+
+### 5.4 Q-Q Data with `calc_qq_data()`
+
+The `calc_qq_data()` function computes the quantile-quantile coordinates needed
+to assess distributional fit visually:
+
+```{r, eval=FALSE}
+# Compute Q-Q data for the fitted Weibull
+qq <- calc_qq_data(fail_times, dist = "weibull",
+                   params = list(shape = fit$params$shape, scale = fit$params$scale))
+head(qq)
+```
+
+## 6. Data Transformation
+
+### 6.1 Box-Cox Transformation
+
+`box_cox_transform()` finds the optimal $\lambda$ and applies the
+transformation:
+
+```{r}
+# Electroplating cycle time data (seconds)
+# Cycle time typically follows a lognormal distribution
+# Reference: lognormal cycle time is documented in:
+#   John, P. (1971). Statistical Methods in Engineering and Quality Assurance
+set.seed(2026)
+cycle_time <- rlnorm(100, meanlog = log(180), sdlog = 0.25)
+
+bc <- box_cox_transform(cycle_time)
+cat(sprintf("Optimal lambda = %.4f\n", bc$lambda))
+cat(sprintf("Method         = %s\n", bc$method))
+cat(sprintf("Normality before: Shapiro p = %.4f\n", bc$normality_before))
+cat(sprintf("Normality after:  Shapiro p = %.4f\n", bc$normality_after))
+```
+
+A $\lambda$ close to 0 confirms the lognormal nature of the data (since
+$\lambda = 0$ corresponds to a log transformation). The p-value should improve
+substantially after transformation.
+
+### 6.2 Automatic Transformation Selection
+
+`auto_transform()` tries multiple transformation families and selects the best:
+
+```{r}
+at <- auto_transform(cycle_time)
+cat(sprintf("Best method: %s\n", at$best_method))
+cat(sprintf("Criterion:   %s\n", at$criterion))
+
+cat("\n=== Transformation Ranking ===\n")
+for (i in seq_along(at$all_results)) {
+  r <- at$all_results[[i]]
+  cat(sprintf("  %d. %-16s  score = %.4f\n", i, r$method, at$scores[i]))
+}
+```
+
+### 6.3 Available Transformation Methods
+
+| Function | Formula | When to Use |
+|----------|---------|-------------|
+| `box_cox_transform()` | $(y^\lambda - 1)/\lambda$ | Positive data; flexible |
+| `yeo_johnson_transform()` | Piecewise | Data with zeros or negatives |
+| `johnson_transform()` | SU/SB/SL system | Extreme non-normality |
+| `log_transform()` | $\ln(y)$ | Multiplicative processes |
+| `sqrt_transform()` | $\sqrt{y}$ | Count data; Poisson-like |
+| `reciprocal_transform()` | $1/y$ | Rate data |
+| `auto_transform()` | Best of above | When unsure |
+
+### 6.4 Inverse Transformation
+
+After computing statistics on transformed data, use `inverse_transform()` to
+back-transform results to the original scale:
+
+```{r, eval=FALSE}
+# Transform, compute CI on transformed scale, back-transform
+bc_data <- bc$transformed
+ci_trans <- desc_calc(bc_data)$ci_mean
+ci_orig <- inverse_transform(ci_trans, lambda = bc$lambda, method = "box_cox")
+```
+
+## 7. Quality Scenario: Plating Line Cycle Time
+
+**Background.** An electroplating line produces gold-plated connectors. The
+quality engineer needs to establish process capability for cycle time (the time
+to complete one plating rack). Cycle time is critical because it determines
+throughput and affects coating thickness uniformity. The spec requires cycle
+time between 120 and 240 seconds.
+
+The engineer collects 100 consecutive cycle-time measurements. Because cycle
+time is bounded below by zero and right-skewed, it is expected to follow a
+lognormal distribution. The goal is to:
+
+1. Describe the data
+2. Fit a distribution
+3. Transform to normality for capability analysis
+
+### Step 1: Describe
+
+```{r}
+set.seed(2026)
+plating_cycle <- rlnorm(100, meanlog = log(175), sdlog = 0.22)
+
+desc <- desc_calc(plating_cycle)
+cat(sprintf("Mean      = %.2f s\n", desc$mean))
+cat(sprintf("Median    = %.2f s\n", desc$median))
+cat(sprintf("Std dev   = %.2f s\n", desc$stdev))
+cat(sprintf("Skewness  = %.4f\n", desc$skew))
+cat(sprintf("AD p-value= %.4f\n", desc$p_value))
+cat(sprintf("95%% CI mean = [%.2f, %.2f]\n", desc$ci_mean[1], desc$ci_mean[2]))
+```
+
+The positive skewness and low AD p-value confirm the data is right-skewed and
+non-normal.
+
+### Step 2: Fit
+
+```{r}
+# Auto-fit multiple distributions
+afit <- auto_fit_distribution(plating_cycle)
+cat(sprintf("Best distribution: %s\n", afit$best_dist))
+
+# Fit lognormal explicitly
+fit_ln <- fit_distribution(plating_cycle, dist = "lnorm")
+cat(sprintf("Lognormal: meanlog = %.4f, sdlog = %.4f\n",
+            fit_ln$params$meanlog, fit_ln$params$sdlog))
+cat(sprintf("KS p-value = %.4f\n", fit_ln$ks_test$p.value))
+```
+
+### Step 3: Transform
+
+```{r}
+bc <- box_cox_transform(plating_cycle)
+cat(sprintf("Optimal lambda = %.4f (close to 0 → log transform)\n", bc$lambda))
+cat(sprintf("Normality before: p = %.4f\n", bc$normality_before))
+cat(sprintf("Normality after:  p = %.4f\n", bc$normality_after))
+
+# Descriptive statistics on transformed data
+desc_trans <- desc_calc(bc$transformed)
+cat(sprintf("\nTransformed mean = %.4f\n", desc_trans$mean))
+cat(sprintf("Transformed SD   = %.4f\n", desc_trans$stdev))
+cat(sprintf("Transformed skew = %.4f (near zero ✓)\n", desc_trans$skew))
+```
+
+### Step 4: Visualize the Transformation
+
+```{r, fig.width=8, fig.height=4}
+# Before vs after transformation: side-by-side histograms
+df_compare <- data.frame(
+  value = c(plating_cycle, bc$transformed),
+  group = rep(c("Original", "Transformed"), each = length(plating_cycle))
+)
+
+p <- base_plot(df_compare, aes(value, fill = group)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 20, alpha = 0.6,
+                 position = "identity") +
+  geom_density(alpha = 0.2, linewidth = 0.8) +
+  facet_wrap(~ group, scales = "free") +
+  labs(title = "Plating Cycle Time: Before vs After Box-Cox Transformation",
+       x = "Value", y = "Density") +
+  theme(legend.position = "none")
+p
+```
+
+The transformed data is visibly more symmetric and bell-shaped, confirming that
+the Box-Cox transformation has successfully normalized the data. The engineer
+can now proceed with capability analysis on the transformed scale.
+
+## 8. Parameter Reference
+
+### 8.1 Descriptive Statistics Functions
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `desc_calc()` | `desc_calc(x, conf = 0.95)` | List: n, mean, stdev, median, min, max, range, q1, q3, iqr, skew, kurt, cv, ad_stat, p_value, ci_mean, se |
+| `desc_analyze()` | `desc_analyze(data, vars = NULL, conf = 0.95)` | List keyed by variable name |
+| `iqr_desc()` | `iqr_desc(data, vars = NULL, conf = 0.95, plot = FALSE, report = FALSE)` | List or report |
+| `desc_hist()` | `desc_hist(x, ...)` | ggplot object |
+| `desc_box()` | `desc_box(data, vars = NULL, ...)` | ggplot object |
+
+### 8.2 Probability Distribution Functions
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `iqr_prob$new()` | — | R6 object |
+| `$add_dist()` | `add_dist(type, params, loc = 0, reset = FALSE)` | self |
+| `$calc()` | `calc(values, mode = "prob", calc_type = "lower")` | List with `all_res` |
+| `prob_calc()` | `prob_calc(type, x, params, mode = "prob")` | List with `all_res` |
+| `list_prob_distributions()` | — | Character vector |
+
+### 8.3 Distribution Fitting Functions
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `fit_distribution()` | `fit_distribution(x, dist)` | List: dist, params, logLik, AIC, BIC, ks_test, n, data |
+| `auto_fit_distribution()` | `auto_fit_distribution(x)` | List: best_dist, best_result, all_results, ranking, criterion |
+| `compare_fits()` | `compare_fits(x, distributions)` | Comparison list |
+| `calc_qq_data()` | `calc_qq_data(x, dist, params)` | Data frame of Q-Q coordinates |
+
+### 8.4 Data Transformation Functions
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `box_cox_transform()` | `box_cox_transform(x, lambda = NULL)` | List: transformed, lambda, original, method, normality_before, normality_after |
+| `yeo_johnson_transform()` | `yeo_johnson_transform(x, lambda = NULL)` | Similar structure |
+| `johnson_transform()` | `johnson_transform(x)` | Similar structure |
+| `auto_transform()` | `auto_transform(x)` | List: best_method, best_result, all_results, scores, criterion |
+| `inverse_transform()` | `inverse_transform(x, lambda, method)` | Numeric vector |
+
+## 9. References
+
+1. Montgomery, D.C. (2013). *Introduction to Statistical Quality Control*, 7th
+   Edition. John Wiley & Sons. — Turning operation and dimensional measurement
+   case studies (Ch. 5–6).
+
+2. IES TM-21-11 (2011). *Projecting Long Term Lumen Maintenance of LED Light
+   Sources*. Illuminating Engineering Society. — Basis for the LED Weibull
+   lifetime model parameters.
+
+3. John, P.W.M. (1971). *Statistical Methods in Engineering and Quality
+   Assurance*. John Wiley & Sons. — Lognormal distribution in cycle-time
+   analysis.
+
+4. Box, G.E.P. & Cox, D.R. (1964). "An Analysis of Transformations."
+   *Journal of the Royal Statistical Society, Series B*, 26(2), 211–252. —
+   The original Box-Cox transformation paper.
+
+5. Yeo, I.K. & Johnson, R.A. (2000). "A New Family of Power Transformations to
+   Improve Normality or Symmetry." *Biometrika*, 87(4), 954–959.
+
+6. Johnson, N.L., Kotz, S. & Balakrishnan, N. (1994). *Continuous Univariate
+   Distributions*, Vol. 1, 2nd Edition. John Wiley & Sons.
+
+## Further Reading
+
+- For normality testing (the formal next step after descriptive screening),
+  see `vignette("hypothesis-testing-and-intervals", package = "iQualityR.stat")`.
+- For capability analysis on transformed data, see
+  `vignette("process-control-and-capability", package = "iQualityR.stat")`.
+- For the visualization infrastructure used by `desc_hist()` and `desc_box()`,
+  see `vignette("plotting-overview", package = "iQualityR.plot")`.

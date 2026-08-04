@@ -31,6 +31,7 @@ Especially useful when reporting to management, colleagues, or customers.
 \item \href{#method-StatInterpreter-interpret_htest}{\code{StatInterpreter$interpret_htest()}}
 \item \href{#method-StatInterpreter-interpret_anova}{\code{StatInterpreter$interpret_anova()}}
 \item \href{#method-StatInterpreter-interpret_normality}{\code{StatInterpreter$interpret_normality()}}
+\item \href{#method-StatInterpreter-interpret_resampling}{\code{StatInterpreter$interpret_resampling()}}
 \item \href{#method-StatInterpreter-clone}{\code{StatInterpreter$clone()}}
 }
 }
@@ -145,6 +146,28 @@ Interpret normality test result
 \item{\code{audience}}{Audience level}
 
 \item{\code{diagnose}}{Diagnostic result (optional)}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Interpretation string
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-StatInterpreter-interpret_resampling"></a>}}
+\if{latex}{\out{\hypertarget{method-StatInterpreter-interpret_resampling}{}}}
+\subsection{Method \code{interpret_resampling()}}{
+Interpret resampling result (bootstrap CI / permutation test)
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{StatInterpreter$interpret_resampling(resampling_result, audience = "manager")}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{resampling_result}}{A \code{stat_result} from \code{ResamplingAnalyzer}.}
+
+\item{\code{audience}}{Audience level}
 }
 \if{html}{\out{</div>}}
 }

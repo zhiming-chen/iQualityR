@@ -5,21 +5,24 @@
 \title{Effect size calculation}
 \usage{
 effect_size(
-  type = c("cohens_d", "hedges_g", "eta_squared", "cohens_h", "r"),
+  type = c("cohens_d", "hedges_g", "eta_squared", "omega_squared", "cohens_h", "r"),
   ...
 )
 }
 \arguments{
-\item{type}{Effect size type ("cohens_d", "hedges_g", "eta_squared", "cohens_h", "r")}
+\item{type}{Effect size type (\code{"cohens_d"}, \code{"hedges_g"}, \code{"eta_squared"},
+\code{"omega_squared"}, \code{"cohens_h"}, \code{"r"})}
 
 \item{...}{Different parameters based on type}
 }
 \value{
-Effect size value
+Effect size value (scalar numeric)
 }
 \description{
-Calculates common effect size metrics (Cohen's d, Hedges' g, eta squared, etc.).
+Calculates common effect size metrics (Cohen's d, Hedges' g, eta squared,
+omega squared, Cohen's h, r).
 }
 \examples{
 effect_size("cohens_d", mean1 = 10, mean2 = 11, sd_pooled = 1.5)
+effect_size("omega_squared", F = 10, df_between = 2, df_within = 60)
 }

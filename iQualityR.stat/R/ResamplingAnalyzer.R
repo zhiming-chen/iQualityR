@@ -1,0 +1,473 @@
+# =============================================================================
+# File: R/ResamplingAnalyzer.R
+# Description: Resampling engine (pure computation, zero graphics, zero
+#              reporting overhead). L1 engine layer per
+#              STAT_ANALYSIS_PLAN.md v2.0 -- returns stat_result S3 objects so
+#              downstream L2/L3 layers can uniformly inspect/test the result.
+#
+#              Two resampling procedures:
+#                bootstrap_ci      - Bootstrap confidence interval for any
+#                                     scalar statistic. Supports four interval
+#                                     methods: BCa (default), percentile, basic
+#                                     and normal.
+#                permutation_test  - Permutation / randomization test. Supports
+#                                     two-sample (label shuffle), paired
+#                                     (sign-flip on differences) and one-sample
+#                                     (sign-flip on (x - mu)) designs.
+# =============================================================================
+
+#' @title ResamplingAnalyzer: Resampling Engine
+#' @description
+#' Pure computation engine for bootstrap confidence intervals and permutation
+#' tests, returning structured `stat_result` S3 objects (class
+#' `c("stat_result", "resampling_result")`). Called by `iqr_resampling` and
+#' internal subpackage functions.
+#'
+#' **Supported resampling types**:
+#' - `bootstrap_ci`: Bootstrap confidence interval for any scalar statistic
+#'   (BCa / percentile / basic / normal)
+#' - `permutation_test`: Permutation (randomization) test for two-sample /
+#'   paired / one-sample designs
+#'
+#' @export
+ResamplingAnalyzer <- R6::R6Class("ResamplingAnalyzer",
+  public = list(
+
+    #' @description Run a resampling procedure by type code
+    #' @param resample_type One of: `"bootstrap_ci"`, `"permutation_test"`.
+    #' @param ... Parameters forwarded to the matching private method.
+    #' @return A `stat_result` S3 object (class
+    #'   `c("stat_result", "resampling_result")`).
+    analyze = function(resample_type, ...) {
+      args <- list(...)
+      result <- switch(resample_type,
+        "bootstrap_ci"     = private$.bootstrap_ci(args),
+        "permutation_test" = private$.permutation_test(args),
+        stop(sprintf("Unknown resample type: %s", resample_type))
+      )
+      result
+    },
+
+    #' @description Bootstrap confidence interval for a scalar statistic
+    #'
+    #' Draws `R` bootstrap resamples (with replacement) from `data`, recomputes
+    #' `statistic(data)` on each resample, and returns a confidence interval
+    #' for the population value of the statistic. Four interval methods are
+    #' supported:
+    #' - `"bca"` (default): bias-corrected and accelerated -- the most
+    #'   accurate general-purpose bootstrap CI. Uses jackknife acceleration
+    #'   and bias-correction via the inverse-normal transform.
+    #' - `"perc"`: percentile interval -- takes empirical quantiles of the
+    #'   bootstrap distribution.
+    #' - `"basic"`: basic / pivotal interval -- `2*theta_hat - quantile`.
+    #' - `"norm"`: normal approximation -- `theta_hat +/- z * se_boot`.
+    #'
+    #' @param statistic A function that takes `data` (a data frame or vector
+    #'   of the same type as `data`) and returns a single numeric scalar.
+    #' @param data The sample data. Either a data frame (rows are resampled)
+    #'   or a numeric vector (elements are resampled).
+    #' @param R Number of bootstrap replicates (default 9999).
+    #' @param conf_level Confidence level (default 0.95).
+    #' @param method Interval method: `"bca"` (default), `"perc"`, `"basic"`,
+    #'   `"norm"`.
+    #' @param alternative Direction: `"two.sided"` (default), `"less"`,
+    #'   `"greater"`. One-sided intervals return `-Inf` / `Inf` on the
+    #'   unbounded side.
+    #' @param seed Optional integer seed for reproducibility. When supplied,
+    #'   the global RNG state is saved and restored on exit.
+    #' @return A `stat_result` S3 object.
+    bootstrap_ci = function(statistic, data, R = 9999, conf_level = 0.95,
+                            method = c("bca", "perc", "basic", "norm"),
+                            alternative = "two.sided", seed = NULL) {
+      method <- match.arg(method)
+      private$.bootstrap_ci(list(
+        statistic = statistic, data = data, R = R, conf_level = conf_level,
+        method = method, alternative = alternative, seed = seed
+      ))
+    },
+
+    #' @description Permutation (randomization) test
+    #'
+    #' Tests whether an observed statistic is extreme under a null
+    #' distribution built by repeatedly reshuffling the sample labels (or
+    #' flipping signs, for paired / one-sample designs). The default
+    #' statistic depends on the design:
+    #' - Two-sample (`x` and `y`, `paired = FALSE`): `mean(x) - mean(y)`,
+    #'   null generated by shuffling the group labels on the pooled data.
+    #' - Paired (`x` and `y`, `paired = TRUE`): `mean(x - y)`, null
+    #'   generated by flipping the signs of the paired differences.
+    #' - One-sample (`x` only): `mean(x - mu)`, null generated by flipping
+    #'   the signs of `x - mu` (default `mu = 0`).
+    #'
+    #' A user-supplied `statistic` function overrides the default; its
+    #' signature must match the design (`function(x, y)` for two-sample,
+    #' `function(z)` for paired / one-sample).
+    #'
+    #' @param statistic Optional statistic function (see description). If
+    #'   `NULL`, the design-appropriate default is used.
+    #' @param x Numeric vector (first sample, or the sample for one-sample).
+    #' @param y Optional numeric vector (second sample).
+    #' @param alternative Direction: `"two.sided"` (default), `"less"`,
+    #'   `"greater"`.
+    #' @param R Number of permutations (default 9999).
+    #' @param paired Logical; if `TRUE` and `y` is supplied, perform a paired
+    #'   sign-flipping test. Ignored when `y` is `NULL`.
+    #' @param mu Null-hypothesis location for the one-sample case (default 0).
+    #'   Ignored when `y` is supplied.
+    #' @param seed Optional integer seed for reproducibility.
+    #' @return A `stat_result` S3 object.
+    permutation_test = function(statistic = NULL, x, y = NULL,
+                                alternative = "two.sided", R = 9999,
+                                paired = FALSE, mu = 0, seed = NULL) {
+      private$.permutation_test(list(
+        statistic = statistic, x = x, y = y, alternative = alternative,
+        R = R, paired = paired, mu = mu, seed = seed
+      ))
+    }
+  ),
+
+  private = list(
+    # =========================================================================
+    # Bootstrap CI
+    # =========================================================================
+
+    .bootstrap_ci = function(args) {
+      statistic   <- args$statistic
+      data        <- args$data
+      R           <- args$R %||% 9999L
+      conf_level  <- args$conf_level %||% 0.95
+      method      <- args$method %||% "bca"
+      alternative <- args$alternative %||% "two.sided"
+      seed        <- args$seed
+
+      if (!is.function(statistic))
+        stop("bootstrap_ci: 'statistic' must be a function.", call. = FALSE)
+      if (is.null(data))
+        stop("bootstrap_ci: 'data' is required.", call. = FALSE)
+      is_df <- is.data.frame(data)
+      n <- if (is_df) nrow(data) else length(data)
+      if (n < 2L)
+        stop("bootstrap_ci: 'data' must have at least 2 observations.",
+             call. = FALSE)
+      R <- as.integer(R)
+      if (R < 50L)
+        stop("bootstrap_ci: 'R' must be at least 50.", call. = FALSE)
+      alternative <- match.arg(alternative, c("two.sided", "less", "greater"))
+
+      # Observed statistic
+      theta_hat <- tryCatch(statistic(data),
+                            error = function(e)
+                              stop("bootstrap_ci: 'statistic(data)' failed: ",
+                                   conditionMessage(e), call. = FALSE))
+      if (!is.numeric(theta_hat) || length(theta_hat) != 1L)
+        stop("bootstrap_ci: 'statistic' must return a single numeric value.",
+             call. = FALSE)
+      theta_hat <- as.numeric(theta_hat)
+
+      # Reproducibility: save / restore global RNG state
+      rng_saved <- private$.save_rng(seed)
+      on.exit(private$.restore_rng(rng_saved), add = TRUE)
+
+      # Bootstrap replicates: resample rows / indices with replacement
+      boot_stats <- vapply(seq_len(R), function(i) {
+        idx <- sample.int(n, size = n, replace = TRUE)
+        if (is_df) {
+          statistic(data[idx, , drop = FALSE])
+        } else {
+          statistic(data[idx])
+        }
+      }, numeric(1L))
+
+      # Guard against non-finite replicates (statistic may return NA on degenerate resamples)
+      finite_mask <- is.finite(boot_stats)
+      n_finite <- sum(finite_mask)
+      if (n_finite < R * 0.5)
+        warning(sprintf("bootstrap_ci: %.1f%% of replicates were non-finite; CI may be unreliable.",
+                        100 * (1 - n_finite / R)), call. = FALSE)
+      boot_stats <- boot_stats[finite_mask]
+
+      # CI by method
+      alpha <- 1 - conf_level
+      ci <- switch(method,
+        "perc"  = private$.perc_ci(boot_stats, alpha, alternative),
+        "basic" = private$.basic_ci(boot_stats, theta_hat, alpha, alternative),
+        "norm"  = private$.norm_ci(boot_stats, theta_hat, alpha, alternative),
+        "bca"   = private$.bca_ci(boot_stats, theta_hat, data, statistic,
+                                  alpha, alternative, is_df, n)
+      )
+
+      bias <- mean(boot_stats) - theta_hat
+      se   <- stats::sd(boot_stats)
+
+      res <- list(
+        test_type   = "bootstrap_ci",
+        method      = sprintf("Bootstrap CI (%s, R = %d)", toupper(method), R),
+        data_name   = sprintf("statistic(data), n = %d", n),
+        statistic   = c(bootstrap = theta_hat),
+        parameter   = c(R = R, n = n, method = NA),
+        p.value     = NULL,
+        conf.int    = ci,
+        conf.level  = conf_level,
+        estimate    = c(statistic = theta_hat),
+        null.value  = NULL,
+        alternative = alternative,
+        replicates  = boot_stats,
+        boot_bias   = bias,
+        boot_se     = se,
+        boot_method = method,
+        R           = R,
+        n           = n,
+        seed        = seed,
+        data        = NULL,
+        dist_type   = "bootstrap"
+      )
+      class(res) <- c("stat_result", "resampling_result")
+      res$domain <- "resampling"
+      res
+    },
+
+    # Percentile interval: empirical quantiles of bootstrap distribution
+    .perc_ci = function(boot_stats, alpha, alternative) {
+      if (alternative == "two.sided") {
+        as.numeric(stats::quantile(boot_stats,
+                                   probs = c(alpha / 2, 1 - alpha / 2),
+                                   na.rm = TRUE))
+      } else if (alternative == "less") {
+        c(-Inf, as.numeric(stats::quantile(boot_stats,
+                                           probs = 1 - alpha, na.rm = TRUE)))
+      } else {
+        c(as.numeric(stats::quantile(boot_stats,
+                                     probs = alpha, na.rm = TRUE)), Inf)
+      }
+    },
+
+    # Basic / pivotal interval: 2*theta_hat - quantile(1-alpha/2), etc.
+    .basic_ci = function(boot_stats, theta_hat, alpha, alternative) {
+      if (alternative == "two.sided") {
+        qs <- stats::quantile(boot_stats,
+                              probs = c(alpha / 2, 1 - alpha / 2), na.rm = TRUE)
+        c(2 * theta_hat - qs[2], 2 * theta_hat - qs[1])
+      } else if (alternative == "less") {
+        q_hi <- stats::quantile(boot_stats, probs = 1 - alpha, na.rm = TRUE)
+        c(-Inf, 2 * theta_hat - q_hi)
+      } else {
+        q_lo <- stats::quantile(boot_stats, probs = alpha, na.rm = TRUE)
+        c(2 * theta_hat - q_lo, Inf)
+      }
+    },
+
+    # Normal approximation interval: theta_hat +/- z * se_boot
+    .norm_ci = function(boot_stats, theta_hat, alpha, alternative) {
+      se <- stats::sd(boot_stats)
+      if (alternative == "two.sided") {
+        z <- stats::qnorm(1 - alpha / 2)
+        c(theta_hat - z * se, theta_hat + z * se)
+      } else if (alternative == "less") {
+        c(-Inf, theta_hat + stats::qnorm(1 - alpha) * se)
+      } else {
+        c(theta_hat - stats::qnorm(1 - alpha) * se, Inf)
+      }
+    },
+
+    # BCa interval: bias-correction z0 + jackknife acceleration a
+    .bca_ci = function(boot_stats, theta_hat, data, statistic,
+                       alpha, alternative, is_df, n) {
+      R <- length(boot_stats)
+
+      # z0: bias-correction = proportion of replicates < theta_hat, on z-scale
+      prop_less <- mean(boot_stats < theta_hat)
+      # Guard against 0 / 1 edge cases
+      if (prop_less <= 0) prop_less <- 1 / (2 * R)
+      if (prop_less >= 1) prop_less <- 1 - 1 / (2 * R)
+      z0 <- stats::qnorm(prop_less)
+
+      # Acceleration a via jackknife
+      jack_stats <- vapply(seq_len(n), function(i) {
+        if (is_df) {
+          statistic(data[-i, , drop = FALSE])
+        } else {
+          statistic(data[-i])
+        }
+      }, numeric(1L))
+      jack_mean <- mean(jack_stats, na.rm = TRUE)
+      diff_sq   <- (jack_mean - jack_stats)^2
+      num <- sum(diff_sq * (jack_mean - jack_stats))
+      den <- 6 * (sum(diff_sq))^(3 / 2)
+      a_acc <- if (den == 0 || !is.finite(den)) 0 else num / den
+
+      # BCa-adjusted quantile probabilities
+      .adj_prob <- function(p) {
+        z_p <- stats::qnorm(p)
+        stats::pnorm(z0 + (z0 + z_p) / (1 - a_acc * (z0 + z_p)))
+      }
+
+      if (alternative == "two.sided") {
+        adj_lo <- .adj_prob(alpha / 2)
+        adj_hi <- .adj_prob(1 - alpha / 2)
+        ci <- stats::quantile(boot_stats, probs = c(adj_lo, adj_hi), na.rm = TRUE)
+        return(as.numeric(ci))
+      } else if (alternative == "less") {
+        adj_hi <- .adj_prob(1 - alpha)
+        ci <- stats::quantile(boot_stats, probs = adj_hi, na.rm = TRUE)
+        return(c(-Inf, as.numeric(ci)))
+      } else {
+        adj_lo <- .adj_prob(alpha)
+        ci <- stats::quantile(boot_stats, probs = adj_lo, na.rm = TRUE)
+        return(c(as.numeric(ci), Inf))
+      }
+    },
+
+    # =========================================================================
+    # Permutation test
+    # =========================================================================
+
+    .permutation_test = function(args) {
+      statistic   <- args$statistic
+      x           <- args$x
+      y           <- args$y
+      alternative <- args$alternative %||% "two.sided"
+      R           <- args$R %||% 9999L
+      paired      <- isTRUE(args$paired)
+      mu          <- args$mu %||% 0
+      seed        <- args$seed
+
+      if (is.null(x))
+        stop("permutation_test: 'x' is required.", call. = FALSE)
+      if (!is.numeric(x))
+        stop("permutation_test: 'x' must be numeric.", call. = FALSE)
+      alternative <- match.arg(alternative, c("two.sided", "less", "greater"))
+      R <- as.integer(R)
+      if (R < 100L)
+        stop("permutation_test: 'R' must be at least 100.", call. = FALSE)
+
+      rng_saved <- private$.save_rng(seed)
+      on.exit(private$.restore_rng(rng_saved), add = TRUE)
+
+      if (!is.null(y)) {
+        # ---- Two-sample / paired ----
+        if (!is.numeric(y))
+          stop("permutation_test: 'y' must be numeric.", call. = FALSE)
+        if (paired) {
+          if (length(x) != length(y))
+            stop("permutation_test: paired=TRUE requires length(x) == length(y).",
+                 call. = FALSE)
+          d <- x - y
+          n <- length(d)
+          stat_fn <- if (is.null(statistic)) function(z) mean(z) else statistic
+          observed <- stat_fn(d)
+          perm_stats <- vapply(seq_len(R), function(i) {
+            signs <- sample(c(-1, 1), n, replace = TRUE)
+            stat_fn(d * signs)
+          }, numeric(1L))
+          design  <- "paired"
+          method  <- "Permutation test (paired, sign-flipping)"
+          data_nm <- sprintf("paired x - y, n = %d", n)
+          n_total <- n
+          null_val <- c(mean_difference = 0)
+        } else {
+          pooled <- c(x, y)
+          n_x    <- length(x)
+          n_y    <- length(y)
+          n_total <- n_x + n_y
+          stat_fn <- if (is.null(statistic)) function(a, b) mean(a) - mean(b)
+                     else statistic
+          observed <- stat_fn(x, y)
+          perm_stats <- vapply(seq_len(R), function(i) {
+            idx <- sample.int(n_total, n_x)
+            stat_fn(pooled[idx], pooled[-idx])
+          }, numeric(1L))
+          design  <- "two-sample"
+          method  <- "Permutation test (two-sample, label-shuffling)"
+          data_nm <- sprintf("x (n=%d) and y (n=%d)", n_x, n_y)
+          null_val <- c(mean_difference = 0)
+        }
+      } else {
+        # ---- One-sample (sign-flip on x - mu) ----
+        z <- x - mu
+        n <- length(z)
+        stat_fn <- if (is.null(statistic)) function(v) mean(v) else statistic
+        observed <- stat_fn(z)
+        perm_stats <- vapply(seq_len(R), function(i) {
+          signs <- sample(c(-1, 1), n, replace = TRUE)
+          stat_fn(z * signs)
+        }, numeric(1L))
+        design   <- "one-sample"
+        method   <- sprintf("Permutation test (one-sample, sign-flipping, mu = %g)", mu)
+        data_nm  <- sprintf("x (n=%d), mu = %g", n, mu)
+        n_total  <- n
+        null_val <- c(mean = mu)
+      }
+
+      # Validate observed / replicates are scalar numeric
+      if (!is.numeric(observed) || length(observed) != 1L)
+        stop("permutation_test: statistic must return a single numeric value.",
+             call. = FALSE)
+      observed <- as.numeric(observed)
+
+      # p-value: (count + 1) / (R + 1) -- the +1 keeps p > 0 and is the
+      # standard permutation-test convention (includes the observed statistic
+      # as one permutation).
+      p_val <- switch(alternative,
+        "two.sided" = (sum(abs(perm_stats) >= abs(observed)) + 1) / (R + 1),
+        "greater"   = (sum(perm_stats >= observed) + 1) / (R + 1),
+        "less"      = (sum(perm_stats <= observed) + 1) / (R + 1)
+      )
+      p_val <- min(p_val, 1)
+
+      res <- list(
+        test_type    = "permutation_test",
+        method       = method,
+        data_name    = data_nm,
+        statistic    = c(permutation = observed),
+        parameter    = c(R = R, n = n_total),
+        p.value      = p_val,
+        conf.int     = NULL,
+        conf.level   = NA_real_,
+        estimate     = c(statistic = observed),
+        null.value   = null_val,
+        alternative  = alternative,
+        replicates   = perm_stats,
+        design       = design,
+        R            = R,
+        n            = n_total,
+        paired       = paired,
+        mu           = if (is.null(y)) mu else NA,
+        seed         = seed,
+        data         = NULL,
+        dist_type    = "permutation"
+      )
+      class(res) <- c("stat_result", "resampling_result")
+      res$domain <- "resampling"
+      res
+    },
+
+    # =========================================================================
+    # RNG save / restore helpers
+    # =========================================================================
+
+    # Save the current global RNG state, optionally set a seed. Returns an
+    # opaque list that .restore_rng() consumes.
+    .save_rng = function(seed = NULL) {
+      has_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+      old_seed <- if (has_seed) get(".Random.seed", envir = .GlobalEnv,
+                                    inherits = FALSE) else NULL
+      if (!is.null(seed)) {
+        set.seed(seed)
+      }
+      list(old_seed = old_seed, had_seed = has_seed)
+    },
+
+    .restore_rng = function(state) {
+      if (is.null(state)) return(invisible(NULL))
+      if (state$had_seed && !is.null(state$old_seed)) {
+        assign(".Random.seed", state$old_seed, envir = .GlobalEnv,
+               inherits = FALSE)
+      } else if (state$had_seed) {
+        # existed but somehow NULL -- remove
+        if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
+          rm(list = ".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+      }
+      invisible(NULL)
+    }
+  )
+)

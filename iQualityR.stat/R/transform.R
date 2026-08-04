@@ -398,7 +398,7 @@ inverse_transform <- function(transformed, method, params = list()) {
       "10" = 10^transformed - add_constant,
       "2" = 2^transformed - add_constant
     )
-  } else if (grepl("sqrt", method_lower)) {
+  } else if (grepl("sqrt|square.root", method_lower)) {
     add_constant <- params$add_constant %||% 0
     transformed^2 - add_constant
   } else if (grepl("reciprocal", method_lower)) {

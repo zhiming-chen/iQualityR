@@ -6,13 +6,72 @@
 \description{
 Output test results as console report, data frame, or Excel file.
 }
+\section{Super classes}{
+\code{\link[iQualityR.core:IqrReporter]{iQualityR.core::IqrReporter}} -> \code{\link[iQualityR.stat:StatReporter]{iQualityR.stat::StatReporter}} -> \code{NormalityReporter}
+}
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
+\item \href{#method-NormalityReporter-report}{\code{NormalityReporter$report()}}
 \item \href{#method-NormalityReporter-print_console}{\code{NormalityReporter$print_console()}}
 \item \href{#method-NormalityReporter-to_dataframe}{\code{NormalityReporter$to_dataframe()}}
 \item \href{#method-NormalityReporter-to_excel}{\code{NormalityReporter$to_excel()}}
 \item \href{#method-NormalityReporter-clone}{\code{NormalityReporter$clone()}}
+}
+}
+\if{html}{\out{
+<details><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export'><code>iQualityR.core::IqrReporter$export()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export_excel"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export_excel'><code>iQualityR.core::IqrReporter$export_excel()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="export_rmd"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-export_rmd'><code>iQualityR.core::IqrReporter$export_rmd()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="register"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-register'><code>iQualityR.core::IqrReporter$register()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrReporter" data-id="render"><a href='../../iQualityR.core/html/IqrReporter.html#method-IqrReporter-render'><code>iQualityR.core::IqrReporter$render()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatReporter" data-id="initialize"><a href='../../iQualityR.stat/html/StatReporter.html#method-StatReporter-initialize'><code>iQualityR.stat::StatReporter$initialize()</code></a></span></li>
+</ul>
+</details>
+}}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-NormalityReporter-report"></a>}}
+\if{latex}{\out{\hypertarget{method-NormalityReporter-report}{}}}
+\subsection{Method \code{report()}}{
+Unified report entry point (Contract 2 signature).
+
+Dispatches on \code{format}:
+\itemize{
+\item \code{"console"}: prints a human-readable summary to stdout.
+\item \code{"data.frame"}: returns a tidy data frame.
+\item \code{"excel"}: writes a themed xlsx file via \code{ExcelExporter}.
+}
+
+Legacy \verb{$print_console} / \verb{$to_dataframe} / \verb{$to_excel} methods are kept
+as thin wrappers for back-compat with existing callers.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{NormalityReporter$report(
+  result,
+  format = c("data.frame", "console", "excel"),
+  path = NULL,
+  audience = "manager"
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{result}}{A normality test result list (from \code{NormalityAnalyzer}).}
+
+\item{\code{format}}{Output format: \code{"data.frame"} (default), \code{"console"}, or \code{"excel"}.}
+
+\item{\code{path}}{File path for \code{format = "excel"}.}
+
+\item{\code{audience}}{Audience level forwarded to the interpreter when
+\code{format = "console"}.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+For \code{"data.frame"}: a data frame. For \code{"console"}/\code{"excel"}:
+invisible(NULL) / invisible(path).
 }
 }
 \if{html}{\out{<hr>}}
@@ -58,7 +117,7 @@ Convert results to data frame
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{results}}{Test result list (supports multiple variables)}
+\item{\code{results}}{Test result list (single result or list of results for multiple variables)}
 }
 \if{html}{\out{</div>}}
 }

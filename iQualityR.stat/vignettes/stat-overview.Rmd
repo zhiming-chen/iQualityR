@@ -1,0 +1,390 @@
+---
+title: "Statistical Methods for Quality: An Overview"
+author: "iQualityR.stat Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Statistical Methods for Quality: An Overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+library(iQualityR.stat)
+library(iQualityR.plot)
+library(ggplot2)
+
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
+```
+
+## 1. Introduction
+
+### 1.1 The Role of Statistics in Quality Engineering
+
+Modern quality engineering rests on a foundation of statistical thinking. From
+Walter Shewhart's invention of the control chart in the 1920s, through Genichi
+Taguchi's robust design methods, to today's Six Sigma deployments, every major
+advance in quality management has been driven by a statistical insight. The
+reason is fundamental: **quality is inherently about variation**, and statistics
+is the science of describing, explaining, and controlling variation.
+
+Consider the daily decisions a quality professional faces:
+
+- Is the process mean on target? (hypothesis testing)
+- What range contains the true mean? (confidence intervals)
+- Will the next part meet specification? (prediction intervals)
+- How many parts must I measure to be confident? (sample size)
+- Is the process capable of meeting customer requirements? (capability analysis)
+- Which supplier has the best process? (ANOVA)
+- Can I predict defects from process settings? (regression)
+- Is the measurement system adequate? (MSA — handled by `iQualityR.msa`)
+
+Each of these questions is a statistical question. The `iQualityR.stat` package
+provides a unified, theory-driven toolkit for answering them within a single
+coherent workflow.
+
+### 1.2 Design Philosophy: The `iqr_*` Entry Pattern
+
+The package is organized around **entry classes** — R6 objects that serve as
+the user's primary interface to each statistical module. Each entry class
+encapsulates three layers of responsibility behind a simple lifecycle:
+
+```
+User (you)
+  │
+  ▼
+iqr_*  entry class  ──►  Analyzer (L1: compute)
+  │                     ──►  Plotter  (L2: visualize)
+  │                     ──►  Reporter (L2: export)
+  │                     ──►  Interpreter (L2: explain)
+  ▼
+stat_result (S3)
+```
+
+- **L1 Engine (Analyzer):** Performs the statistical computation and returns a
+  `stat_result` S3 object — a structured, serializable result containing
+  statistics, p-values, confidence intervals, and metadata.
+- **L2 Presentation (Plotter / Reporter / Interpreter):** Transforms the result
+  into a ggplot object, an Excel/data-frame report, or a plain-language
+  interpretation tailored to the audience (manager, technical, client).
+- **L3 Entry (iqr_* class):** Orchestrates the layers and caches the last
+  result for iterative analysis (`$plot()`, `$report()`, `$interpret()` all
+  operate on the cached result).
+
+For one-off analyses where object lifecycle management is unnecessary, every
+module also exposes **convenience functions** (e.g., `htest_run()`,
+`intervals_run()`, `anova_run()`) that compute and return a `stat_result`
+directly.
+
+## 2. Module Map
+
+The package provides eight statistical modules, each accessed through an entry
+class or convenience function:
+
+| Module | Entry Class | Primary Method | Convenience Functions | Coverage |
+|--------|-------------|----------------|----------------------|----------|
+| Descriptive statistics | `iqr_desc()` (function) | direct call | `desc_calc()`, `desc_analyze()`, `desc_hist()`, `desc_box()` | Mean, median, SD, variance, skewness, kurtosis, CV, CI |
+| Normality assessment | `iqr_normality` (R6) | `$test()` | `normality_test()`, `normality_plot()` | Shapiro-Wilk, Anderson-Darling, CVM, Lilliefors, SF |
+| Hypothesis testing | `iqr_htest` (R6) | `$run()` | `htest_run()`, `htest_plot()` | 22 test types (z, t, proportion, chi-square, F, Levene, Bartlett, Wilcoxon, Kruskal-Wallis, Friedman, TOST, equivalence, Poisson, correlation) |
+| Intervals | `iqr_intervals` (R6) | `$run()` | `intervals_run()` | Confidence, prediction (sample & model), tolerance (Howe & exact) |
+| Probability distributions | `iqr_prob` (R6) | `$calc()` | `prob_calc()`, `prob_plot()` | 12 registered distributions (Normal, Exponential, Gamma, Weibull, Lognormal, Beta, Uniform, Cauchy, t, F, Chi-square, Binomial, Poisson, ...) |
+| ANOVA | `iqr_anova` (R6) | `$run()` | `anova_run()`, `anova_report()` | One-way, two-way, multi-factor, repeated measures, ANOM |
+| Regression | `iqr_regression` (R6) | `$run()` | `regression_run()` | lm, logistic, Poisson, Cox, PLS, stepwise, best-subset, MARS, spline |
+| Resampling | `iqr_resampling` (R6) | `$run()` | `resampling_run()` | Bootstrap CI (percentile, BCa), permutation tests |
+
+In addition, the package provides **cross-cutting tools** that support multiple
+modules:
+
+| Tool Category | Key Functions | Purpose |
+|---------------|--------------|---------|
+| Sample size & power | `sample_size_mean()`, `sample_size_paired()`, `sample_size_regression()`, `calc_power()`, `power_table()`, `effect_size()` | Study design before data collection |
+| Sigma estimation | `sigma_estimate()`, `sigma_decomposition()`, `get_d2()`, `get_c4()`, `get_A2()`, ... | Process standard deviation and SPC control-chart constants |
+| Capability metrics | `capability_to_ppm()`, `ppm_to_sigma()`, `z_bench()`, `capability_interpret()` | Cp/Cpk → PPM → Z.bench conversion |
+| Distribution fitting | `fit_distribution()`, `auto_fit_distribution()`, `compare_fits()`, `calc_qq_data()` | Fit theoretical distributions to data |
+| Data transformation | `box_cox_transform()`, `yeo_johnson_transform()`, `johnson_transform()`, `auto_transform()` | Normalize non-normal data for capability/SPC |
+| Model diagnostics | `diagnose_lm()`, `test_residual_normality()`, `test_heteroscedasticity()`, `diagnose_multicollinearity()`, `diagnose_influential_points()` | Regression assumption checking |
+| Outlier detection | `detect_outliers_iqr()`, `detect_outliers_zscore()`, `detect_outliers_grubbs()`, `detect_outliers_dixon()`, `detect_outliers_mahalanobis()` | Identify unusual observations |
+| SPC rules | `check_spc_rule()`, `detect_spc_violations()`, `list_spc_rules()`, `summarize_spc_rules()` | Western Electric / Nelson run-rule checks |
+
+## 3. The Unified Workflow
+
+### 3.1 Entry-Class Lifecycle
+
+Most `iqr_*` entry classes follow the same lifecycle. The primary compute
+method is `$run()` for most modules, with `$test()` for normality and `$calc()`
+for probability distributions:
+
+```r
+# 1. Create the entry object (with theme for consistent visuals)
+obj <- iqr_htest$new(theme = "academic")
+
+# 2. Run the analysis (caches result in $last_results)
+obj$run("t_test_1s", x = my_data, mu = 74.00)
+
+# 3. Visualize (uses cached result)
+obj$plot(plot_type = "auto")
+
+# 4. Interpret in plain language (manager / technical / client)
+obj$interpret(audience = "manager")
+
+# 5. Export (data.frame / console / excel)
+obj$report(format = "data.frame")
+
+# Or do it all in one call:
+obj$analyze("t_test_1s", x = my_data, mu = 74.00, plot_type = "auto")
+```
+
+The `$analyze()` method is a convenience that runs, plots, and interprets in
+a single call — useful for interactive exploration.
+
+### 3.2 The `stat_result` S3 Class
+
+Every Analyzer returns a `stat_result` S3 object. This uniform structure is the
+contract between layers:
+
+```r
+result <- htest_run("t_test_1s", x = ring_dia, mu = 74.00)
+cat("Domain:     ", result$domain, "\n")       # "htest"
+cat("Test type:  ", result$test_type, "\n")    # "t_test_1s"
+cat("Method:     ", result$method, "\n")       # "One Sample t-test"
+cat("Statistic:  ", result$statistic, "\n")    # t value
+cat("P-value:    ", result$p.value, "\n")      # significance
+cat("Conf. int:  ", result$conf.int, "\n")     # 95% CI
+```
+
+The `stat_result` carries enough metadata for any L2 layer (Plotter, Reporter,
+Interpreter) to render the result without needing to re-run the computation.
+
+## 4. Quick Start: A Complete Analysis
+
+### 4.1 Quality Scenario: Piston Ring Inner Diameter
+
+**Background.** A manufacturer of automotive piston rings produces rings with a
+nominal inner diameter of 74.00 mm (tolerance ±0.05 mm). This is the classic
+case study from Montgomery, D.C. (2013), *Introduction to Statistical Quality
+Control*, 7th Edition, Wiley — Chapter 5. The process parameters used here
+(target = 74.00 mm, process σ ≈ 0.012 mm) reflect the real production
+characteristics documented in that reference.
+
+A quality engineer collects 40 consecutive ring-diameter measurements from the
+current production run and wants to answer four questions:
+
+1. What are the basic characteristics of the data? (descriptive statistics)
+2. Is the data normally distributed? (normality test — prerequisite for t-test)
+3. Is the process mean on target (74.00 mm)? (one-sample t-test)
+4. What is the 95% confidence interval for the true mean? (interval estimation)
+
+### 4.2 The Data
+
+```{r}
+# Piston ring inner diameter (mm)
+# Process parameters from Montgomery (2013), ISQC 7th Ed., Ch. 5
+# Target = 74.00 mm, process sigma ~ 0.012 mm
+set.seed(2026)
+ring_dia <- rnorm(40, mean = 74.001, sd = 0.012)
+ring_df <- data.frame(diameter = ring_dia)
+
+# First look
+head(ring_df, 8)
+```
+
+### 4.3 Step 1: Descriptive Statistics
+
+```{r}
+# One-call descriptive summary
+desc_result <- desc_calc(ring_dia)
+cat(sprintf("n         = %d\n", desc_result$n))
+cat(sprintf("Mean      = %.4f mm\n", desc_result$mean))
+cat(sprintf("SD        = %.4f mm\n", desc_result$sd))
+cat(sprintf("Median    = %.4f mm\n", desc_result$median))
+cat(sprintf("Skewness  = %.4f\n", desc_result$skewness))
+cat(sprintf("Kurtosis  = %.4f\n", desc_result$kurtosis))
+cat(sprintf("CV        = %.4f%%\n", desc_result$cv * 100))
+```
+
+The mean (74.0005 mm) is very close to the target (74.00 mm), and the CV is
+only 0.016% — indicating a tight, well-controlled process. The skewness near
+zero and kurtosis near 3 (excess ≈ 0) suggest the data is approximately normal.
+
+### 4.4 Step 2: Normality Assessment
+
+Before applying a t-test, we verify the normality assumption. The
+`iqr_normality` entry class provides an automated test selection that picks the
+most powerful test for the sample size.
+
+```{r}
+# Normality test (auto-selects Shapiro-Wilk for n=40)
+norm_obj <- iqr_normality$new()
+norm_result <- norm_obj$test(ring_dia, method = "auto", alpha = 0.05)
+```
+
+With p = `r formatC(norm_result$p_value, format = "f", digits = 4)` (> 0.05),
+we fail to reject the null hypothesis of normality. The t-test assumption is
+satisfied.
+
+### 4.5 Step 3: Hypothesis Test — Is the Mean on Target?
+
+```{r}
+# One-sample t-test: H0: mu = 74.00 vs H1: mu != 74.00
+ht_obj <- iqr_htest$new()
+ht_obj$run("t_test_1s", x = ring_dia, mu = 74.00, alternative = "two.sided")
+
+# Plain-language interpretation for management
+ht_obj$interpret(audience = "manager")
+```
+
+### 4.6 Step 4: Confidence Interval for the Mean
+
+```{r}
+# 95% confidence interval for the true mean
+itv_obj <- iqr_intervals$new()
+itv_obj$run("ci_mean", x = ring_dia, conf_level = 0.95)
+itv_obj$interpret(audience = "technical")
+```
+
+### 4.7 Step 5: Putting It All Together — The Analysis Report
+
+```{r}
+# Export results to a data frame for reporting
+ht_df <- ht_obj$report(format = "data.frame")
+itv_df <- itv_obj$report(format = "data.frame")
+
+cat("=== Hypothesis Test Summary ===\n")
+print(ht_df)
+
+cat("\n=== Confidence Interval Summary ===\n")
+print(itv_df)
+```
+
+### 4.8 Conclusion
+
+| Question | Answer | Evidence |
+|----------|--------|----------|
+| Data characteristics? | Mean ≈ 74.00, SD ≈ 0.012, near-normal | Descriptive statistics |
+| Normality? | Yes (p = `r formatC(norm_result$p_value, format = "f", digits = 4)`) | Shapiro-Wilk test |
+| Mean on target? | Yes (p = `r formatC(ht_obj$last_results$p.value, format = "f", digits = 4)`) | One-sample t-test |
+| 95% CI for mean? | [`r formatC(itv_obj$last_results$conf.int[1], format = "f", digits = 4)`, `r formatC(itv_obj$last_results$conf.int[2], format = "f", digits = 4)`] mm | t-interval |
+
+The process is on target and the confidence interval lies well within the
+tolerance band [73.95, 74.05] mm. The engineer can report to management that
+the process is performing as designed.
+
+## 5. Architecture: How the Layers Connect
+
+### 5.1 The Four-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  L3  Entry Classes (iqr_htest, iqr_anova, ...)     │  ← User interface
+│      Convenience functions (htest_run, ...)         │
+├─────────────────────────────────────────────────────┤
+│  L2  Plotter  │  Reporter  │  Interpreter           │  ← Presentation
+├─────────────────────────────────────────────────────┤
+│  L1  Analyzers (HTestAnalyzer, AnovaAnalyzer, ...)  │  ← Computation
+├─────────────────────────────────────────────────────┤
+│  L0  R primitives (stats::t.test, stats::aov, ...)  │  ← Foundation
+└─────────────────────────────────────────────────────┘
+```
+
+**L0 — R Primitives.** The package builds on R's `stats` package and validated
+CRAN packages (`nortest`, `moments`, `splines`, `earth`, `survival`). We do not
+reinvent statistical algorithms; we wrap them in a quality-engineering context.
+
+**L1 — Analyzers.** Each `*Analyzer` R6 class (e.g., `HTestAnalyzer`,
+`AnovaAnalyzer`, `RegressionAnalyzer`) wraps the R primitives into a dispatch
+interface keyed by a `test_type` / `model_type` / `interval_type` string code.
+The Analyzer normalizes inputs, validates parameters, and returns a
+`stat_result` S3 object.
+
+**L2 — Presentation.** Each module has a matching `*Plotter` (returns ggplot),
+`*Reporter` (returns data.frame / writes Excel), and shares a `StatInterpreter`
+for plain-language output. All visualizations use the unified `IqrTheme` system
+from `iQualityR.core` for consistent appearance.
+
+**L3 — Entry.** The `iqr_*` classes and convenience functions orchestrate L1
+and L2. They cache the last result (`$last_results`) so the user can iterate on
+visualization and reporting without recomputing.
+
+### 5.2 The `stat_result` Contract
+
+The `stat_result` S3 class is the data contract between L1 and L2. Every
+Analyzer returns one, and every Plotter/Reporter/Interpreter accepts one. The
+core fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | character | Module domain (`"htest"`, `"anova"`, `"regression"`, ...) |
+| `test_type` | character | Specific method code (`"t_test_1s"`, `"oneway"`, `"lm_fit"`, ...) |
+| `method` | character | Human-readable method name |
+| `statistic` | numeric | Test statistic |
+| `p.value` | numeric | P-value (NA if not applicable) |
+| `conf.int` | numeric(2) | Confidence interval |
+| `estimate` | numeric | Point estimate |
+| `data_name` | character | Description of the input data |
+
+Module-specific results add additional fields (e.g., `model_stats` for
+regression, `anova_table` for ANOVA, `coefficients` for regression).
+
+## 6. Where to Go Next
+
+This overview introduced the package architecture and a simple end-to-end
+analysis. The remaining vignettes in this chapter provide in-depth coverage of
+each module:
+
+| Vignette | Topic | Key Question Answered |
+|----------|-------|----------------------|
+| `descriptive-and-distributions` | Descriptive statistics, probability distributions, fitting & transformation | What does my data look like? |
+| `hypothesis-testing-and-intervals` | 22 hypothesis tests, confidence/prediction/tolerance intervals, resampling | Is the parameter different from a standard? |
+| `sample-size-and-power` | Sample size calculation and power analysis | How much data do I need? |
+| `anova` | Analysis of variance and ANOM | Are the group means different? |
+| `regression-modeling` | 9 regression models, diagnostics, outlier detection | Can I predict quality from inputs? |
+| `process-control-and-capability` | Sigma estimation, SPC constants, capability metrics | Is the process in control and capable? |
+
+```r
+# List all available vignettes
+vignette(package = "iQualityR.stat")
+```
+
+## References
+
+1. Montgomery, D.C. (2013). *Introduction to Statistical Quality Control*, 7th
+   Edition. John Wiley & Sons. — The piston ring case study (Ch. 5) and SPC
+   foundations (Ch. 6–8) informed the quality scenarios throughout this package.
+
+2. Shewhart, W.A. (1931). *Economic Control of Quality of Manufactured Product*.
+   Van Nostrand. — The foundational text of statistical process control.
+
+3. ISO 5479:1997. *Statistical interpretation of data — Tests for departure
+   from the normal distribution*. — Basis for the normality testing module.
+
+4. ISO 16269-6:2014. *Statistical interpretation of data — Part 6:
+   Determination of statistical tolerance intervals*. — Basis for the tolerance
+   interval methods (Howe's method, exact k-factor).
+
+5. Hahn, G.J. & Meeker, W.Q. (1991). *Statistical Intervals: A Guide for
+   Practitioners*. John Wiley & Sons. — Comprehensive reference on confidence,
+   prediction, and tolerance intervals.
+
+## Further Reading
+
+- For the theme system that gives all plots a consistent look, see
+  `vignette("theme-system", package = "iQualityR.core")`.
+- For the base classes that all `iqr_*` entry classes inherit from, see
+  `vignette("iQualityR-core", package = "iQualityR.core")`.
+- For the visualization infrastructure used by all plotters, see
+  `vignette("plotting-overview", package = "iQualityR.plot")`.

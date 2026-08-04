@@ -8,17 +8,12 @@ Plotting coordinator for ANOVA results, built on top of the
 \code{iQualityR.plot} package functions. Maximizes reuse of existing
 plot helpers to minimize duplicated code.
 }
-\section{Public fields}{
-\if{html}{\out{<div class="r6-fields">}}
-\describe{
-\item{\code{theme_obj}}{Active IqrTheme object used to style plots.}
-}
-\if{html}{\out{</div>}}
+\section{Super class}{
+\code{\link[iQualityR.stat:StatPlotter]{iQualityR.stat::StatPlotter}} -> \code{AnovaPlotter}
 }
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
-\item \href{#method-AnovaPlotter-new}{\code{AnovaPlotter$new()}}
 \item \href{#method-AnovaPlotter-plot}{\code{AnovaPlotter$plot()}}
 \item \href{#method-AnovaPlotter-plot_residuals}{\code{AnovaPlotter$plot_residuals()}}
 \item \href{#method-AnovaPlotter-plot_effects}{\code{AnovaPlotter$plot_effects()}}
@@ -26,31 +21,19 @@ plot helpers to minimize duplicated code.
 \item \href{#method-AnovaPlotter-plot_comparison}{\code{AnovaPlotter$plot_comparison()}}
 \item \href{#method-AnovaPlotter-plot_variance}{\code{AnovaPlotter$plot_variance()}}
 \item \href{#method-AnovaPlotter-plot_f_curve}{\code{AnovaPlotter$plot_f_curve()}}
+\item \href{#method-AnovaPlotter-plot_anom}{\code{AnovaPlotter$plot_anom()}}
 \item \href{#method-AnovaPlotter-plot_summary}{\code{AnovaPlotter$plot_summary()}}
-\item \href{#method-AnovaPlotter-set_theme}{\code{AnovaPlotter$set_theme()}}
 \item \href{#method-AnovaPlotter-clone}{\code{AnovaPlotter$clone()}}
 }
 }
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-AnovaPlotter-new"></a>}}
-\if{latex}{\out{\hypertarget{method-AnovaPlotter-new}{}}}
-\subsection{Method \code{new()}}{
-Initialize the plotter
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaPlotter$new(theme = "academic")}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{theme}}{Theme name or IqrTheme object.}
-}
-\if{html}{\out{</div>}}
-}
-\subsection{Returns}{
-An AnovaPlotter object (invisible).
-}
-}
+\if{html}{\out{
+<details open><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="initialize"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-initialize'><code>iQualityR.stat::StatPlotter$initialize()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.stat" data-topic="StatPlotter" data-id="set_theme"><a href='../../iQualityR.stat/html/StatPlotter.html#method-StatPlotter-set_theme'><code>iQualityR.stat::StatPlotter$set_theme()</code></a></span></li>
+</ul>
+</details>
+}}
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-AnovaPlotter-plot"></a>}}
 \if{latex}{\out{\hypertarget{method-AnovaPlotter-plot}{}}}
@@ -73,7 +56,7 @@ Auto-dispatch plotting
 
 \item{\code{plot_type}}{Plot type: \code{"auto"}, \code{"residual"}, \code{"effects"},
 \code{"interaction"}, \code{"comparison"}, \code{"variance"}, \code{"f_curve"},
-\code{"summary"}.}
+\code{"anom"}, \code{"summary"}.}
 
 \item{\code{show_table}}{Logical; overlay a statistics table on supported plots.}
 
@@ -236,6 +219,34 @@ A ggplot2 object.
 }
 }
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-AnovaPlotter-plot_anom"></a>}}
+\if{latex}{\out{\hypertarget{method-AnovaPlotter-plot_anom}{}}}
+\subsection{Method \code{plot_anom()}}{
+Analysis of Means (ANOM) decision chart
+
+Plots each level mean against the grand mean with per-level decision
+limits (UCL/LCL). Levels whose mean falls outside the limits are
+flagged as significantly different from the grand mean.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{AnovaPlotter$plot_anom(result, show_table = FALSE, ...)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{result}}{ANOM result list (from \code{AnovaAnalyzer$anova_anom}).}
+
+\item{\code{show_table}}{Logical; overlay the ANOM summary table.}
+
+\item{\code{...}}{Additional arguments (unused).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A ggplot2 object.
+}
+}
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-AnovaPlotter-plot_summary"></a>}}
 \if{latex}{\out{\hypertarget{method-AnovaPlotter-plot_summary}{}}}
 \subsection{Method \code{plot_summary()}}{
@@ -257,26 +268,6 @@ Combined summary plot (effects + residuals + table)
 }
 \subsection{Returns}{
 A patchwork object.
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-AnovaPlotter-set_theme"></a>}}
-\if{latex}{\out{\hypertarget{method-AnovaPlotter-set_theme}{}}}
-\subsection{Method \code{set_theme()}}{
-Set the active theme
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{AnovaPlotter$set_theme(theme)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{theme}}{Theme name or IqrTheme object.}
-}
-\if{html}{\out{</div>}}
-}
-\subsection{Returns}{
-Self-reference (invisible).
 }
 }
 \if{html}{\out{<hr>}}

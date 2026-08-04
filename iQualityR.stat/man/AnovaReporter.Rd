@@ -7,8 +7,8 @@
 Inherits from \code{IqrReporter} to provide standardized report generation for
 the ANOVA module. Supports Excel, HTML, PDF, Word, and PowerPoint formats.
 }
-\section{Super class}{
-\code{\link[iQualityR.core:IqrReporter]{iQualityR.core::IqrReporter}} -> \code{AnovaReporter}
+\section{Super classes}{
+\code{\link[iQualityR.core:IqrReporter]{iQualityR.core::IqrReporter}} -> \code{\link[iQualityR.stat:StatReporter]{iQualityR.stat::StatReporter}} -> \code{AnovaReporter}
 }
 \section{Methods}{
 \subsection{Public methods}{

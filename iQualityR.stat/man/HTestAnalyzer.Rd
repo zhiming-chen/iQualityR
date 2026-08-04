@@ -22,6 +22,17 @@ Called by \code{iqr_htest} and internal subpackage functions.
 \item Wilcoxon rank sum test (two-sample, Mann-Whitney U)
 \item Kruskal-Wallis rank sum test (k-sample)
 \item Friedman rank sum test (randomized complete block)
+\item TOST for mean equivalence (one-sample / two-sample)
+\item TOST for proportion equivalence (two-sample)
+\item Non-inferiority test (mean or proportion, one-sided)
+\item Superiority test (mean or proportion, one-sided)
+\item One-sample Poisson rate test
+\item Two-sample Poisson rate test (rate ratio)
+\item Pearson product-moment correlation test
+\item Spearman's rank correlation test
+\item Kendall's tau correlation test
+\item Levene's test for equality of variances (k groups)
+\item Bartlett's test for equality of variances (k groups, normality assumption)
 }
 }
 \section{Methods}{
@@ -40,6 +51,17 @@ Called by \code{iqr_htest} and internal subpackage functions.
 \item \href{#method-HTestAnalyzer-wilcoxon_rank_sum}{\code{HTestAnalyzer$wilcoxon_rank_sum()}}
 \item \href{#method-HTestAnalyzer-kruskal_wallis}{\code{HTestAnalyzer$kruskal_wallis()}}
 \item \href{#method-HTestAnalyzer-friedman}{\code{HTestAnalyzer$friedman()}}
+\item \href{#method-HTestAnalyzer-tost_mean}{\code{HTestAnalyzer$tost_mean()}}
+\item \href{#method-HTestAnalyzer-tost_proportion}{\code{HTestAnalyzer$tost_proportion()}}
+\item \href{#method-HTestAnalyzer-non_inferiority}{\code{HTestAnalyzer$non_inferiority()}}
+\item \href{#method-HTestAnalyzer-superiority}{\code{HTestAnalyzer$superiority()}}
+\item \href{#method-HTestAnalyzer-poisson_test_1s}{\code{HTestAnalyzer$poisson_test_1s()}}
+\item \href{#method-HTestAnalyzer-poisson_test_2s}{\code{HTestAnalyzer$poisson_test_2s()}}
+\item \href{#method-HTestAnalyzer-cor_test_pearson}{\code{HTestAnalyzer$cor_test_pearson()}}
+\item \href{#method-HTestAnalyzer-cor_test_spearman}{\code{HTestAnalyzer$cor_test_spearman()}}
+\item \href{#method-HTestAnalyzer-cor_test_kendall}{\code{HTestAnalyzer$cor_test_kendall()}}
+\item \href{#method-HTestAnalyzer-levene_test}{\code{HTestAnalyzer$levene_test()}}
+\item \href{#method-HTestAnalyzer-bartlett_test}{\code{HTestAnalyzer$bartlett_test()}}
 \item \href{#method-HTestAnalyzer-clone}{\code{HTestAnalyzer$clone()}}
 }
 }
@@ -59,7 +81,12 @@ Perform hypothesis test by test_type code
 \code{"z_test_1s"}, \code{"t_test_1s"}, \code{"t_test_2s"}, \code{"t_test_paired"},
 \code{"prop_test_1s"}, \code{"prop_test_2s"}, \code{"f_test"}, \code{"chisq_test"},
 \code{"wilcoxon_signed_rank"}, \code{"wilcoxon_rank_sum"},
-\code{"kruskal_wallis"}, \code{"friedman"}}
+\code{"kruskal_wallis"}, \code{"friedman"},
+\code{"tost_mean"}, \code{"tost_proportion"},
+\code{"non_inferiority"}, \code{"superiority"},
+\code{"poisson_test_1s"}, \code{"poisson_test_2s"},
+\code{"cor_test_pearson"}, \code{"cor_test_spearman"}, \code{"cor_test_kendall"},
+\code{"levene_test"}, \code{"bartlett_test"}}
 
 \item{\code{...}}{Test parameters (forwarded to the matching private method)}
 }
@@ -435,6 +462,442 @@ Wraps \link[stats:friedman.test]{stats::friedman.test}. Accepts either a wide ma
 \item{\code{g}}{Treatment grouping vector (ignored when \code{x} is a matrix).}
 
 \item{\code{b}}{Blocking vector (ignored when \code{x} is a matrix).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-tost_mean"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-tost_mean}{}}}
+\subsection{Method \code{tost_mean()}}{
+TOST for mean equivalence (Two One-Sided Tests)
+
+Tests whether the mean of \code{x} (or the difference \code{x - y} when \code{y} is
+supplied) is practically equivalent to a reference value, i.e. within
+the equivalence margin \verb{[-delta, +delta]}. The TOST procedure runs two
+one-sided t-tests at level \code{conf_level} and declares equivalence when
+both reject.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$tost_mean(
+  x,
+  y = NULL,
+  mu = 0,
+  delta,
+  conf_level = 0.95,
+  var.equal = FALSE
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{First (or only) sample.}
+
+\item{\code{y}}{Optional second sample for two-sample comparison.}
+
+\item{\code{mu}}{Reference value for one-sample; ignored when \code{y} is supplied.}
+
+\item{\code{delta}}{Equivalence margin (positive scalar). Equivalence is
+declared when \verb{|mean(x) - mu| < delta} (one-sample) or
+\verb{|mean(x) - mean(y)| < delta} (two-sample).}
+
+\item{\code{conf_level}}{Confidence level (also the significance level of each
+one-sided test).}
+
+\item{\code{var.equal}}{Whether to assume equal variances for two-sample test.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object with \code{extra$equivalence} field
+indicating \code{"equivalent"} or \code{"not equivalent"}.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-tost_proportion"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-tost_proportion}{}}}
+\subsection{Method \code{tost_proportion()}}{
+TOST for two-sample proportion equivalence
+
+Tests whether the difference between two proportions is within the
+equivalence margin \verb{[-delta, +delta]} using two one-sided z-tests.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$tost_proportion(x1, n1, x2, n2, delta, conf_level = 0.95)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x1}}{Successes in group 1.}
+
+\item{\code{n1}}{Sample size of group 1.}
+
+\item{\code{x2}}{Successes in group 2.}
+
+\item{\code{n2}}{Sample size of group 2.}
+
+\item{\code{delta}}{Equivalence margin on the proportion-difference scale
+(positive scalar, typically 0.1-0.2).}
+
+\item{\code{conf_level}}{Confidence level.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-non_inferiority"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-non_inferiority}{}}}
+\subsection{Method \code{non_inferiority()}}{
+Non-inferiority test (one-sided)
+
+Tests whether \code{x} (or \code{x - y} for two-sample) is non-inferior to a
+reference, i.e. the treatment is not worse than the reference by more
+than \code{delta}. For proportions, supply \code{x1/n1/x2/n2} instead of \code{x/y}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$non_inferiority(
+  type = c("mean", "proportion"),
+  x = NULL,
+  y = NULL,
+  mu = 0,
+  x1 = NULL,
+  n1 = NULL,
+  x2 = NULL,
+  n2 = NULL,
+  delta,
+  conf_level = 0.95,
+  var.equal = FALSE
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{type}}{\code{"mean"} (default) or \code{"proportion"}.}
+
+\item{\code{x}}{First sample (for \code{type = "mean"}) -- ignored for proportions.}
+
+\item{\code{y}}{Second sample (for \code{type = "mean"}) -- one-sample if NULL.}
+
+\item{\code{mu}}{Reference value for one-sample mean test.}
+
+\item{\code{x1, n1, x2, n2}}{Counts / sizes for \code{type = "proportion"}.}
+
+\item{\code{delta}}{Non-inferiority margin. Rejecting H0: \code{x - ref <= -delta}
+concludes non-inferiority.}
+
+\item{\code{conf_level}}{Confidence level.}
+
+\item{\code{var.equal}}{Equal-variance assumption for two-sample mean test.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-superiority"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-superiority}{}}}
+\subsection{Method \code{superiority()}}{
+Superiority test (one-sided)
+
+Tests whether \code{x} (or \code{x - y} for two-sample) is superior to a
+reference by more than \code{delta}. Rejecting H0: \code{x - ref <= delta}
+concludes superiority.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$superiority(
+  type = c("mean", "proportion"),
+  x = NULL,
+  y = NULL,
+  mu = 0,
+  x1 = NULL,
+  n1 = NULL,
+  x2 = NULL,
+  n2 = NULL,
+  delta,
+  conf_level = 0.95,
+  var.equal = FALSE
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{type}}{\code{"mean"} (default) or \code{"proportion"}.}
+
+\item{\code{x}}{First sample (for \code{type = "mean"}) -- ignored for proportions.}
+
+\item{\code{y}}{Second sample (for \code{type = "mean"}) -- one-sample if NULL.}
+
+\item{\code{mu}}{Reference value for one-sample mean test.}
+
+\item{\code{x1, n1, x2, n2}}{Counts / sizes for \code{type = "proportion"}.}
+
+\item{\code{delta}}{Superiority margin.}
+
+\item{\code{conf_level}}{Confidence level.}
+
+\item{\code{var.equal}}{Equal-variance assumption for two-sample mean test.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-poisson_test_1s"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-poisson_test_1s}{}}}
+\subsection{Method \code{poisson_test_1s()}}{
+One-sample Poisson rate test
+
+Tests whether the observed count \code{x} over exposure time \code{T} is
+consistent with a hypothesized rate \code{r}. Wraps \link[stats:poisson.test]{stats::poisson.test}
+(exact test based on the Poisson distribution).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$poisson_test_1s(
+  x,
+  T_exposure = 1,
+  r = 1,
+  alternative = "two.sided",
+  conf_level = 0.95
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Observed count (non-negative integer).}
+
+\item{\code{T_exposure}}{Exposure time / sample size base (default 1).}
+
+\item{\code{r}}{Hypothesized event rate (default 1).}
+
+\item{\code{alternative}}{Test direction (\code{"two.sided"}, \code{"less"}, \code{"greater"}).}
+
+\item{\code{conf_level}}{Confidence level.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-poisson_test_2s"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-poisson_test_2s}{}}}
+\subsection{Method \code{poisson_test_2s()}}{
+Two-sample Poisson rate test (rate ratio)
+
+Compares the event rates of two independent Poisson counts.
+Wraps \link[stats:poisson.test]{stats::poisson.test} for the two-sample case. The null
+hypothesis is that the rate ratio \code{r1 / r2} equals 1.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$poisson_test_2s(
+  x1,
+  T1 = 1,
+  x2 = NULL,
+  T2 = 1,
+  alternative = "two.sided",
+  conf_level = 0.95
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x1}}{Observed count in group 1.}
+
+\item{\code{T1}}{Exposure time for group 1 (default 1).}
+
+\item{\code{x2}}{Observed count in group 2.}
+
+\item{\code{T2}}{Exposure time for group 2 (default 1).}
+
+\item{\code{alternative}}{Test direction.}
+
+\item{\code{conf_level}}{Confidence level.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-cor_test_pearson"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-cor_test_pearson}{}}}
+\subsection{Method \code{cor_test_pearson()}}{
+Pearson product-moment correlation test
+
+Tests whether the Pearson correlation between \code{x} and \code{y} differs from
+a hypothesized value (default 0). Wraps \link[stats:cor.test]{stats::cor.test} with
+\code{method = "pearson"}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$cor_test_pearson(
+  x,
+  y,
+  alternative = "two.sided",
+  conf_level = 0.95,
+  rho = 0
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector.}
+
+\item{\code{y}}{Numeric vector (same length as \code{x}).}
+
+\item{\code{alternative}}{Test direction (\code{"two.sided"}, \code{"less"}, \code{"greater"}).}
+
+\item{\code{conf_level}}{Confidence level.}
+
+\item{\code{rho}}{Hypothesized correlation (default 0).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-cor_test_spearman"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-cor_test_spearman}{}}}
+\subsection{Method \code{cor_test_spearman()}}{
+Spearman's rank correlation test
+
+Tests whether the Spearman rank correlation between \code{x} and \code{y} differs
+from zero. Wraps \link[stats:cor.test]{stats::cor.test} with \code{method = "spearman"}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$cor_test_spearman(
+  x,
+  y,
+  alternative = "two.sided",
+  conf_level = 0.95,
+  rho = 0
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector.}
+
+\item{\code{y}}{Numeric vector (same length as \code{x}).}
+
+\item{\code{alternative}}{Test direction.}
+
+\item{\code{conf_level}}{Confidence level (used for the record; Spearman
+\code{cor.test} does not return a CI).}
+
+\item{\code{rho}}{Hypothesized correlation (default 0).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-cor_test_kendall"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-cor_test_kendall}{}}}
+\subsection{Method \code{cor_test_kendall()}}{
+Kendall's tau correlation test
+
+Tests whether Kendall's tau between \code{x} and \code{y} differs from zero.
+Wraps \link[stats:cor.test]{stats::cor.test} with \code{method = "kendall"}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$cor_test_kendall(
+  x,
+  y,
+  alternative = "two.sided",
+  conf_level = 0.95,
+  rho = 0
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector.}
+
+\item{\code{y}}{Numeric vector (same length as \code{x}).}
+
+\item{\code{alternative}}{Test direction.}
+
+\item{\code{conf_level}}{Confidence level (used for the record; Kendall
+\code{cor.test} does not return a CI).}
+
+\item{\code{rho}}{Hypothesized correlation (default 0).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-levene_test"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-levene_test}{}}}
+\subsection{Method \code{levene_test()}}{
+Levene's test for equality of variances
+
+Tests whether \code{k >= 2} groups have equal variances. Levene's test is
+robust to non-normality and is preferred over Bartlett's test when
+normality is in doubt. Wraps \link[car:leveneTest]{car::leveneTest} when available; otherwise
+uses an internal implementation via \link[stats:anova]{stats::anova} on absolute deviations
+from the group mean (or median, see \code{center}).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$levene_test(x, g = NULL, center = c("median", "mean"))}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector of observations, or a list of numeric vectors
+(one per group).}
+
+\item{\code{g}}{Grouping vector / factor (required when \code{x} is a vector; ignored
+when \code{x} is a list).}
+
+\item{\code{center}}{Character. Center for absolute deviations: \code{"median"}
+(Brown-Forsythe, default, more robust) or \code{"mean"} (classic Levene).}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A \code{stat_result} S3 object.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HTestAnalyzer-bartlett_test"></a>}}
+\if{latex}{\out{\hypertarget{method-HTestAnalyzer-bartlett_test}{}}}
+\subsection{Method \code{bartlett_test()}}{
+Bartlett's test for equality of variances
+
+Tests whether \code{k >= 2} groups have equal variances under the assumption
+of normality. More powerful than Levene's test when normality holds, but
+sensitive to non-normality. Wraps \link[stats:bartlett.test]{stats::bartlett.test}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HTestAnalyzer$bartlett_test(x, g = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector of observations, or a list of numeric vectors
+(one per group).}
+
+\item{\code{g}}{Grouping vector / factor (required when \code{x} is a vector; ignored
+when \code{x} is a list).}
 }
 \if{html}{\out{</div>}}
 }

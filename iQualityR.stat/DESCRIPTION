@@ -40,7 +40,12 @@ Suggests:
     emmeans,
     multcomp,
     lme4,
-    lmerTest
+    lmerTest,
+    survival,
+    pls,
+    leaps,
+    earth,
+    splines
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -59,6 +64,8 @@ Collate:
     'spc_rules.R'
     'ProbNode.R'
     'ProbAnalyzer.R'
+    'StatPlotter.R'
+    'StatReporter.R'
     'ProbPlotter.R'
     'ProbReporter.R'
     'iqr_prob.R'
@@ -76,6 +83,18 @@ Collate:
     'HTestPlotter.R'
     'HTestReporter.R'
     'iqr_htest.R'
+    'IntervalAnalyzer.R'
+    'IntervalPlotter.R'
+    'IntervalReporter.R'
+    'iqr_intervals.R'
+    'RegressionAnalyzer.R'
+    'RegressionPlotter.R'
+    'RegressionReporter.R'
+    'iqr_regression.R'
+    'ResamplingAnalyzer.R'
+    'ResamplingPlotter.R'
+    'ResamplingReporter.R'
+    'iqr_resampling.R'
     'zzz.R'
 VignetteBuilder: knitr
 Config/testthat/edition: 3

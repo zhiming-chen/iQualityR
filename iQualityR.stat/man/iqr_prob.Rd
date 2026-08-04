@@ -367,13 +367,20 @@ prob$interpret(audience = "manager")
 \if{html}{\out{<a id="method-iqr_prob-report"></a>}}
 \if{latex}{\out{\hypertarget{method-iqr_prob-report}{}}}
 \subsection{Method \code{report()}}{
-Structured data export
+Structured data export (Contract 2 delegation)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{iqr_prob$report()}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{iqr_prob$report(format = "data.frame")}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{format}}{Output format (\code{"data.frame"} default, \code{"console"}, \code{"excel"}).}
+}
+\if{html}{\out{</div>}}
+}
 \subsection{Returns}{
-Data frame
+Data frame (for \code{"data.frame"}) or invisible path (for \code{"excel"}).
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}

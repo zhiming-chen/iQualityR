@@ -61,10 +61,12 @@ Execute ANOVA analysis
   formula,
   data,
   ...,
+  method = NULL,
   plot = FALSE,
   plot_type = "auto",
   interpret = FALSE,
-  audience = "manager"
+  audience = "manager",
+  data_name = NULL
 )}\if{html}{\out{</div>}}
 }
 
@@ -77,6 +79,9 @@ Execute ANOVA analysis
 
 \item{\code{...}}{Additional arguments passed to AnovaAnalyzer.}
 
+\item{\code{method}}{Optional analysis method hint (\code{"anom"} for Analysis of
+Means; \code{NULL} auto-detects).}
+
 \item{\code{plot}}{Whether to auto-plot after analysis.}
 
 \item{\code{plot_type}}{Plot type (passed to AnovaPlotter).}
@@ -84,6 +89,9 @@ Execute ANOVA analysis
 \item{\code{interpret}}{Whether to print a brief interpretation.}
 
 \item{\code{audience}}{Audience level (\code{"manager"}, \code{"technical"}, \code{"client"}).}
+
+\item{\code{data_name}}{Optional character; override for the data name captured
+in the result. Used by anova_run() to forward the user's variable name.}
 }
 \if{html}{\out{</div>}}
 }

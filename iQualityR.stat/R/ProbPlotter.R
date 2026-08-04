@@ -10,16 +10,57 @@
 #'
 #' @export
 ProbPlotter <- R6::R6Class("ProbPlotter",
+  inherit = StatPlotter,
   public = list(
-    #' @field theme_obj Active IqrTheme object used to style plots.
-    theme_obj = NULL,
+    #' @description Unified plot entry point (Contract 2 signature).
+    #'
+    #' Thin delegation layer over `$render()`. `result` may be either a list
+    #' bundling `nodes` and `calc_results` (the natural L3 packaging), or the
+    #' `calc_results` list directly with `nodes` supplied through `...`. The
+    #' `show_cdf`, `facet` and `mode` render options are absorbed through
+    #' `...` for backward compatibility with the legacy `render()` call.
+    #'
+    #' @param result A list with `$nodes` and `$calc_results`, or the
+    #'   `calc_results` list directly (nodes then via `...`).
+    #' @param plot_type Reserved for Contract 2 signature uniformity; the
+    #'   actual PDF/CDF behaviour is driven by `show_cdf` (in `...`).
+    #' @param show_table Logical; reserved for Contract 2 signature uniformity.
+    #' @param theme_obj Optional `IqrTheme` overriding `self$theme_obj`.
+    #' @param ... Backward-compat channel: `nodes`, `show_cdf`, `facet`,
+    #'   `mode` are extracted from here when not bundled in `result`.
+    #' @return A `ggplot` or `patchwork` object.
+    plot = function(result, plot_type = "auto", show_table = FALSE,
+                    theme_obj = NULL, ...) {
+      .check_plot_available()
+      effective_theme <- if (!is.null(theme_obj)) theme_obj else self$theme_obj
 
-    #' @description Initialize the plotter with a theme
-    #' @param theme Theme name (e.g. `"academic"`) or an `IqrTheme` object.
-    #' @return Invisible self.
-    initialize = function(theme = "academic") {
-      self$theme_obj <- .resolve_theme(theme)
-      invisible(self)
+      dots <- list(...)
+
+      # Resolve result into nodes + calc_results. A bundled list carries both;
+      # otherwise result is the calc_results and nodes come from ... .
+      if (is.list(result) && !is.null(result$nodes) && !is.null(result$calc_results)) {
+        nodes <- result$nodes
+        calc_results <- result$calc_results
+      } else {
+        nodes <- dots$nodes
+        calc_results <- result
+      }
+
+      if (is.null(nodes)) {
+        stop("[ProbPlotter] nodes are required (pass via result$nodes or ...).",
+             call. = FALSE)
+      }
+      if (is.null(calc_results)) {
+        stop("[ProbPlotter] calc_results are required.", call. = FALSE)
+      }
+
+      # Render options: absorbed through ... for backward compat with render().
+      show_cdf <- dots$show_cdf %||% FALSE
+      facet <- dots$facet %||% FALSE
+      mode <- dots$mode %||% calc_results[[1]]$mode %||% "prob"
+
+      self$render(nodes = nodes, calc_results = calc_results, facet = facet,
+                  show_cdf = show_cdf, mode = mode, theme_obj = effective_theme)
     },
 
     #' @description Render plot

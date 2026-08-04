@@ -1,8 +1,11 @@
 ---
 title: "Sample Size and Power Analysis"
-author: "iQualityR Team"
+author: "iQualityR.stat Team"
 date: "`r Sys.Date()`"
-output: rmarkdown::html_vignette
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
 vignette: >
   %\VignetteIndexEntry{Sample Size and Power Analysis}
   %\VignetteEngine{knitr::rmarkdown}
@@ -12,107 +15,398 @@ vignette: >
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
 )
-```
-```{r include=FALSE}
+
 library(iQualityR.stat)
-library(R6)
-
-library(patchwork)
-library(iQualityR.core)
 library(iQualityR.plot)
+library(ggplot2)
 
+# Helpers
+fmt_num <- function(x, digits = 4) formatC(x, format = "f", digits = digits)
+fmt_pct <- function(x, digits = 2) paste0(formatC(x * 100, format = "f", digits = digits), "%")
 ```
 
-## Overview
+## 1. Introduction
 
-Sample size calculation ensures statistical analysis has sufficient power to avoid false negative results due to insufficient sample size. This module supports sample size calculation for means, proportions, and ANOVA.
+Sample size and power analysis sit at the planning stage of every quality
+study. Too few samples and a real process shift goes undetected (Type II
+error); too many and resources are wasted. The `iQualityR.stat` package
+provides a unified family of functions for sizing studies across the quality
+engineering spectrum — from simple mean comparisons to reliability
+demonstration tests.
 
-## Sample Size Calculation
+**Module map**
 
-### Mean Comparison
+| Function family | Key functions |
+|-----------------|---------------|
+| Means | `sample_size_mean()`, `sample_size_two_means()`, `sample_size_paired()` |
+| Proportions | `sample_size_proportion()`, `sample_size_two_proportions()` |
+| ANOVA | `sample_size_anova()` |
+| Regression | `sample_size_regression()` |
+| Confidence-interval width | `sample_size_ci()` |
+| Tolerance-interval width | `sample_size_tolerance()` |
+| Reliability / success-run | `sample_size_reliability()` |
+| Power & effect size | `calc_power()`, `effect_size()`, `power_table()`, `odds_ratio()` |
 
-```{r setup}
-sample_size_mean(mu0 = 10, mu1 = 10.5, sigma = 1, power = 0.80)
+## 2. Theory: Power and Sample Size
+
+### 2.1 Hypothesis testing framework
+
+Every sample-size calculation derives from the same logical scaffold. Given a
+null hypothesis $H_0$ and an alternative $H_1$, we control two error rates:
+
+| Truth | Reject $H_0$ | Fail to reject $H_0$ |
+|-------|-------------|---------------------|
+| $H_0$ true | Type I error ($\alpha$) | Correct ($1-\alpha$) |
+| $H_1$ true | Correct (power $= 1-\beta$) | Type II error ($\beta$) |
+
+- **Significance level** $\alpha$: probability of a false alarm.
+- **Power** $1-\beta$: probability of detecting a real effect of size
+  $\delta$.
+- **Effect size** $d$: the magnitude of the effect in standardised units,
+  e.g. Cohen's $d = \delta / \sigma$.
+
+### 2.2 The normal-approximation formula
+
+For a one-sample / two-sided test the required sample size is:
+
+$$
+n = \left( \frac{z_{1-\alpha/2} + z_{1-\beta}}{d} \right)^2, \qquad d = \frac{\mu_1 - \mu_0}{\sigma}
+$$
+
+where $z_{1-\alpha/2}$ and $z_{1-\beta}$ are standard-normal quantiles. For
+small $n$ the $t$-distribution replaces $z$, and the formula is solved
+iteratively.
+
+### 2.3 The power curve
+
+Power grows with sample size $n$ and effect size $d$. A **power curve** plots
+$1-\beta$ against $n$ for a fixed $d$, answering the planner's question:
+*"How many units must I test to be 80 % sure of catching a 0.5$\sigma$
+shift?"*
+
+### 2.4 Effect-size conventions
+
+| Effect size | Cohen's $d$ | Cohen's $f^2$ (regression) |
+|-------------|-------------|---------------------------|
+| Small       | 0.20        | 0.02                      |
+| Medium      | 0.50        | 0.15                      |
+| Large       | 0.80        | 0.35                      |
+
+For ANOVA, $f^2 = \eta^2 / (1 - \eta^2)$; for regression,
+$f^2 = R^2 / (1 - R^2)$.
+
+## 3. Sample Size for Means
+
+### 3.1 One-sample mean — `sample_size_mean()`
+
+```{r mean_one}
+# Detect a 0.5-sigma shift in a turning operation (mu0 = 10, mu1 = 10.5, sigma = 1)
+res <- sample_size_mean(mu0 = 10, mu1 = 10.5, sigma = 1, power = 0.80)
+res
 ```
 
-### Proportion Comparison
+The returned list carries the planned $n$, the **actual power** achieved
+(after $t$-correction), and the standardised effect size:
 
-```{r prop}
-sample_size_proportion(p0 = 0.5, p1 = 0.6, power = 0.80)
+```{r mean_one_extras}
+c(n = res$n, actual_power = res$actual_power, effect_size = res$effect_size)
 ```
 
-### ANOVA
+### 3.2 Two-sample mean — `sample_size_two_means()`
 
-```{r anova}
-sample_size_anova(k = 3, means = c(10, 10.5, 11), sigma = 1.5, power = 0.80)
+```{r mean_two}
+# Compare two suppliers: detect a 0.3-unit difference with sigma = 1
+sample_size_two_means(mu1 = 10.0, mu2 = 10.3, sigma = 1, power = 0.80)
 ```
 
-## Power Calculation
+### 3.3 Paired t-test — `sample_size_paired()` {.newest}
 
-### Mean Power
+The paired test reduces to a one-sample test on the within-pair differences
+$d = y_2 - y_1$. The sample size is driven by the **standard deviation of the
+differences** $\sigma_d$, not the raw measurement SD:
 
-```{r power_mean}
-# Calculate power given sample size and effect size
-calc_power(n = 50, effect_size = 0.5, alpha = 0.05)
+$$
+n = \left( \frac{z_{1-\alpha/2} + z_{1-\beta}}{\delta / \sigma_d} \right)^2
+$$
+
+```{r paired}
+# Before/after gauge calibration: expect 0.4-unit shift, SD of diffs = 1.0
+sample_size_paired(mu0 = 0, mu1 = 0.4, sigma_d = 1.0, power = 0.80)
 ```
 
-### Proportion Power
+Because the paired test is a one-sample $t$-test on differences, when
+$\sigma_d = \sigma$ the result matches `sample_size_mean()`:
 
-```{r power_prop}
-# Calculate power for proportion test
-calc_power(n = 100, effect_size = 0.1, alpha = 0.05)
+```{r paired_matches}
+paired_res   <- sample_size_paired(mu0 = 0, mu1 = 0.5, sigma_d = 1, power = 0.80)
+onesample_res <- sample_size_mean(mu0 = 0, mu1 = 0.5, sigma = 1, power = 0.80)
+c(paired_n = paired_res$n, one_sample_n = onesample_res$n)
 ```
 
-### ANOVA Power
+## 4. Sample Size for Proportions
 
-```{r power_anova}
-# Calculate sample size for ANOVA
-sample_size_anova(k = 3, means = c(10, 10.5, 11), sigma = 1.5, power = 0.80)
-```
+### 4.1 One-sample proportion — `sample_size_proportion()`
 
-## Effect Size
-
-### Cohen's d
-
-```{r cohen_d}
-effect_size(type = "cohens_d", mu1 = 10, mu2 = 11, sd_pooled = 1)
-```
-
-### Cohen's f
-
-```{r cohen_f}
-# Cohen's f for ANOVA effect size
-# f = sigma_m / sigma where sigma_m is SD of group means and sigma is error SD
-effect_size(type = "eta_squared", F = 4.5, df_between = 3, df_within = 96)
-```
-
-## Application Scenarios
-
-### Scenario 1: New Product Validation
-
-Assuming a new product has an average lifespan of 1000 hours with a standard deviation of 50 hours, and we want to detect a 10-hour difference with 80% power:
-
-```{r scenario1}
-sample_size_mean(mu0 = 1000, mu1 = 1010, sigma = 50, power = 0.80)
-```
-
-### Scenario 2: Yield Comparison
-
-Current yield is 95%, and we want to detect a 3% improvement with 90% power:
-
-```{r scenario2}
+```{r prop_one}
+# Detect improvement from 95% to 98% yield
 sample_size_proportion(p0 = 0.95, p1 = 0.98, power = 0.90)
 ```
 
-### Scenario 3: Multi-group Comparison
+### 4.2 Two-sample proportion — `sample_size_two_proportions()`
 
-Comparing the mean differences of 4 processes, with effect size f = 0.3 and 85% power:
-
-```{r scenario3}
-# For f = 0.3, sigma = 1, the means should have SD = 0.3
-# With k=4 groups and equal spacing: means = c(0, 0.3, 0.6, 0.9) has mean = 0.45, SD ~ 0.37
-# Let's use a simpler setup with known means
-sample_size_anova(k = 4, means = c(10, 10.3, 10.6, 10.9), sigma = 1, power = 0.85)
+```{r prop_two}
+# Compare two lines: 92% vs 96% first-pass yield
+sample_size_two_proportions(p1 = 0.92, p2 = 0.96, power = 0.80)
 ```
+
+## 5. Sample Size for ANOVA — `sample_size_anova()`
+
+For a one-way ANOVA with $k$ groups, the effect size is
+$f = \sigma_{\text{means}} / \sigma_{\text{error}}$, and the sample size is
+found via the noncentral $F$ distribution.
+
+```{r anova_ss}
+# Compare 3 suppliers with means 10, 10.5, 11 and common sigma = 1.5
+sample_size_anova(k = 3, means = c(10, 10.5, 11), sigma = 1.5, power = 0.80)
+```
+
+## 6. Sample Size for Regression — `sample_size_regression()` {.newest}
+
+The global $F$-test of a regression with $p$ predictors tests
+$H_0\colon R^2 = 0$. The effect size is Cohen's
+$f^2 = R^2 / (1 - R^2)$, and the required $n$ is found by searching the
+noncentral $F$ distribution until the achieved power meets the target.
+
+```{r reg_ss}
+# 3 predictors, anticipated R^2 = 0.30 (medium effect)
+sample_size_regression(p = 3, r_squared = 0.30, power = 0.80)
+```
+
+Adding predictors raises the required $n$ (more degrees of freedom in the
+numerator, more parameters to estimate):
+
+```{r reg_compare}
+sample_size_regression(p = 2,  r_squared = 0.30, power = 0.80)$n
+sample_size_regression(p = 10, r_squared = 0.30, power = 0.80)$n
+```
+
+## 7. CI-Width-Driven Sample Size — `sample_size_ci()` {.newest}
+
+Sometimes the goal is not hypothesis testing but **precision**: *"How many
+samples do I need so that the 95 % CI half-width is at most $h$?"*
+
+**Mean** (known $\sigma$):
+$$
+n = \left( \frac{z_{1-\alpha/2}\, \sigma}{h} \right)^2
+$$
+
+**Proportion**:
+$$
+n = \frac{z_{1-\alpha/2}^2 \; p(1-p)}{h^2}
+$$
+
+```{r ci_mean}
+# 95% CI half-width <= 0.3 for a measurement with sigma = 1
+sample_size_ci(type = "mean", h = 0.3, sigma = 1, conf_level = 0.95)
+```
+
+```{r ci_prop}
+# 95% CI half-width <= 5% for a proportion near 50%
+sample_size_ci(type = "proportion", h = 0.05, p = 0.5, conf_level = 0.95)
+```
+
+## 8. Tolerance-Interval-Driven Sample Size — `sample_size_tolerance()` {.newest}
+
+A normal-theory tolerance interval $\bar{x} \pm k \cdot s$ must cover at least
+proportion $p$ of the population with confidence $1-\gamma$. The
+**k-factor** (Howe 1969 / exact chi-square) is:
+
+$$
+k = \sqrt{ \frac{\nu \, (1 + 1/n) \, z_p^2}{\chi^2_{\gamma,\,\nu}} }, \qquad \nu = n - 1
+$$
+
+`sample_size_tolerance()` finds the smallest $n$ such that the expected
+half-width $k \cdot E[s] = k \cdot c_4(n)\,\sigma$ does not exceed
+`max_half_width` $\times\; \sigma$.
+
+```{r tol}
+# 95% content / 95% confidence; half-width must stay within 3 sigma
+sample_size_tolerance(p = 0.95, conf_level = 0.95, max_half_width = 3.0)
+```
+
+A tighter width budget demands more data:
+
+```{r tol_compare}
+sample_size_tolerance(p = 0.95, conf_level = 0.95, max_half_width = 5.0)$n
+sample_size_tolerance(p = 0.95, conf_level = 0.95, max_half_width = 2.5)$n
+```
+
+## 9. Reliability / Success-Run — `sample_size_reliability()` {.newest}
+
+For a reliability demonstration test with zero allowed failures, the
+**success-run formula** gives:
+
+$$
+n = \frac{\ln(1 - \text{conf})}{\ln(R)}
+$$
+
+where $R$ is the target reliability and `conf` the desired confidence. When
+$n_{\text{failures}} > 0$ failures are allowed, $n$ is found by solving the
+binomial CDF constraint $P(X \le r \mid n, 1-R) \le 1 - \text{conf}$.
+
+```{r rel_zero}
+# Demonstrate 95% reliability with 90% confidence, 0 failures
+sample_size_reliability(reliability = 0.95, conf_level = 0.90)
+```
+
+Allowing failures increases the required $n$ but permits a more forgiving
+test:
+
+```{r rel_failures}
+sample_size_reliability(reliability = 0.95, conf_level = 0.90, n_failures = 0)$n
+sample_size_reliability(reliability = 0.95, conf_level = 0.90, n_failures = 2)$n
+```
+
+## 10. Power, Effect Size, and Odds Ratios
+
+### 10.1 Post-hoc power — `calc_power()`
+
+Given a fixed $n$ and effect size, compute the achieved power:
+
+```{r calc_power}
+# n = 50, effect size d = 0.5, two-sided t-test
+calc_power(n = 50, effect_size = 0.5, alpha = 0.05)
+```
+
+### 10.2 Effect size — `effect_size()`
+
+```{r effect_size}
+# Cohen's d: two groups with means 10 and 11, pooled SD = 1.5
+effect_size(type = "cohens_d", mean1 = 10, mean2 = 11, sd_pooled = 1.5)
+
+# Eta-squared from an F-test
+effect_size(type = "eta_squared", F = 4.5, df_between = 3, df_within = 96)
+```
+
+### 10.3 Power curve — `power_table()`
+
+```{r power_table, fig.width = 8, fig.height = 4}
+# Power vs n for effect size d = 0.5
+ 
+ptab <- power_table(effect_size = 0.5, n_range = seq(10, 120, by = 5))
+
+p <- base_plot(ptab, aes(n, power), theme = "academic") +
+    layers_trend_line(add_points = TRUE)
+ 
+thm <- attr(p, "iqr_theme")
+ui  <- thm$get_ui_colors()
+ref_color <- ui$border    
+
+p <- p +
+    geom_hline(yintercept = 0.80, linetype = "dashed", color = ref_color) +
+    annotate("text", x = 110, y = 0.82, label = "80% target",
+             size = 3, color = ref_color) +
+    labs(title = "Power Curve: effect size d = 0.5",
+         x = "Sample size n", y = "Power")
+p
+```
+
+### 10.4 Odds ratio — `odds_ratio()`
+
+For a 2×2 contingency table (cells $a, b, c, d$):
+
+```{r odds_ratio}
+# Defective counts: a=5 (A defective), b=45 (A good), c=15 (B defective), d=35 (B good)
+odds_ratio(a = 5, b = 45, c = 15, d = 35, conf_level = 0.95)
+```
+
+## 11. Quality Scenario: Sizing a Capability Study
+
+**Context.** A plating line manager must verify that a process mean has not
+drifted more than $0.5\sigma$ from target. The study must achieve 80 % power
+at $\alpha = 0.05$. After data collection the team also needs to report the
+95 % CI for the mean with a half-width no larger than $0.3\sigma$.
+
+### Step 1 — Size for detection
+
+```{r scenario_detect}
+s_detect <- sample_size_mean(mu0 = 100, mu1 = 100.5, sigma = 1, power = 0.80)
+s_detect$n
+```
+
+### Step 2 — Size for precision
+
+```{r scenario_precision}
+s_ci <- sample_size_ci(type = "mean", h = 0.3, sigma = 1, conf_level = 0.95)
+s_ci$n
+```
+
+### Step 3 — Take the larger sample size
+
+```{r scenario_final}
+n_final <- max(s_detect$n, s_ci$n)
+n_final
+```
+
+### Step 4 — Verify achieved power
+
+```{r scenario_power}
+calc_power(n = n_final, effect_size = 0.5, alpha = 0.05)
+```
+
+## 12. Parameter Reference
+
+| Function | Key parameters | Returns |
+|----------|---------------|---------|
+| `sample_size_mean()` | `mu0, mu1, sigma, alpha, power, alternative` | `n, actual_power, effect_size` |
+| `sample_size_two_means()` | `mu1, mu2, sigma, alpha, power, alternative, ratio` | `n1, n2, total_n, actual_power, effect_size` |
+| `sample_size_paired()` | `mu0, mu1, sigma_d, alpha, power, alternative` | `n, actual_power, effect_size` |
+| `sample_size_proportion()` | `p0, p1, alpha, power, alternative` | `n, actual_power` |
+| `sample_size_two_proportions()` | `p1, p2, alpha, power, alternative, ratio` | `n1, n2, total_n, actual_power, effect_size` |
+| `sample_size_anova()` | `k, means, sigma, alpha, power` | `n, actual_power, effect_size` |
+| `sample_size_regression()` | `p, r_squared, alpha, power` | `n, actual_power, f_squared` |
+| `sample_size_ci()` | `type, h, sigma, p, conf_level` | `n, half_width, full_width` |
+| `sample_size_tolerance()` | `p, conf_level, max_half_width, sigma` | `n, k_factor, half_width` |
+| `sample_size_reliability()` | `reliability, conf_level, n_failures` | `n, achieved_conf_level` |
+| `calc_power()` | `n, effect_size, alpha, alternative, test_type` | numeric power |
+| `effect_size()` | `type` (`cohens_d`, `hedges_g`, `eta_squared`, `omega_squared`, `cohens_h`, `r`) + args | numeric |
+| `power_table()` | `effect_size, alpha, n_range, alternative` | data.frame |
+| `odds_ratio()` | `a, b, c, d, conf_level` | `odds_ratio, conf.int` |
+
+## 13. Decision Guide
+
+| Planning question | Use |
+|-------------------|-----|
+| Detect a mean shift of $\delta$ | `sample_size_mean()` or `sample_size_two_means()` |
+| Before/after paired measurement | `sample_size_paired()` |
+| Detect a yield / proportion change | `sample_size_proportion()` or `sample_size_two_proportions()` |
+| Compare $k$ groups (suppliers, machines) | `sample_size_anova()` |
+| Regression model significance | `sample_size_regression()` |
+| CI must be narrower than $2h$ | `sample_size_ci()` |
+| Tolerance interval width budget | `sample_size_tolerance()` |
+| Reliability demonstration (zero failures) | `sample_size_reliability()` |
+| Post-hoc: did my study have enough power? | `calc_power()` |
+| Visualise power vs $n$ | `power_table()` + `ggplot()` |
+
+## 14. References
+
+- Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences* (2nd ed.). Lawrence Erlbaum.
+- Howe, W. G. (1969). Two-sided tolerance limits for normal populations — some improvements. *Journal of the American Statistical Association*, 64(326), 610–620.
+- Montgomery, D. C. (2019). *Introduction to Statistical Quality Control* (8th ed.). Wiley.
+- Meeker, W. Q., Hahn, G. J., & Escobar, L. A. (2017). *Statistical Intervals* (2nd ed.). Wiley.
+
+## Further Reading
+
+- See the **Hypothesis Testing and Intervals** vignette for the test procedures these sample sizes feed into:
+  `vignette("hypothesis-testing-and-intervals", package = "iQualityR.stat")`
+- See the **ANOVA** vignette for multi-group comparisons:
+  `vignette("anova", package = "iQualityR.stat")`
+- See the **Descriptive Statistics and Distributions** vignette for tolerance intervals in context:
+  `vignette("descriptive-and-distributions", package = "iQualityR.stat")`

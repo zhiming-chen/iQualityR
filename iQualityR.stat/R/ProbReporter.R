@@ -12,7 +12,66 @@
 #'
 #' @export
 ProbReporter <- R6::R6Class("ProbReporter",
+  inherit = StatReporter,
   public = list(
+    #' @description Unified report entry point (Contract 2 signature).
+    #'
+    #' Dispatches on `format`:
+    #' - `"console"`: prints a human-readable summary to stdout.
+    #' - `"data.frame"`: returns a tidy data frame.
+    #' - `"excel"`: writes a themed xlsx file via `ExcelExporter`.
+    #'
+    #' `result` may be either a list bundling `calc_results` and `nodes` (the
+    #' natural L3 packaging), or the `calc_results` list directly with `nodes`
+    #' supplied through `...` (needed only for Excel export).
+    #'
+    #' @param result A list with `$calc_results` and optionally `$nodes`, or the
+    #'   `calc_results` list directly.
+    #' @param format Output format: `"data.frame"` (default), `"console"`, or `"excel"`.
+    #' @param path File path for `format = "excel"`.
+    #' @param audience Audience level (reserved for future interpretation sheet).
+    #' @param ... Backward-compat channel: `nodes` is extracted from here when
+    #'   not bundled in `result` (required for Excel export).
+    #' @return For `"data.frame"`: a data frame. For `"console"`/`"excel"`:
+    #'   invisible(NULL) / invisible(path).
+    report = function(result, format = c("data.frame", "console", "excel"),
+                      path = NULL, audience = "manager", ...) {
+      format <- match.arg(format)
+      dots <- list(...)
+
+      # Resolve result into calc_results + nodes. A bundled list carries both;
+      # otherwise result is the calc_results and nodes come from ... .
+      if (is.list(result) && !is.null(result$calc_results)) {
+        calc_results <- result$calc_results
+        nodes <- result$nodes %||% dots$nodes
+      } else {
+        calc_results <- result
+        nodes <- dots$nodes
+      }
+
+      switch(format,
+        "console"    = self$print_console(calc_results),
+        "data.frame" = self$to_dataframe(calc_results),
+        "excel"      = {
+          if (is.null(nodes)) {
+            stop("[ProbReporter] nodes are required for Excel export (pass via result$nodes or ...).",
+                 call. = FALSE)
+          }
+          if (!requireNamespace("iQualityR.core", quietly = TRUE)) {
+            stop("[ProbReporter] iQualityR.core is required for Excel export.",
+                 call. = FALSE)
+          }
+          config <- IqrTheme$new("academic")$config
+          exporter <- iQualityR.core::ExcelExporter$new(config)
+          path <- path %||% paste0("probability_analysis_report_",
+                                   format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx")
+          self$export_excel(calc_results, nodes, path, exporter)
+          invisible(path)
+        },
+        stop("Unknown format: ", format)
+      )
+    },
+
     #' @description Print report to console
     #' @param calc_results Calculation result list
     print_console = function(calc_results) {
