@@ -89,3 +89,9 @@ desktop.ini
 *.sqlite
 *.sqlite3
 *.db
+
+# ---- 临时调试/冒烟测试脚本（不入库）----
+.RDataTmp
+debug_*.R
+**/tmp_smoke.R
+**/test_api*.R
