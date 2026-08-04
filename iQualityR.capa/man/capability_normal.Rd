@@ -13,6 +13,7 @@ capability_normal(
   subgroup = NULL,
   sixpack = FALSE,
   conf_level = 0.95,
+  transform = NULL,
   theme = "academic",
   ...
 )
@@ -34,6 +35,9 @@ capability_normal(
 
 \item{conf_level}{Confidence level (default 0.95).}
 
+\item{transform}{Optional normality transform for the normal path:
+\code{"box_cox"}, \code{"johnson"}, \code{"auto"}, or \code{NULL} (default, no transform).}
+
 \item{theme}{Theme name or \link[iQualityR.core:IqrTheme]{iQualityR.core::IqrTheme} object (default "academic").}
 
 \item{...}{Additional arguments passed to \link{IqrCapabilityTask}.}
@@ -45,6 +49,12 @@ An \link{IqrCapabilityTask} object with computed results.
 Computes process capability indices (Cp, Cpk, Pp, Ppk, and optionally Cpm)
 under the normal distribution assumption, and optionally generates a Sixpack
 diagnostic plot set.
+
+When \code{transform} is set, the data (and the specification limits, following
+Minitab convention) are transformed using the chosen method
+(\code{"box_cox"}, \code{"johnson"}, or \code{"auto"}) before normal capability indices
+are computed. The transform parameters and normality diagnostics
+(before vs. after) are surfaced through \code{task$results$diagnostics}.
 }
 \examples{
 set.seed(123)

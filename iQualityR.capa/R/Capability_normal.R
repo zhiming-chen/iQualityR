@@ -10,6 +10,12 @@
 #' under the normal distribution assumption, and optionally generates a Sixpack
 #' diagnostic plot set.
 #'
+#' When `transform` is set, the data (and the specification limits, following
+#' Minitab convention) are transformed using the chosen method
+#' (`"box_cox"`, `"johnson"`, or `"auto"`) before normal capability indices
+#' are computed. The transform parameters and normality diagnostics
+#' (before vs. after) are surfaced through `task$results$diagnostics`.
+#'
 #' @param data Data frame containing the measurement column.
 #' @param measurement Measurement column name (character).
 #' @param lsl Lower specification limit (numeric).
@@ -18,6 +24,8 @@
 #' @param subgroup Optional subgroup column name for within-group sigma estimation.
 #' @param sixpack Logical; whether to generate the Sixpack diagnostic plots.
 #' @param conf_level Confidence level (default 0.95).
+#' @param transform Optional normality transform for the normal path:
+#'   `"box_cox"`, `"johnson"`, `"auto"`, or `NULL` (default, no transform).
 #' @param theme Theme name or [IqrTheme] object (default "academic").
 #' @param ... Additional arguments passed to [IqrCapabilityTask].
 #'
@@ -40,7 +48,7 @@
 #' }
 capability_normal <- function(data, measurement, lsl, usl, target = NULL,
                               subgroup = NULL, sixpack = FALSE, conf_level = 0.95,
-                              theme = "academic", ...) {
+                              transform = NULL, theme = "academic", ...) {
   # Input validation
   if (!is.data.frame(data)) stop("data must be a data.frame", call. = FALSE)
   if (!measurement %in% names(data)) stop("Column '", measurement, "' not found in data", call. = FALSE)
@@ -54,11 +62,19 @@ capability_normal <- function(data, measurement, lsl, usl, target = NULL,
   if (!is.null(subgroup) && !subgroup %in% names(data)) {
     stop("subgroup column '", subgroup, "' not found in data", call. = FALSE)
   }
+  if (!is.null(transform)) {
+    valid_transforms <- c("box_cox", "johnson", "auto")
+    if (!transform %in% valid_transforms) {
+      stop("transform must be one of ",
+           paste(shQuote(valid_transforms), collapse = ", "),
+           " or NULL", call. = FALSE)
+    }
+  }
 
   plan <- CapabilityPlan$new(
     lsl = lsl, usl = usl, target = target, subgroup = subgroup,
     conf_level = conf_level, sixpack = sixpack,
-    analysis_type = "normal"
+    analysis_type = "normal", transform = transform
   )
   task <- IqrCapabilityTask$new(data, measurement, plan, theme = theme, ...)
   task$compute()

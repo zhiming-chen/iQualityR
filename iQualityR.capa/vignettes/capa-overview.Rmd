@@ -1,0 +1,367 @@
+---
+title: "iQualityR.capa Overview"
+subtitle: "Process Capability Analysis for the iQualityR Ecosystem"
+author: "iQualityR capa Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    fig_width: 7
+    fig_height: 5
+vignette: >
+  %\VignetteIndexEntry{Capability Overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7, fig.height = 4.5, fig.align = "center",
+  warning = FALSE, message = FALSE
+)
+
+options(iqr.default_theme = "academic")
+library(iQualityR.capa)
+
+fmt4 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+fmt2 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+```
+
+## 1. What This Package Does
+
+`iQualityR.capa` quantifies how well a manufacturing or service process meets
+its engineering specifications. Given a measured quality characteristic and a
+pair of specification limits (LSL, USL), it produces the three deliverables
+that every industrial capability study requires:
+
+1. **Capability indices** — Cp, Cpk, Cpl, Cpu, Pp, Ppk, Ppl, Ppu, Cpm, Cpmk,
+   and the Z-based family (Z.Bench, Z.LSL, Z.USL). These compare the spread
+   and centering of the process to the width of the tolerance band.
+2. **Expected PPM** — parts-per-million non-conforming, decomposed into
+   *within-subgroup* and *overall* predictions, and further split into
+   below-LSL / above-USL / total.
+3. **Diagnostics** — normality tests, distribution-fit goodness-of-fit
+   (Kolmogorov-Smirnov), and stability checks that tell the analyst whether
+   the chosen analysis path is defensible.
+
+The package follows the standard **Minitab** output layout (Stat > Quality
+Tools > Capability Analysis) and borrows the **JMP** "fit-all-distributions"
+idea for the non-normal path, so analysts trained on either commercial tool
+will recognise the workflow immediately — while running entirely in R, so
+capability studies can be embedded in reproducible reports, automated
+pipelines, and Shiny applications.
+
+## 2. The Four Analysis Paths
+
+`iQualityR.capa` implements four core analysis paths for continuous, univariate
+CTQs, plus two advanced paths (attribute and multivariate) documented in
+`vignette("capa-advanced")`.
+
+| Path | When to use | σ decomposition | Dedicated vignette |
+|---|---|---|---|
+| **Normal** | Data is well-modelled by a normal distribution. | within (R-bar/d2 or MSSD) vs overall (sample SD). | `vignette("capa-normal")` |
+| **Between/Within** | Subgrouped data with between-subgroup drift (e.g. setup changes, lot-to-lot). | within + between + between-within + overall. | `vignette("capa-normal")` |
+| **Non-normal** | Skewed or bounded data; a parametric non-normal distribution fits better. | quantile method (0.135% / 99.865%); no within/overall split. | `vignette("capa-nonnormal")` |
+| **Non-parametric** | No defensible parametric model; let the data speak. | empirical / kernel CDF; observed PPM. | `vignette("capa-nonparametric")` |
+| **Binomial** *(advanced)* | Pass/fail attribute data; per-batch defectives. | p-bar; PPM = p × 1e6; Z.Bench. | `vignette("capa-advanced")` |
+| **Poisson** *(advanced)* | Defect counts per unit (DPMO). | u-bar; DPMO = u × 1e6; Z.Bench. | `vignette("capa-advanced")` |
+| **Multivariate** *(advanced)* | Correlated CTQs; joint spec region. | MCPV (Taam) + HPCI (Shahriari) + Hotelling T². | `vignette("capa-advanced")` |
+
+### 2.1 Decision tree
+
+```
+                 +---------------------------+
+                 | Is the data approximately |
+                 |      normal?              |
+                 +---------------------------+
+                      |               |
+                    Yes              No
+                      v               v
+            +-----------------+   +-------------------------+
+            | capability_     |   | Can a parametric       |
+            |    normal()     |   | non-normal dist fit?   |
+            +-----------------+   +-------------------------+
+                                        |               |
+                                      Yes              No
+                                        v               v
+                              +-----------------+  +----------------------+
+                              | capability_     |  | capability_          |
+                              |   nonnormal()   |  |   nonparametric()    |
+                              +-----------------+  +----------------------+
+                                        |
+                                        v
+                              (KS p < 0.05 for all?)
+                                        | Yes
+                                        v
+                              +----------------------+
+                              | capability_          |
+                              |   nonparametric()    |
+                              +----------------------+
+```
+
+**Practical guidance:**
+
+1. **Start with `capability_normal()`.** The diagnostics panel tells you if the
+   normality assumption is violated (Shapiro-Wilk p < 0.05 or visible curvature
+   in the Q-Q plot).
+2. **If subgroups show drift** (setup changes, operator-to-operator
+   differences), use `capability_between_within()` — the standard Minitab
+   B/W path that decomposes σ into within / between / B-W / overall.
+3. **If normality fails**, check whether the data has a natural bound (cycle
+   time, surface roughness, strength). If yes, try
+   `capability_nonnormal(distribution = "auto")` — the fitter compares
+   Weibull / Lognormal / Gamma / Exponential / Logistic by AIC and verifies
+   goodness-of-fit with the KS test.
+4. **If no parametric distribution fits** (KS p < 0.05 for all candidates),
+   fall back to `capability_nonparametric()`, which makes no distributional
+   assumption and reports the observed exceedance rate.
+
+## 3. Package Architecture
+
+`iQualityR.capa` follows the **Task-Plan-Analyzer-Plotter-Reporter (TPAPR)**
+architecture inherited from `iQualityR.core`. Every analysis is orchestrated
+by a *Task* object that owns the data, a *Plan* object that encodes the
+specification limits and analysis options, an *Analyzer* that performs the
+statistical computation, a *Plotter* that renders the diagnostic charts, and
+a *Reporter* that assembles the final deliverable. The five roles are bound
+together by a shared *Theme* so that all output is visually consistent.
+
+```
+            +--------------------------+
+            |          Theme           |   IqrTheme  (iQualityR.core)
+            |  colors, fonts, scales   |
+            +--------------------------+
+                  |    |    |    |
+                  v    v    v    v
+   +----------+  +----------+  +-----------+  +----------+  +-----------+
+   |   Plan   |  |   Task   |  | Analyzer  |  | Plotter  |  | Reporter  |
+   |----------|  |----------|  |-----------|  |----------|  |-----------|
+   | Capabil  |->| IqrCapab |->| Capabil   |->| Capabil  |->| Iqr       |
+   | ityPlan  |  | ilityTas |  | ityAnaly  |  | ityPlott |  | Reporter  |
+   |          |  |    k     |  |    zer    |  |    er    |  |           |
+   +----------+  +----------+  +-----------+  +----------+  +-----------+
+   specs,         data +       indices,       histogram,     Excel, HTML,
+   analysis_type  results      PPM, diag.      Sixpack, QQ    report
+```
+
+All five layers **delegate** to the shared infrastructure in `iQualityR.core`,
+`iQualityR.stat`, and `iQualityR.plot` so that capability results are
+numerically and visually consistent with the rest of the ecosystem:
+
+| capa component | Delegates to |
+|---|---|
+| `CapabilityAnalyzer` σ estimation | `iQualityR.stat::sigma_decomposition` / `sigma_estimate` |
+| `CapabilityAnalyzer` PPM | `iQualityR.stat::capability_to_ppm` |
+| `CapabilityAnalyzer` normality | `iQualityR.stat::normality_test` |
+| `CapabilityAnalyzer` capability verdict | `iQualityR.stat::capability_interpret` |
+| `CapabilityAnalyzer` Z.Bench | `iQualityR.stat::z_bench` |
+| `CapabilityAnalyzer` transforms | `iQualityR.stat::box_cox_transform` / `johnson_transform` / `auto_transform` |
+| `DistributionFitter` distribution fitting | `iQualityR.stat::fit_distribution` |
+| `CapabilityPlotter` all panels | `iQualityR.plot::base_plot` + `layers_*` |
+| `IqrCapabilityTask` reporting | `iQualityR.core::IqrReporter` |
+
+## 4. Function and Class Index
+
+### One-shot convenience wrappers
+
+```r
+# Normal capability (with optional subgroup σ decomposition)
+capability_normal(data, measurement, lsl, usl, target = NULL,
+                  subgroup = NULL, transform = NULL,
+                  conf_level = 0.95, theme = "academic", ...)
+
+# Between/Within capability (requires subgroup)
+capability_between_within(data, measurement, lsl, usl, target = NULL,
+                          subgroup, conf_level = 0.95,
+                          use_bootstrap = FALSE, bootstrap_samples = 1000,
+                          theme = "academic", ...)
+
+# Non-normal capability (auto-selects distribution by AIC)
+capability_nonnormal(data, measurement, lsl, usl, distribution = "auto",
+                    target = NULL, conf_level = 0.95,
+                    use_bootstrap = FALSE, bootstrap_samples = 1000,
+                    theme = "academic", ...)
+
+# Non-parametric capability (kernel or empirical CDF)
+capability_nonparametric(data, measurement, lsl, usl, target = NULL,
+                         conf_level = 0.95, use_bootstrap = FALSE,
+                         bootstrap_samples = 1000,
+                         nonparametric_method = "kernel",
+                         theme = "academic", ...)
+```
+
+All four return an `IqrCapabilityTask` object (invisibly) with the standard
+TPAPR lifecycle: `$compute()` → `$summary()` → `$plot()` → `$report()`.
+
+### R6 classes
+
+| Class | Inherits | Role |
+|---|---|---|
+| `CapabilityPlan` | `IqrPlanBase` | Stores spec limits, analysis type, criteria. |
+| `CapabilityAnalyzer` | `IqrAnalyzerBase` | Computes indices, PPM, diagnostics. |
+| `CapabilityPlotter` | `IqrPlotterBase` | Renders histogram, Q-Q, Sixpack, etc. |
+| `IqrCapabilityTask` | `IqrTaskBase` | Coordinates compute / plot / report. |
+| `DistributionFitter` | (standalone) | Wraps `iQualityR.stat::fit_distribution`. |
+
+## 5. The Five-Step Workflow
+
+Every capability study follows the same five-step lifecycle:
+
+```{r workflow, eval = FALSE}
+library(iQualityR.capa)
+
+# 1. Prepare data (data.frame with a measurement column)
+df <- read.csv(
+  system.file("extdata", "capability_normal_subgroup.csv", package = "iQualityR.capa")
+)
+
+# 2. One-shot analysis
+task <- capability_normal(
+  data = df, measurement = "measurement",
+  lsl = 44, usl = 56, target = 50,
+  subgroup = "subgroup"
+)
+
+# 3. Inspect results
+task$summary()
+
+# 4. Visualize
+task$plot(type = "full")   # Sixpack
+
+# 5. Export report
+task$report(format = "excel", path = tempfile(fileext = ".xlsx"))
+```
+
+## 6. Capability Indices Computed
+
+| Index | Formula (normal) | Meaning |
+|---|---|---|
+| `Cp` | (USL−LSL) / (6σ_within) | Potential capability, ignores centering. |
+| `Cpk` | min((USL−μ),(μ−LSL)) / (3σ_within) | Actual short-term capability. |
+| `Cpl` / `Cpu` | (μ−LSL)/(3σ_within) , (USL−μ)/(3σ_within) | One-sided lower / upper indices. |
+| `Pp` / `Ppk` | as above with σ_overall | Long-term performance. |
+| `Ppl` / `Ppu` | one-sided, σ_overall | Long-term one-sided. |
+| `Cpm` | (USL−LSL) / (6·τ), τ=√(mean((x−T)²)) | Taguchi index (target deviation). |
+| `Cpmk` | min((USL−μ),(μ−LSL)) / (3·τ) | Centered Taguchi index. |
+| `Z.Bench` | Φ⁻¹(1 − P_total) | Sigma quality level (short-term). |
+| `Z.LSL` / `Z.USL` | (μ−LSL)/σ , (USL−μ)/σ | One-sided sigma levels. |
+
+For the **non-normal** path the indices use the quantile method
+(σ_eq = (Q₀.₉₉₈₆₅ − Q₀.₀₀₁₃₅)/6); for the **non-parametric** path they use
+empirical quantiles. See the dedicated vignettes for the exact formulas.
+
+### Acceptance thresholds (automotive convention)
+
+| Index | Acceptable | Marginal | Unacceptable |
+|---|---|---|---|
+| Cpk / Ppk | ≥ 1.33 | 1.00 – 1.33 | < 1.00 |
+| PPM (overall) | < 63 | 63 – 6210 | > 6210 |
+
+These thresholds are applied automatically via
+`iQualityR.stat::capability_interpret` and surfaced in the
+`capability_judgment` diagnostic.
+
+## 7. The Sixpack Diagnostic
+
+The Sixpack is the Minitab-standard six-panel dashboard that verifies the
+**assumptions** behind a capability number before you trust it. Each panel
+answers one question:
+
+| Panel | Question it answers |
+|---|---|
+| Individual values chart (I) | Is the process stable over time? Are points outside spec? |
+| Moving range chart (MR) | Is the short-term variation stable? |
+| Histogram + density | Does the data shape match the assumed distribution? |
+| Q-Q plot | Is the distributional assumption quantitatively defensible? |
+| Capability indices bar chart | Are Cp/Cpk/Pp/Ppk above the 1.33 threshold? |
+| Cpk trend / last subgroups | Has capability drifted over time or across subgroups? |
+
+```{r sixpack-demo, fig.width=9, fig.height=7, echo = FALSE}
+df_normal <- read.csv(
+  system.file("extdata", "capability_normal_subgroup.csv", package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+task <- capability_normal(
+  data = df_normal, measurement = "measurement",
+  lsl = 44, usl = 56, target = 50, subgroup = "subgroup"
+)
+print(task$plot(type = "full"))
+```
+
+## 8. Bundled Sample Data
+
+`iQualityR.capa` ships with two datasets in `inst/extdata/`:
+
+| File | Shape | Use case |
+|---|---|---|
+| `capability_normal_subgroup.csv` | 125 rows × 2 cols (`subgroup`, `measurement`) | Normal & Between/Within capability, 25 subgroups of size 5. |
+| `capability_nonnormal_weibull.csv` | 125 rows × 1 col (`measurement`) | Non-normal & non-parametric capability, right-skewed. |
+
+```{r load-data}
+df_normal <- read.csv(
+  system.file("extdata", "capability_normal_subgroup.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+head(df_normal)
+
+df_nonnormal <- read.csv(
+  system.file("extdata", "capability_nonnormal_weibull.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+head(df_nonnormal)
+```
+
+## 9. Comparison with MINITAB and JMP
+
+`iQualityR.capa` is designed to cover the union of the capability features
+that industrial analysts actually use in MINITAB v21 and JMP v19:
+
+| Feature | MINITAB | JMP | iQualityR.capa |
+|---|---|---|---|
+| Normal capability (Cp…Cpmk, Z.Bench) | ✓ | ✓ | ✓ |
+| Between/Within capability | ✓ (dedicated menu) | ✓ | ✓ |
+| Non-normal capability (quantile method) | ✓ (9 dist) | ✓ (15+) | ✓ (auto 5 + explicit `beta`) |
+| Non-parametric capability | ✓ | ✓ | ✓ |
+| Box-Cox / Johnson transformation path | ✓ | ✓ | ✓ |
+| Bootstrap CI for indices | — | ✓ | ✓ |
+| Sixpack diagnostic | ✓ (3 variants) | — | ✓ (normal; B/W & NP variants share layout) |
+| **Attribute capability (Binomial)** | ✓ | ✓ | ✓ (Wilson + Clopper-Pearson CI, dispersion test) |
+| **Attribute capability (Poisson)** | ✓ | ✓ | ✓ (Garwood exact CI, dispersion test) |
+| **Multivariate capability indices (MCPV)** | — | — | **✓ (Taam 1993)** |
+| **Multivariate capability indices (HPCI)** | — | — | **✓ (Shahriari 1995, 3-component vector)** |
+| **Joint PPM via `mvtnorm::pmvnorm`** | — | — | **✓** |
+| Multiple-variable capability | ✓ | ✓ (Goal Plot) | ✓ (Goal Plot + Capability Snapshot, see `capa-advanced` §4.10) |
+
+The **multivariate capability indices** (MCPV / HPCI / joint PPM) are gaps
+that **even Minitab v21 and JMP v19 do not fully cover** — they are
+implemented here with worked quality examples in
+`vignette("capa-advanced")`.
+
+## 10. Where to Go Next
+
+- For normal & between/within capability: `vignette("capa-normal")`
+- For non-normal capability & transformations: `vignette("capa-nonnormal")`
+- For non-parametric capability & multi-variable considerations:
+  `vignette("capa-nonparametric")`
+- For **attribute capability (Binomial / Poisson)** and **multivariate
+  capability (MCPV / HPCI)** — the features that go beyond Minitab and JMP:
+  `vignette("capa-advanced")`
+
+## 11. References
+
+1. Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+   (7th ed.). Wiley. — Cp/Cpk, Pp/Ppk, Sixpack layout.
+2. AIAG (2005). *Statistical Process Control (SPC) Reference Manual* (2nd
+   ed.). — Within vs. overall σ, PPM.
+3. Kotz, S., & Lovelace, N. L. (1998). *Process Capability Indices in Theory
+   and Practice*. Arnold. — Non-normal capability, quantile method.
+4. Minitab LLC. *Capability Analysis documentation*, v21.
+5. JMP. *Process Capability platform documentation*, v19.
+6. `iQualityR.core` package documentation — TPAPR architecture, `IqrTheme`.
+7. `iQualityR.stat` package documentation — `sigma_estimate`,
+   `fit_distribution`, `capability_to_ppm`, `z_bench`.

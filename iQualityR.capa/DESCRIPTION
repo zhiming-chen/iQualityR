@@ -15,10 +15,10 @@ Imports:
     R6,
     iQualityR.core (>= 0.1.0),
     iQualityR.stat (>= 0.1.0),
-    iQualityR.plot (>= 0.1.0),
     ggplot2,
     data.table,
     MASS,
+    mvtnorm,
     patchwork,
     stats,
     utils
@@ -27,8 +27,12 @@ Remotes:
     zhiming-chen/iQualityR/iQualityR.stat,
     zhiming-chen/iQualityR/iQualityR.plot
 Suggests:
+    iQualityR.plot (>= 0.1.0),
     testthat,
-    withr
+    withr,
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

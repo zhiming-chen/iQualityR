@@ -35,8 +35,12 @@ normality testing, capability interpretation, and PPM conversion.
 \itemize{
 \item \href{#method-CapabilityAnalyzer-run}{\code{CapabilityAnalyzer$run()}}
 \item \href{#method-CapabilityAnalyzer-.run_normal}{\code{CapabilityAnalyzer$.run_normal()}}
+\item \href{#method-CapabilityAnalyzer-.run_between_within}{\code{CapabilityAnalyzer$.run_between_within()}}
 \item \href{#method-CapabilityAnalyzer-.run_nonparametric}{\code{CapabilityAnalyzer$.run_nonparametric()}}
 \item \href{#method-CapabilityAnalyzer-.run_nonnormal}{\code{CapabilityAnalyzer$.run_nonnormal()}}
+\item \href{#method-CapabilityAnalyzer-.small_sample_warning}{\code{CapabilityAnalyzer$.small_sample_warning()}}
+\item \href{#method-CapabilityAnalyzer-.apply_transformation}{\code{CapabilityAnalyzer$.apply_transformation()}}
+\item \href{#method-CapabilityAnalyzer-.transform_value}{\code{CapabilityAnalyzer$.transform_value()}}
 \item \href{#method-CapabilityAnalyzer-.estimate_sigma}{\code{CapabilityAnalyzer$.estimate_sigma()}}
 \item \href{#method-CapabilityAnalyzer-.compute_indices}{\code{CapabilityAnalyzer$.compute_indices()}}
 \item \href{#method-CapabilityAnalyzer-.compute_ppm}{\code{CapabilityAnalyzer$.compute_ppm()}}
@@ -117,6 +121,29 @@ Normal capability analysis
 }
 }
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityAnalyzer-.run_between_within"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityAnalyzer-.run_between_within}{}}}
+\subsection{Method \code{.run_between_within()}}{
+Between/Within capability analysis (Minitab B/W convention).
+Requires subgroup data. Uses \code{sigma_between_within} for Cp/Cpk (B/W) and
+\code{sigma_total} for Pp/Ppk. Reuses \code{iQualityR.stat::sigma_decomposition}.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityAnalyzer$.run_between_within(x, subgroup, plan)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector of measurements.}
+
+\item{\code{subgroup}}{Subgroup label vector (required).}
+
+\item{\code{plan}}{\link{CapabilityPlan} object.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-CapabilityAnalyzer-.run_nonparametric"></a>}}
 \if{latex}{\out{\hypertarget{method-CapabilityAnalyzer-.run_nonparametric}{}}}
 \subsection{Method \code{.run_nonparametric()}}{
@@ -153,6 +180,49 @@ Non-normal capability analysis
 }
 \if{html}{\out{</div>}}
 }
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityAnalyzer-.small_sample_warning"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityAnalyzer-.small_sample_warning}{}}}
+\subsection{Method \code{.small_sample_warning()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityAnalyzer$.small_sample_warning(x, threshold = 30)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector of measurements.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityAnalyzer-.apply_transformation"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityAnalyzer-.apply_transformation}{}}}
+\subsection{Method \code{.apply_transformation()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityAnalyzer$.apply_transformation(x, plan)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{x}}{Numeric vector of measurements.}
+
+\item{\code{plan}}{\link{CapabilityPlan} object.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityAnalyzer-.transform_value"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityAnalyzer-.transform_value}{}}}
+\subsection{Method \code{.transform_value()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityAnalyzer$.transform_value(value, transform_result)}\if{html}{\out{</div>}}
+}
+
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-CapabilityAnalyzer-.estimate_sigma"></a>}}

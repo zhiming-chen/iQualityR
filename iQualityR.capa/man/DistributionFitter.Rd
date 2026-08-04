@@ -8,8 +8,20 @@ Distribution fitting and diagnostics tool for non-normal
 capability analysis. Used for distribution identification, parameter
 estimation, and goodness-of-fit testing.
 
-Supports distributions: Normal, Weibull, Lognormal, Gamma, Exponential,
-Logistic, Beta.
+Delegates all distribution fitting to \link[iQualityR.stat:fit_distribution]{iQualityR.stat::fit_distribution} so
+that parameter estimation, AIC/BIC, and Kolmogorov-Smirnov goodness-of-fit
+are computed consistently with the rest of the iQualityR ecosystem. Adds
+capa-specific conveniences on top:
+\itemize{
+\item Automatic data shifting for gamma/weibull when the data contains
+non-positive values (preserves the \code{params$shift} convention).
+\item Data normalization for beta (preserves the \code{params$range} convention).
+\item \code{eval_density} / \code{eval_quantile} / \code{eval_cdf} helpers for capability
+index and PPM computation.
+}
+
+Supported distributions (capa names): normal, weibull, lognormal, gamma,
+exponential, logistic, beta.
 }
 \section{Public fields}{
 \if{html}{\out{<div class="r6-fields">}}
@@ -29,13 +41,9 @@ Logistic, Beta.
 \item \href{#method-DistributionFitter-eval_density}{\code{DistributionFitter$eval_density()}}
 \item \href{#method-DistributionFitter-eval_quantile}{\code{DistributionFitter$eval_quantile()}}
 \item \href{#method-DistributionFitter-eval_cdf}{\code{DistributionFitter$eval_cdf()}}
-\item \href{#method-DistributionFitter-.fit_normal}{\code{DistributionFitter$.fit_normal()}}
-\item \href{#method-DistributionFitter-.fit_weibull}{\code{DistributionFitter$.fit_weibull()}}
-\item \href{#method-DistributionFitter-.fit_lognormal}{\code{DistributionFitter$.fit_lognormal()}}
-\item \href{#method-DistributionFitter-.fit_gamma}{\code{DistributionFitter$.fit_gamma()}}
-\item \href{#method-DistributionFitter-.fit_exponential}{\code{DistributionFitter$.fit_exponential()}}
-\item \href{#method-DistributionFitter-.fit_logistic}{\code{DistributionFitter$.fit_logistic()}}
-\item \href{#method-DistributionFitter-.fit_beta}{\code{DistributionFitter$.fit_beta()}}
+\item \href{#method-DistributionFitter-.capa_to_stat_dist}{\code{DistributionFitter$.capa_to_stat_dist()}}
+\item \href{#method-DistributionFitter-.preprocess_data}{\code{DistributionFitter$.preprocess_data()}}
+\item \href{#method-DistributionFitter-.convert_stat_to_capa}{\code{DistributionFitter$.convert_stat_to_capa()}}
 \item \href{#method-DistributionFitter-clone}{\code{DistributionFitter$clone()}}
 }
 }
@@ -43,7 +51,10 @@ Logistic, Beta.
 \if{html}{\out{<a id="method-DistributionFitter-fit_one"></a>}}
 \if{latex}{\out{\hypertarget{method-DistributionFitter-fit_one}{}}}
 \subsection{Method \code{fit_one()}}{
-Fit a single distribution and return parameter estimates and statistics
+Fit a single distribution and return parameter estimates and
+statistics. Delegates to \link[iQualityR.stat:fit_distribution]{iQualityR.stat::fit_distribution} with
+capa-specific data preprocessing (shift for gamma/weibull, normalize for
+beta) and result-shape conversion.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$fit_one(x, dist_name)}\if{html}{\out{</div>}}
 }
@@ -53,7 +64,7 @@ Fit a single distribution and return parameter estimates and statistics
 \describe{
 \item{\code{x}}{Numeric vector of data}
 
-\item{\code{dist_name}}{Distribution name string}
+\item{\code{dist_name}}{Distribution name string (capa convention)}
 }
 \if{html}{\out{</div>}}
 }
@@ -62,7 +73,9 @@ Fit a single distribution and return parameter estimates and statistics
 \if{html}{\out{<a id="method-DistributionFitter-fit_auto"></a>}}
 \if{latex}{\out{\hypertarget{method-DistributionFitter-fit_auto}{}}}
 \subsection{Method \code{fit_auto()}}{
-Automatically select the best distribution based on AIC
+Automatically select the best distribution based on AIC.
+Iterates over candidates calling fit_one() (which delegates to
+iQualityR.stat::fit_distribution) and selects the lowest AIC.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$fit_auto(x, candidate_dists = NULL)}\if{html}{\out{</div>}}
 }
@@ -96,7 +109,11 @@ Plot distribution fit comparison
 
 \item{\code{plan}}{CapabilityPlan object}
 
-\item{\code{theme}}{Optional ggplot theme function; defaults to theme_minimal()}
+\item{\code{theme}}{Optional theme spec (NULL / string / function / IqrTheme).
+Resolved via \code{iQualityR.plot::as_iqr_theme_object()} so the resulting
+plot follows the active \code{IqrTheme} consistently, matching the look of
+other iQualityR subpackages. A bare ggplot2 theme function is also
+accepted for backward compatibility and added on top of the IqrTheme.}
 }
 \if{html}{\out{</div>}}
 }
@@ -168,116 +185,40 @@ Compute cumulative probability
 }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_normal"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_normal}{}}}
-\subsection{Method \code{.fit_normal()}}{
+\if{html}{\out{<a id="method-DistributionFitter-.capa_to_stat_dist"></a>}}
+\if{latex}{\out{\hypertarget{method-DistributionFitter-.capa_to_stat_dist}{}}}
+\subsection{Method \code{.capa_to_stat_dist()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_normal(x)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.capa_to_stat_dist(name)}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-DistributionFitter-.preprocess_data"></a>}}
+\if{latex}{\out{\hypertarget{method-DistributionFitter-.preprocess_data}{}}}
+\subsection{Method \code{.preprocess_data()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.preprocess_data(x, dist_name)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
 \item{\code{x}}{Numeric vector of data}
+
+\item{\code{dist_name}}{Distribution name string}
 }
 \if{html}{\out{</div>}}
 }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_weibull"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_weibull}{}}}
-\subsection{Method \code{.fit_weibull()}}{
+\if{html}{\out{<a id="method-DistributionFitter-.convert_stat_to_capa"></a>}}
+\if{latex}{\out{\hypertarget{method-DistributionFitter-.convert_stat_to_capa}{}}}
+\subsection{Method \code{.convert_stat_to_capa()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_weibull(x)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.convert_stat_to_capa(stat_result, capa_name, prep)}\if{html}{\out{</div>}}
 }
 
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{x}}{Numeric vector of data}
-}
-\if{html}{\out{</div>}}
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_lognormal"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_lognormal}{}}}
-\subsection{Method \code{.fit_lognormal()}}{
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_lognormal(x)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{x}}{Numeric vector of data}
-}
-\if{html}{\out{</div>}}
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_gamma"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_gamma}{}}}
-\subsection{Method \code{.fit_gamma()}}{
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_gamma(x)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{x}}{Numeric vector of data}
-}
-\if{html}{\out{</div>}}
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_exponential"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_exponential}{}}}
-\subsection{Method \code{.fit_exponential()}}{
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_exponential(x)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{x}}{Numeric vector of data}
-}
-\if{html}{\out{</div>}}
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_logistic"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_logistic}{}}}
-\subsection{Method \code{.fit_logistic()}}{
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_logistic(x)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{x}}{Numeric vector of data}
-}
-\if{html}{\out{</div>}}
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-DistributionFitter-.fit_beta"></a>}}
-\if{latex}{\out{\hypertarget{method-DistributionFitter-.fit_beta}{}}}
-\subsection{Method \code{.fit_beta()}}{
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{DistributionFitter$.fit_beta(x)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{x}}{Numeric vector of data}
-}
-\if{html}{\out{</div>}}
-}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-DistributionFitter-clone"></a>}}

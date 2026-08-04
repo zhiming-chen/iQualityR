@@ -170,8 +170,17 @@ IqrCapabilityTask <- R6::R6Class("IqrCapabilityTask",
     #' @param ... Additional arguments passed to the reporter.
     report = function(format = "excel", path = NULL, ...) {
       if (is.null(self$results)) stop("No results. Run $compute() first.", call. = FALSE)
-      # Use IqrReporter from the framework; do not depend on global option
+      # Use IqrReporter from the framework; do not depend on global option.
+      # Register the Excel generator (idempotent) so capability results are
+      # exported as multiple structured sheets rather than a single flat dump.
+      # The Rmd template is auto-discovered by IqrReporter via task_tag.
       reporter <- iQualityR.core::IqrReporter$new(self$theme_obj)
+      reporter$register(
+        task_tag = "capability",
+        excel_generator = function(results, plan) {
+          capability_to_excel_data(results, plan)
+        }
+      )
       reporter$export(
         results = self$results,
         plan = self$plan,

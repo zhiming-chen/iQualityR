@@ -1,0 +1,707 @@
+---
+title: "Advanced Capability: Attribute & Multivariate"
+subtitle: "Beyond Minitab/JMP — Binomial, Poisson, MCPV and HPCI"
+author: "iQualityR capa Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    fig_width: 7
+    fig_height: 5
+vignette: >
+  %\VignetteIndexEntry{Advanced Capability}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7, fig.height = 4.5, fig.align = "center",
+  warning = FALSE, message = FALSE
+)
+
+options(iqr.default_theme = "academic")
+library(iQualityR.capa)
+library(mvtnorm)
+library(ggplot2)
+
+fmt4 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+fmt2 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+```
+
+## 1. What This Vignette Covers
+
+The four "core" capability paths (normal, between/within, non-normal,
+non-parametric) are documented in `vignette("capa-overview")`,
+`vignette("capa-normal")`, `vignette("capa-nonnormal")`, and
+`vignette("capa-nonparametric")`. They cover **continuous, univariate** CTQs.
+
+This vignette documents the **two advanced paths** that go beyond what
+Minitab v21 and JMP v19 ship as dedicated features:
+
+1. **Attribute capability** — for pass/fail and count data, when each unit
+   is classified as defective or not (Binomial) or carries a defect count
+   (Poisson). Both Minitab and JMP have this; `iQualityR.capa` provides a
+   TPAPR-consistent implementation.
+2. **Multivariate capability** — for **correlated CTQs**, where analysing
+   each CTQ independently underestimates the joint defect probability.
+   This is where `iQualityR.capa` *exceeds* Minitab and JMP: neither ships
+   the Taam (1993) MCPV nor the Shahriari-Hubele-Lawrence (1995) HPCI as
+   dedicated indices. Both are implemented here, with worked quality
+   examples.
+
+| Section | Use case | Software parity |
+|---|---|---|
+| §2 Binomial | PCB assembly line — proportion defective | Minitab ✓ / JMP ✓ |
+| §3 Poisson | Textile weaving — defects per meter | Minitab ✓ / JMP ✓ |
+| §4 Multivariate MCPV + HPCI | Engine cylinder bore & stroke (correlated) | **Minitab ✗ / JMP ✗** |
+| §4.10 Goal Plot & Snapshot | Multi-CTQ triage on one view | Minitab ✗ / JMP ✓ |
+
+## 2. Binomial Capability — PCB Assembly Line
+
+### 2.1 The quality problem
+
+A surface-mount technology (SMT) line produces 100 PCBs per batch. Each PCB
+is electrically tested at end-of-line; a board is classified as *defective*
+if any of its solder joints fails the in-circuit test. The quality engineer
+collects 30 consecutive daily batches and wants to know:
+
+- What is the process's average proportion defective `p`?
+- What is the 95% confidence interval for `p`?
+- Is the process stable enough to trust a single `p` estimate? (p-chart)
+- Is the binomial assumption valid? (dispersion test)
+- What PPM and sigma level does the process deliver?
+- Does the process meet the customer's 2% defective target?
+
+### 2.2 Data
+
+```{r load-binomial}
+df_binom <- read.csv(
+  system.file("extdata", "capability_attribute_binomial.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+str(df_binom)
+head(df_binom)
+
+# Quick summary
+cat(sprintf("Total defectives: %d / %d inspected (%.2f%%)\n",
+            sum(df_binom$defectives), sum(df_binom$inspected),
+            100 * sum(df_binom$defectives) / sum(df_binom$inspected)))
+```
+
+### 2.3 Run the analysis
+
+```{r binomial-quick}
+task_b <- capability_binomial(
+  data = df_binom,
+  defects = "defectives",
+  sample_sizes = "inspected",
+  target_proportion = 0.02   # customer's 2% target
+)
+task_b$summary()
+```
+
+### 2.4 How to read the results
+
+- **p-bar = 0.0193** — the pooled proportion defective across all 30 batches.
+- **95% Wilson CI = [0.0150, 0.0249]** — even with 3,000 inspected boards, the
+  CI is non-trivial; the true `p` could be anywhere in this range.
+- **PPM expected = 19,333** — about 19,300 defective boards per million.
+- **Yield = 98.07%** — first-pass yield.
+- **Z.Bench (short-term, shift=0) = 3.57** — the *short-term* sigma level
+  implied by the observed defect rate.
+- **Sigma level (+1.5 shift) = 5.07** — the *long-term* sigma level under
+  the Six Sigma convention (1.5σ long-term drift).
+- **Dispersion test p = 0.82** — high p-value means the binomial model
+  fits well (variance matches what binomial predicts). If p < 0.05, the
+  process is over- or under-dispersed and the binomial assumption is
+  invalid — switch to Laney P' or a beta-binomial model.
+- **Target status: pass** — p-bar (1.93%) is below the customer's 2% target.
+- **Sigma status: marginal (3–4 sigma)** — Z.Bench is in the marginal zone
+  (3–4σ short-term); aim for ≥4σ.
+- **Overall: WATCH** — the process meets the target today but is not yet at
+  world-class (6σ) performance; tighten the upstream SPC.
+
+### 2.5 The Sixpack (6-panel layout)
+
+```{r binomial-plot, fig.width=10, fig.height=12}
+print(task_b$plot(type = "full"))
+```
+
+**Panel-by-panel interpretation:**
+
+1. **Rate control chart (top-left, p-chart)** — each point is one batch's
+   proportion defective; dashed lines are the variable-width 3σ limits
+   (narrower for larger batches). All points in control → the rate is stable
+   and a single `p` estimate is meaningful. A red point would flag a
+   special-cause batch.
+2. **Rate histogram (top-right)** — distribution of per-batch proportions.
+   The solid line is the pooled p-bar; the dashed lines are the CI bounds.
+   A long-tailed histogram suggests batch-to-batch instability.
+3. **Cumulative rate (middle-left)** — the running pooled rate as batches
+   accumulate, with the 95% CI band shaded. Convergence (the curve
+   flattening) indicates sufficient sample size; a still-trending curve
+   means you need more data before trusting the capability verdict.
+4. **Defect count per subgroup (middle-right)** — bar chart of raw defect
+   counts; red bars flag out-of-control batches (visually identifies which
+   batches drove the OOC signal).
+5. **Distribution fit (bottom-left)** — the fitted binomial PMF overlaid on
+   the observed per-subgroup defect-rate histogram. A good fit (bars tracking
+   the curve) validates the binomial model; systematic deviation signals
+   over- or under-dispersion (cross-check the dispersion test).
+6. **Performance bar (bottom-right)** — observed vs expected PPM, with
+   Z.Bench and sigma level annotated. This replaces the previous decorative
+   sigma gauge and text summary card with an information-dense bar that
+   communicates the same numbers at a glance.
+
+### 2.6 Clopper-Pearson exact CI (for small n or extreme p)
+
+For small samples or when `p` is close to 0 or 1, the Wilson CI can
+under-cover; the conservative Clopper-Pearson "exact" interval is preferred
+for regulatory reporting.
+
+```{r binomial-cp}
+task_cp <- capability_binomial(
+  data = df_binom, defects = "defectives",
+  sample_sizes = "inspected",
+  target_proportion = 0.02,
+  ci_method = "clopper_pearson"
+)
+wilson_ci <- task_b$results$statistics
+cp_ci     <- task_cp$results$statistics
+
+data.frame(
+  Method = c("Wilson", "Clopper-Pearson"),
+  Estimate = c(wilson_ci$rate, cp_ci$rate),
+  Lower = c(wilson_ci$rate_lower, cp_ci$rate_lower),
+  Upper = c(wilson_ci$rate_upper, cp_ci$rate_upper),
+  Width = c(wilson_ci$rate_upper - wilson_ci$rate_lower,
+            cp_ci$rate_upper - cp_ci$rate_lower)
+)
+```
+
+Clopper-Pearson is wider (more conservative) — use it when you need to be
+*sure* the true `p` is below a regulatory threshold.
+
+## 3. Poisson Capability — Textile Weaving Defects
+
+### 3.1 The quality problem
+
+A textile mill weaves fabric on a loom; the customer specification is "no
+more than 0.05 defects per meter" (a defect is a visible flaw: a broken
+thread, a slub, a mispick). The quality engineer inspects 30 consecutive
+50-meter rolls and counts the defects on each. Question:
+
+- What is the average defect rate `u` (defects per meter)?
+- What is the 95% CI for `u`?
+- Is the Poisson assumption valid? (variance should equal mean)
+- What DPMO and sigma level does the loom deliver?
+- Does the loom meet the 0.05 defects/m customer target?
+
+### 3.2 Data
+
+```{r load-poisson}
+df_pois <- read.csv(
+  system.file("extdata", "capability_attribute_poisson.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+str(df_pois)
+head(df_pois)
+
+cat(sprintf("Total defects: %d / %d meters (%.4f defects/m)\n",
+            sum(df_pois$defects), sum(df_pois$meters),
+            sum(df_pois$defects) / sum(df_pois$meters)))
+```
+
+### 3.3 Run the analysis
+
+```{r poisson-quick}
+task_p <- capability_poisson(
+  data = df_pois,
+  defects = "defects",
+  sample_sizes = "meters",   # exposure = meters inspected
+  target_rate = 0.05
+)
+task_p$summary()
+```
+
+### 3.4 How to read the results
+
+- **u-bar = 0.0627 defects/meter** — the rate is *above* the 0.05 customer
+  target.
+- **95% Garwood exact CI = [0.0506, 0.0767]** — even the lower CI bound is
+  just barely above the target; the loom is not capable.
+- **DPMO expected = 62,667** — about 62,700 defects per million meters of
+  fabric produced.
+- **Yield = 93.93%** — probability that a randomly-chosen 1-meter section
+  has zero defects.
+- **Z.Bench = 3.05, Sigma level = 4.55** — short-term sigma is marginal;
+  long-term sigma is in the 4–5σ "acceptable" zone.
+- **Dispersion test p = 0.15** — the Poisson model is acceptable (variance
+  matches the mean).
+- **u-chart: 1 of 30 subgroups out of control** — there was a special-cause
+  roll. Investigate before reporting the rate.
+- **Overall: FAIL** — the rate exceeds the customer target.
+
+### 3.5 The Sixpack
+
+```{r poisson-plot, fig.width=10, fig.height=12}
+print(task_p$plot(type = "full"))
+```
+
+The Poisson sixpack follows the same 6-panel layout as the binomial
+(§2.5): u-chart | rate histogram / cumulative rate | defects per roll /
+Poisson fit (PMF vs observed) | performance bar (observed vs expected PPM).
+The Poisson fit panel overlays the fitted Poisson PMF on the observed
+defect-count histogram; a poor fit combined with a significant dispersion
+test flags over-dispersion.
+
+### 3.6 What to do next
+
+1. **Investigate the OOC roll** — find the operator/looms/shift that
+   produced the special-cause roll and address the root cause.
+2. **Reduce u-bar below 0.05** — typical textile root causes: loom
+   vibration, yarn tension drift, or warp sizing inconsistency. Apply a
+   designed experiment to find the dominant factor.
+3. **Re-run capability** after the improvement; the rate must drop below
+   0.05 and the u-chart must be stable for a defensible "capable" verdict.
+
+## 4. Multivariate Capability — Engine Cylinder Bore & Stroke
+
+### 4.1 The quality problem
+
+An engine plant machines cylinder blocks. Two CTQs are measured on each
+block: the **bore diameter** (target 100 mm, spec 99.5–100.5 mm) and the
+**stroke length** (target 80 mm, spec 79.5–80.5 mm). Both are machined on
+the same fixture, so they are **positively correlated** — when the bore is
+oversized, the stroke tends to be oversized too.
+
+The quality engineer has 60 blocks and wants to answer:
+
+- Is the *joint* process capable of meeting both specs simultaneously?
+- How much does the correlation matter? (Compare joint PPM to the
+  independence assumption.)
+- Where is the process weak — volume, centering, or location?
+- What is the *joint* probability of a block falling outside the spec
+  rectangle?
+
+### 4.2 Why univariate analysis is not enough
+
+A naive analyst runs `capability_normal()` on bore and stroke separately:
+
+```{r naive-univariate, echo = FALSE, message = FALSE}
+df_multi <- read.csv(
+  system.file("extdata", "capability_multivariate.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+
+task_bore   <- capability_normal(df_multi, "bore",   lsl = 99.5, usl = 100.5,
+                                  target = 100)
+task_stroke <- capability_normal(df_multi, "stroke", lsl = 79.5, usl = 80.5,
+                                  target = 80)
+
+naive_summary <- data.frame(
+  CTQ = c("bore", "stroke"),
+  Cpk = c(task_bore$results$statistics$cpk, task_stroke$results$statistics$cpk),
+  Ppk = c(task_bore$results$statistics$ppk, task_stroke$results$statistics$ppk),
+  PPM_overall = c(task_bore$results$data_tables$ppm_overall$PPM[3],
+                  task_stroke$results$data_tables$ppm_overall$PPM[3])
+)
+naive_summary
+```
+
+Both CTQs have Cpk around 0.7–0.8 — marginal. The naive analyst might
+conclude: "If we fix the variance of each CTQ independently, the joint
+process will be capable."
+
+**This is wrong.** Because bore and stroke are positively correlated, the
+joint probability of *both* being out of spec is *not* the product of the
+marginal probabilities. The correlation inflates the joint defect rate, and
+the process is actually worse than the univariate view suggests. We need
+the multivariate indices.
+
+### 4.3 The two multivariate indices
+
+`iQualityR.capa` implements both of the canonical multivariate capability
+indices from the literature:
+
+#### 4.3.1 MCPV (Taam et al. 1993) — scalar family
+
+The Taam MCPV is the multivariate analog of Cp/Cpk. It compares the
+**volume of the spec region** (a hyper-rectangle) to the **volume of the
+99.73% process ellipsoid** (the multivariate analog of the ±3σ band):
+
+$$
+\text{MCPV}_p = \frac{V_{\text{spec}}}{V_{\text{process, 99.73\%}}}
+$$
+
+where $V_{\text{process, 99.73\%}}$ is the volume of the ellipsoid defined
+by the covariance matrix $\Sigma$ at probability 0.9973 (the multivariate
+chi-square quantile $\chi^2_{p, 0.9973}$). This is the multivariate analog
+of **Cp** (potential capability, ignoring centering).
+
+The centered version (analog of **Cpk**) applies a centering penalty based
+on the Mahalanobis distance from the process mean to the target vector:
+
+$$
+\text{MCPV}_{pk} = \text{MCPV}_p \cdot \left(1 - \frac{d^2(\bar{x}, T)}{\chi^2_{p, 0.9973}}\right)
+$$
+
+where $d^2(\bar{x}, T) = (\bar{x} - T)^\top \Sigma^{-1} (\bar{x} - T)$ is
+the squared Mahalanobis distance from mean to target. The penalty is 0 when
+the process is perfectly centred and 1 when the mean is on the edge of the
+99.73% ellipsoid.
+
+#### 4.3.2 HPCI (Shahriari et al. 1995) — three-component vector
+
+The Shahriari HPCI is a *vector* of three independent components, each
+testing a different aspect of capability:
+
+1. **`npc` (volume ratio)** — same as MCPV_p. Tests whether the process
+   ellipsoid fits inside the spec region. Pass if `npc >= 1`.
+2. **`pv` (centering p-value)** — p-value from the Hotelling $T^2$ test of
+   $H_0: \mu = T$. Tests whether the process mean is on target. Pass if
+   `pv >= 1 - conf_level` (e.g. >= 0.05 for 95% confidence).
+3. **`lri` (location ratio index)** — product of per-CTQ "centering ratios"
+   $\min\left(\frac{USL_i - \bar{x}_i}{USL_i - LSL_i}, \frac{\bar{x}_i - LSL_i}{USL_i - LSL_i}\right) \cdot 2$.
+   Tests whether each CTQ's mean is in the inner half of its spec band.
+   Pass if `lri >= 0.9`.
+
+The HPCI vector is the more rigorous index because the three components are
+independent tests — each must pass for the process to be considered capable.
+The overall verdict is:
+
+- **pass** — all three components pass.
+- **watch** — volume OK but centering or location off (fixable by adjustment).
+- **fail** — volume fails (process spread exceeds spec; needs variance
+  reduction, not just re-centering).
+
+### 4.4 Run the analysis
+
+```{r multivar-quick}
+df_multi <- read.csv(
+  system.file("extdata", "capability_multivariate.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+
+task_m <- capability_multivariate(
+  data = df_multi,
+  ctqs = c("bore", "stroke"),
+  lsl_vec = c(99.5, 79.5),
+  usl_vec = c(100.5, 80.5),
+  target_vec = c(100, 80)
+)
+task_m$summary()
+```
+
+### 4.5 How to read the results
+
+- **p = 2, n = 60** — bivariate analysis on 60 engine blocks.
+- **Spec region volume = 1.0** (rectangle 1 × 1 mm²).
+- **Process 99.73% ellipsoid volume = 2.05** — the process ellipsoid is
+  *twice* the size of the spec region. The process cannot fit inside the
+  spec rectangle.
+- **MCPV_p = 0.49** — well below 1; the process is not capable on the
+  volume criterion alone.
+- **MCPV_pk = 0.45** — centering penalty is small (7.5%); the process is
+  mostly off-volume, not off-target.
+- **HPCI:**
+  - `npc = 0.49` (fail — volume)
+  - `pv = 0.0000` (fail — Hotelling T² rejects H0: μ = T at any
+    reasonable α; the process mean is statistically off-target)
+  - `lri = 0.72` (fail — at least one CTQ's mean is in the outer half of
+    its spec band)
+- **Hotelling T² = 53.3, F(2, 58) = 26.2, p < 0.0001** — strong evidence
+  that the mean vector is off-target.
+- **Yield (joint) = 97.15%** — the *actual* joint in-spec probability,
+  computed by `mvtnorm::pmvnorm` over the spec rectangle. This is the
+  multivariate analog of "expected yield".
+- **Expected PPM (joint) = 28,498** — about 28,500 blocks per million will
+  be out of spec on *at least one* CTQ.
+
+### 4.6 Why this is more honest than the univariate view
+
+```{r compare-univariate-multivariate}
+comparison <- data.frame(
+  Approach = c("Univariate bore", "Univariate stroke",
+               "Independence assumption (product)",
+               "Multivariate (joint, via mvtnorm)"),
+  PPM = c(naive_summary$PPM_overall[1],
+          naive_summary$PPM_overall[2],
+          # PPM under independence: P(any out) = 1 - P(both in)
+          # P(both in) = (1 - PPM_b/1e6) * (1 - PPM_s/1e6)
+          (1 - (1 - naive_summary$PPM_overall[1] / 1e6) *
+                (1 - naive_summary$PPM_overall[2] / 1e6)) * 1e6,
+          task_m$results$statistics$ppm_expected)
+)
+comparison
+```
+
+**Key insight:** The independence assumption under-estimates the joint PPM
+(it assumes bore and stroke defects are independent events). The true
+joint PPM (computed by `mvtnorm`) is *higher* because positive correlation
+means bore-and-stroke-both-out-of-spec tends to happen on the same blocks.
+The multivariate analysis reveals the true defect rate.
+
+### 4.7 The Sixpack (6-panel layout for p = 2)
+
+```{r multivar-plot, fig.width=10, fig.height=12}
+print(task_m$plot(type = "full"))
+```
+
+**Panel-by-panel interpretation:**
+
+1. **Bivariate spec ellipse (top-left)** — the heart of the multivariate
+   view. Each point is one engine block. The dashed rectangle is the spec
+   region (99.5–100.5 × 79.5–80.5). The solid ellipse is the 99.73% process
+   region (the multivariate analog of ±3σ). The brown ✕ is the target
+   (100, 80); the red ○ is the process mean.
+
+   *How to read it:* if the ellipse fits inside the rectangle with margin,
+   the process is volume-capable. If the ellipse pokes outside the
+   rectangle, the process is volume-incapable. If the mean ○ is far from
+   the target ✕, the process is off-center. The 60 points should cluster
+   around the mean; outliers are individual suspect blocks.
+
+2. **HPCI three-component bar (top-right)** — the Shahriari (1995)
+   capability vector rendered as three horizontal bars (NPC volume ratio,
+   PV centering p-value, LRI location ratio), each with its pass threshold
+   marker. A bar turns red when its component fails. This replaces the
+   previous low-information radar chart with the academic-standard bar
+   representation (Taam 1993 / Shahriari 1995).
+
+3. **Marginal capability (middle-left)** — for context, the univariate
+   Cpk of each CTQ as a horizontal bar, colored by capability status
+   (pass ≥ 1.33, watch 1.0–1.33, fail < 1.0). This shows *which* CTQ is the
+   weakest contributor to the joint failure. (Note: per-CTQ univariate Cpk
+   can all be above 1.33 while the multivariate MCPV is below 1 — this is
+   the "correlation tax".)
+
+4. **Hotelling T² control chart (middle-right)** — the multivariate
+   stability chart: each point is one block's T² statistic against the
+   chi-square UCL. Red points flag multivariate out-of-control blocks
+   (special causes that would be invisible in any single univariate
+   chart).
+
+5. **MCPV volume ratio (bottom-left)** — bar comparison of the spec
+   region volume vs the process ellipsoid volume, with the MCPV Cp-ratio
+   annotated. MCPV < 1 means the process spread exceeds the spec volume.
+
+6. **Joint yield & PPM bar (bottom-right)** — the overall verdict: a
+   horizontal yield bar (joint probability P(X in spec region) as a %)
+   against the 99.73% target, with the expected joint PPM annotated and the
+   verdict (pass/watch/fail) controlling the bar color. This replaces the
+   previous monospaced text summary card with an information-dense visual.
+
+### 4.8 What to do next
+
+1. **Volume failure is the dominant problem** (MCPV_p = 0.49 << 1).
+   Reducing the variance of *both* CTQs is the only fix — re-centering
+   alone will not help. Investigate the fixture: a worn locating pin or
+   thermal drift in the machining centre would inflate both variances
+   simultaneously.
+2. **The mean is also off-target** (Hotelling T² p < 0.0001). Once the
+   variance is reduced, re-center the fixture.
+3. **Re-run capability** after the improvements. The volume ratio must
+   reach MCPV_p >= 1 for a "pass" verdict.
+4. **For p > 2** — the same function handles three or more CTQs. The
+   scatter panel is replaced by a per-CTQ-pairs scatter matrix; all other
+   panels (HPCI bar, marginal Cpk, T² chart, MCPV volume, joint yield)
+   remain.
+
+### 4.9 What about higher dimensions?
+
+For p > 2 the bivariate scatter panel is replaced by per-CTQ-pairs plots
+(not yet implemented as a single panel; use `plot(type = "per_ctq")` and
+`plot(type = "qq")` separately). The MCPV/HPCI formulas generalise cleanly
+to any p:
+
+- The 99.73% ellipsoid volume uses $\chi^2_{p, 0.9973}$, which scales with p.
+- The Hotelling T² test uses F(p, n−p), valid for n > p.
+- The `mvtnorm::pmvnorm` integration scales well to p ≤ 10; beyond that,
+  Monte Carlo integration is recommended (the current implementation uses
+  Genz's algorithm via `mvtnorm`, which is exact for low dimensions).
+
+**Rule of thumb:** aim for n ≥ 10·p for a stable covariance estimate. For
+p = 5 CTQs, you need n ≥ 50 blocks; for p = 10, n ≥ 100.
+
+### 4.10 Multi-CTQ triage: Goal Plot & Capability Snapshot
+
+When a plant runs dozens of CTQs, paging through individual sixpacks is
+impractical. JMP provides two "big picture" views for exactly this
+situation, and `iQualityR.plot` ships both as pure functions.
+
+**Goal Plot** — a single scatter of every CTQ on a normalised plane:
+
+- X-axis = mean shift from target (fraction of half-tolerance; 0 = on
+  target, 1 = mean sits on a spec limit).
+- Y-axis = process spread 3σ (fraction of half-tolerance; 0 = no
+  variation, 1 = 3σ reaches the spec limit, i.e. Cp = 1).
+- The lower-left "goal box" marks capable processes; the dashed lines at
+  1.0 are the Cp = 1 frontier.
+
+This separates "off-target" problems (high X) from "too much variation"
+problems (high Y) at a glance — information the usual Cpk bar cannot
+convey.
+
+```{r goal-plot, fig.width=8, fig.height=7}
+# Five CTQs from the same engine-machining line, each already analysed.
+procs <- data.frame(
+  name   = c("Bore", "Stroke", "Deck", "ValveSeat", "Roughness"),
+  mean   = c(100.05, 80.10, 20.02, 45.30, 1.52),
+  sd     = c(0.08, 0.12, 0.05, 0.20, 0.06),
+  target = c(100.0, 80.0, 20.0, 45.0, 1.50),
+  lsl    = c(99.5, 79.5, 19.8, 44.5, 1.30),
+  usl    = c(100.5, 80.5, 20.2, 45.5, 1.70)
+)
+iQualityR.plot::plot_goal_plot(procs)
+```
+
+**Reading the Goal Plot:** Deck (lower-left) is the best CTQ — small shift
+and small spread. ValveSeat is the worst (top-right): it is both
+off-target and too variable. Stroke is on-target but has high spread (a
+fixture-stability problem). The goal box immediately tells you which
+CTQs need attention and *what kind* of attention (re-center vs reduce
+variation).
+
+**Capability Snapshot** — faceted mini-histograms, one per CTQ, with LSL/USL
+(dashed) and target (dotted), plus Cpk annotated in each strip header:
+
+```{r capability-snapshot, fig.width=10, fig.height=7}
+set.seed(2024)
+values_list <- list(
+  rnorm(80, 100.05, 0.08),   # Bore
+  rnorm(80, 80.10, 0.12),    # Stroke
+  rnorm(80, 20.02, 0.05),    # Deck
+  rnorm(80, 45.30, 0.20),    # ValveSeat
+  rnorm(80, 1.52, 0.06)      # Roughness
+)
+iQualityR.plot::plot_capability_snapshot(
+  values_list = values_list,
+  processes   = procs
+)
+```
+
+The Snapshot is the dashboard complement to the Goal Plot: it shows the
+*distribution shape* behind each point, so you can spot bimodality,
+truncation, or spec-edge clipping that the Goal Plot's single point
+hides.
+
+## 5. Comparison with Minitab and JMP
+
+| Feature | Minitab v21 | JMP v19 | iQualityR.capa |
+|---|---|---|---|
+| Binomial capability (p, CI, p-chart, PPM, Z.Bench) | ✓ | ✓ | ✓ |
+| Poisson capability (u, CI, u-chart, DPMO, Z.Bench) | ✓ | ✓ | ✓ |
+| Dispersion (over-dispersion) test for binomial/Poisson | partial (Laney P'/U') | partial | ✓ (formal chi-square test) |
+| Wilson + Clopper-Pearson + Garwood CIs | Wilson only | Wilson only | all three |
+| MCPV (Taam 1993) | ✗ | ✗ | **✓** |
+| HPCI (Shahriari 1995) three-component vector | ✗ | ✗ | **✓** |
+| Joint PPM via `mvtnorm::pmvnorm` | ✗ | ✗ | **✓** |
+| Hotelling T² centering test with p-value | ✓ (in SPC) | ✓ (in SPC) | ✓ (in capability) |
+| Bivariate scatter with spec rectangle + 99.73% ellipse | ✗ | partial (in Graph Builder) | ✓ |
+| Goal Plot (multi-CTQ shift vs spread triage) | ✗ | ✓ | ✓ |
+| Process Capability Snapshot (faceted mini-histograms) | ✗ | ✓ | ✓ |
+
+The multivariate capability indices are the **headline gap** in both
+commercial tools — neither ships MCPV or HPCI as a dedicated capability
+output. `iQualityR.capa` is the first R package in the ecosystem to
+implement them with worked quality examples.
+
+## 6. Function and Class Index
+
+### Attribute capability
+
+```r
+# One-shot convenience wrappers
+capability_binomial(data, defects, sample_sizes, target_proportion = NULL,
+                    ci_method = c("wilson", "clopper_pearson"),
+                    z_shift = 1.5, conf_level = 0.95, theme = "academic", ...)
+
+capability_poisson(data, defects, sample_sizes, target_rate = NULL,
+                   z_shift = 1.5, conf_level = 0.95, theme = "academic", ...)
+```
+
+### Multivariate capability
+
+```r
+capability_multivariate(data, ctqs, lsl_vec, usl_vec, target_vec = NULL,
+                        conf_level = 0.95, theme = "academic", ...)
+```
+
+### Multi-process comparison (JMP highlights)
+
+```r
+# Goal Plot: multi-CTQ shift vs spread triage on a single scatter
+iQualityR.plot::plot_goal_plot(processes, shift_limit = 0.5,
+                               spread_limit = 0.5, label_points = TRUE,
+                               theme = NULL)
+
+# Capability Snapshot: faceted mini-histograms with spec lines + Cpk
+iQualityR.plot::plot_capability_snapshot(values_list, processes, bins = 20,
+                                          ncol = 3, theme = NULL)
+```
+
+### R6 classes
+
+| Class | Inherits | Role |
+|---|---|---|
+| `AttributeCapabilityPlan` | `IqrPlanBase` | Stores analysis type, target, CI method, shift. |
+| `AttributeCapabilityAnalyzer` | `IqrAnalyzerBase` | Computes p/u, CI, PPM, Z.Bench, dispersion test. |
+| `AttributeCapabilityPlotter` | `IqrPlotterBase` | Renders p/u-chart, rate histogram, cumulative, defects, fit, performance bar. |
+| `IqrAttributeCapabilityTask` | `IqrTaskBase` | Coordinates compute / plot / report. |
+| `MultivarCapabilityPlan` | `IqrPlanBase` | Stores lsl_vec, usl_vec, target_vec, method. |
+| `MultivariateCapabilityAnalyzer` | `IqrAnalyzerBase` | Computes MCPV, HPCI, Hotelling T², joint yield. |
+| `MultivariateCapabilityPlotter` | `IqrPlotterBase` | Renders spec ellipse, HPCI bar, marginal Cpk, T² chart, MCPV volume, joint yield bar. |
+| `IqrMultivarCapabilityTask` | `IqrTaskBase` | Coordinates compute / plot / report. |
+
+## 7. Common Pitfalls
+
+1. **Confusing PPM with DPMO** — for binomial, PPM = `p × 1e6` (defective
+   *units* per million). For Poisson, DPMO = `u × 1e6` (defects per million
+   opportunities; one unit can have multiple defects).
+2. **Treating per-subgroup observed PPM as the true PPM** — the observed
+   PPM is `(# subgroups with any defect) / k × 1e6`, a *lower bound* on the
+   true PPM. Use the model-based expected PPM (p × 1e6 or u × 1e6) for the
+   capability verdict.
+3. **Ignoring the dispersion test** — if the binomial/Poisson dispersion
+   test rejects (p < 0.05), the model is invalid; switch to Laney P'/U'
+   (in `iQualityR.spc`) or a beta-binomial / negative-binomial model.
+4. **Multivariate with n < 10·p** — the covariance estimate is unstable;
+   add more observations or reduce the CTQ count.
+5. **Reporting MCPV without the HPCI vector** — MCPV is a scalar summary;
+   the HPCI vector tells you *why* the process is failing (volume vs
+   centering vs location), which is actionable.
+6. **Comparing univariate Cpk across CTQs as if they were independent** —
+   always run `capability_multivariate()` to get the joint PPM, which is
+   the true customer-visible defect rate.
+
+## 8. References
+
+1. Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+   (7th ed.). Wiley. — Attribute capability, p/u charts.
+2. Brown, L. D., Cai, T. T., & DasGupta, A. (2001). *Interval estimation
+   for a binomial proportion*. Statistical Science, 16(2), 101–133. —
+   Wilson vs Clopper-Pearson comparison.
+3. Garwood, F. (1936). *Fiducial limits for the Poisson distribution*.
+   Biometrika, 28(3/4), 437–442. — Exact Poisson CI.
+4. Taam, W., Subbaiah, P., & Liddy, J. W. (1993). *A note on multivariate
+   capability indices*. Journal of Applied Statistics, 20(3), 339–351. — MCPV.
+5. Shahriari, H., Hubele, N. F., & Lawrence, F. P. (1995). *A multivariate
+   process capability vector*. Proc. IIE Annual Conference, 304–309. — HPCI.
+6. Pearn, W. L., & Kotz, S. (2006). *Encyclopedia and Handbook of Process
+   Capability Indices*. World Scientific. — Multivariate indices survey.
+7. Genz, A., & Bretz, F. (2009). *Computation of Multivariate Normal and t
+   Probabilities*. Springer. — `mvtnorm::pmvnorm` algorithm.
+8. Minitab LLC. *Binomial / Poisson Capability documentation*, v21.
+9. JMP. *Process Capability platform documentation*, v19.
+10. `iQualityR.spc::SpcAnalyzer` — SVD-regularized covariance inverse
+    pattern reused in `MultivariateCapabilityAnalyzer`.
+11. `iQualityR.stat::z_bench` — Z.Bench / sigma level computation.

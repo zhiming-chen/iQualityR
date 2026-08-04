@@ -1,0 +1,425 @@
+---
+title: "Normal & Between/Within Capability"
+subtitle: "Subgroup-based process capability under the normal assumption"
+author: "iQualityR capa Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    fig_width: 7
+    fig_height: 5
+vignette: >
+  %\VignetteIndexEntry{Normal Capability}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7, fig.height = 4.5, fig.align = "center",
+  warning = FALSE, message = FALSE
+)
+
+options(iqr.default_theme = "academic")
+library(iQualityR.capa)
+
+fmt4 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+fmt2 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+```
+
+## 1. When to Use This Path
+
+Use **normal capability** when the measured characteristic is well-modelled by
+a normal distribution and the process is in statistical control. This is the
+default path for machined dimensions, fill weights, electrical parameters,
+and most continuous CTQs (critical-to-quality characteristics).
+
+Use **between/within capability** — the Minitab B/W path — when you have
+**rational subgroups** and you suspect **between-subgroup sources of variation**
+(setup changes, operator-to-operator differences, lot-to-lot drift). The B/W
+path decomposes total σ into four components and uses the between-within σ for
+Cp/Cpk, giving a more honest short-term capability estimate than the plain
+within σ when subgroups drift.
+
+This vignette covers both, because they share the same normal-distribution
+assumption and differ only in the σ decomposition.
+
+## 2. Method and Formulas
+
+### 2.1 σ decomposition (the heart of the normal path)
+
+`iQualityR.capa` delegates all σ estimation to
+`iQualityR.stat::sigma_decomposition`, which produces:
+
+| Component | Symbol | Estimator |
+|---|---|---|
+| Within-subgroup σ | σ_within | R̄/d₂ (subgroups of size ≥ 2) or MSSD (individuals). |
+| Between-subgroup σ | σ_between | √(max(0, MSSD_between − within_var / m)) where m = subgroup size. |
+| Between-within σ | σ_BW | √(σ²_within + σ²_between) |
+| Overall σ | σ_overall | Sample SD of all observations (long-term). |
+
+For the plain **normal** path, Cp/Cpk use σ_within and Pp/Ppk use σ_overall.
+
+For the **between/within** path, Cp/Cpk use σ_BW (which captures both
+within-subgroup and between-subgroup variation) and Pp/Ppk still use σ_overall.
+This is exactly the Minitab B/W convention.
+
+### 2.2 Capability indices
+
+$$
+C_p = \frac{USL - LSL}{6\sigma_{within}}, \quad
+C_{pk} = \min\left(\frac{USL - \mu}{3\sigma_{within}}, \frac{\mu - LSL}{3\sigma_{within}}\right)
+$$
+
+$$
+P_p = \frac{USL - LSL}{6\sigma_{overall}}, \quad
+P_{pk} = \min\left(\frac{USL - \mu}{3\sigma_{overall}}, \frac{\mu - LSL}{3\sigma_{overall}}\right)
+$$
+
+One-sided indices `Cpl`, `Cpu`, `Ppl`, `Ppu` are the two terms inside the
+`min()`.
+
+### 2.3 Taguchi indices (require a target T)
+
+$$
+C_{pm} = \frac{USL - LSL}{6\tau}, \quad \tau = \sqrt{\frac{1}{n}\sum (x_i - T)^2}
+$$
+
+$$
+C_{pmk} = \min\left(\frac{USL - \mu}{3\tau}, \frac{\mu - LSL}{3\tau}\right)
+$$
+
+`Cpm` penalises off-target processes even when Cpk looks fine. Provide a
+`target` to `capability_normal()` to enable Cpm/Cpmk.
+
+### 2.4 Z-based indices
+
+$$
+Z_{LSL} = \frac{\mu - LSL}{\sigma}, \quad
+Z_{USL} = \frac{USL - \mu}{\sigma}, \quad
+Z_{Bench} = \Phi^{-1}(1 - P_{total})
+$$
+
+where $P_{total} = \Phi(-Z_{LSL}) + (1 - \Phi(Z_{USL}))$ is the total
+non-conforming probability. Z.Bench is the "sigma quality level" used in
+Six Sigma (delegated to `iQualityR.stat::z_bench`).
+
+### 2.5 PPM (parts-per-million non-conforming)
+
+PPM is computed from the fitted normal tail areas via
+`iQualityR.stat::capability_to_ppm`. Two flavours are reported:
+
+- **PPM (within)** — uses σ_within (short-term prediction).
+- **PPM (overall)** — uses σ_overall (long-term prediction).
+
+Each is split into below-LSL, above-USL, and total.
+
+### 2.6 Acceptance thresholds (automotive)
+
+| Index | Acceptable | Marginal | Unacceptable |
+|---|---|---|---|
+| Cpk / Ppk | ≥ 1.33 | 1.00 – 1.33 | < 1.00 |
+| PPM (overall) | < 63 | 63 – 6210 | > 6210 |
+
+These thresholds are applied automatically via
+`iQualityR.stat::capability_interpret` and surfaced in the
+`capability_judgment` diagnostic.
+
+## 3. Data Preparation
+
+The bundled `capability_normal_subgroup.csv` contains 125 diameter
+measurements from a precision-machining line, organised as 25 subgroups of
+size 5. The engineering specification is **LSL = 44 mm, USL = 56 mm**, target
+**T = 50 mm**.
+
+```{r load-data}
+df <- read.csv(
+  system.file("extdata", "capability_normal_subgroup.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+str(df)
+head(df)
+
+# Subgroup structure
+table(df$subgroup)
+```
+
+## 4. Normal Capability — Quick Start
+
+```{r normal-quick}
+task <- capability_normal(
+  data = df, measurement = "measurement",
+  lsl = 44, usl = 56, target = 50,
+  subgroup = "subgroup"
+)
+task$summary()
+```
+
+## 5. Step-by-Step Workflow
+
+For full control over the plan, build the `CapabilityPlan` explicitly:
+
+```{r normal-step}
+plan <- CapabilityPlan$new(
+  lsl = 44, usl = 56, target = 50,
+  subgroup = "subgroup",
+  conf_level = 0.95,
+  analysis_type = "normal"
+)
+plan$validate()
+
+task2 <- IqrCapabilityTask$new(df, "measurement", plan, theme = "academic")
+task2$compute()
+task2$summary()
+```
+
+## 6. Inspecting the Results
+
+### 6.1 Capability indices table
+
+```{r normal-indices}
+stats <- task$results$statistics
+data.frame(
+  Index = c("Cp", "Cpk", "Cpl", "Cpu",
+            "Pp", "Ppk", "Ppl", "Ppu",
+            "Cpm", "Cpmk",
+            "Z.LSL", "Z.USL", "Z.Bench"),
+  Value = c(stats$cp, stats$cpk, stats$cpl, stats$cpu,
+            stats$pp, stats$ppk, stats$ppl, stats$ppu,
+            stats$cpm, stats$cpmk,
+            stats$z_lsl, stats$z_usl, stats$z_bench_within)
+)
+```
+
+### 6.2 σ components
+
+```{r normal-sigma}
+data.frame(
+  Component = c("Within", "Overall", "Mean", "n", "n_subgroups"),
+  Value = c(stats$sd_within, stats$sd_overall,
+            stats$mean, stats$n, stats$n_subgroups)
+)
+```
+
+### 6.3 PPM (within vs overall)
+
+```{r normal-ppm}
+task$results$data_tables$ppm_within
+task$results$data_tables$ppm_overall
+```
+
+The *within* PPM is the short-term prediction (what the process *could* do if
+it stayed centred); the *overall* PPM is the long-term prediction (what it
+*actually* does, including drift). A large gap between the two signals
+instability — investigate the I-chart and MR-chart panels.
+
+### 6.4 Normality diagnostics
+
+```{r normal-diag}
+diag <- task$results$diagnostics
+data.frame(
+  Check = c("Normality method", "p-value", "Verdict"),
+  Value = c(diag$normality_method,
+            fmt4(diag$normality_p_value),
+            diag$capability_judgment$overall_verdict)
+)
+```
+
+## 7. Visualization Gallery
+
+| `type` | Description |
+|---|---|
+| `"basic"` | Histogram with density and spec limits. |
+| `"qq"` | Normal Q-Q plot. |
+| `"capbar"` | Capability indices bar chart (Cp/Cpk/Pp/Ppk). |
+| `"individual"` | Individual values chart (I chart). |
+| `"mr"` | Moving range chart. |
+| `"trend"` | Cpk trend / last subgroups. |
+| `"full"` | **Sixpack** — all six panels in a 3×2 grid (default). |
+
+### 7.1 The Sixpack
+
+```{r normal-plot-full, fig.width=12, fig.height=16}
+print(task$plot(type = "full"))
+```
+
+**How to read the Sixpack:**
+
+- **I chart (top-left)** — points should stay within the spec lines (red
+  dashed). Out-of-spec points are immediate red flags.
+- **MR chart (top-right)** — points should stay below the UCL (red dashed).
+  This verifies short-term stability.
+- **Histogram (middle-left)** — the density curve should be symmetric and
+  bell-shaped. Spec lines mark where the tolerance band sits relative to the
+  data.
+- **Q-Q plot (middle-right)** — points should hug the reference line. Curvature
+  signals non-normality; the subtitle reports the Shapiro-Wilk p-value.
+- **Capability bar chart (bottom-left)** — green (≥1.33), amber (1.00–1.33),
+  red (<1.00). The dashed line is the 1.33 reference.
+- **Cpk trend (bottom-right)** — if subgrouped, shows subgroup means; a flat
+  line indicates stability.
+
+### 7.2 Individual panels
+
+```{r normal-plot-panels, fig.width=8, fig.height=4}
+print(task$plot(type = "basic"))
+```
+
+```{r normal-plot-qq}
+print(task$plot(type = "qq"))
+```
+
+```{r normal-plot-capbar}
+print(task$plot(type = "capbar"))
+```
+
+## 8. Between/Within Capability
+
+The same dataset has 25 subgroups. If we suspect between-subgroup drift
+(e.g. tool wear, setup changes between shifts), the plain `capability_normal`
+under-states the short-term σ because it only sees within-subgroup
+variation. The **between/within** path adds σ_between and uses
+σ_between_within for Cp/Cpk.
+
+```{r bw-quick}
+task_bw <- capability_between_within(
+  data = df, measurement = "measurement",
+  lsl = 44, usl = 56, target = 50,
+  subgroup = "subgroup"
+)
+task_bw$summary()
+```
+
+### 8.1 The four σ components
+
+```{r bw-sigma}
+stats_bw <- task_bw$results$statistics
+data.frame(
+  Component = c("Within", "Between", "Between-Within", "Overall"),
+  Sigma = c(stats_bw$sd_within, stats_bw$sd_between,
+            stats_bw$sd_between_within, stats_bw$sd_overall)
+)
+```
+
+- **σ_within** — variation *inside* subgroups (the "noise floor").
+- **σ_between** — variation *between* subgroup means (drift / setup effects).
+- **σ_between_within** — the B/W combination used for Cp/Cpk in this path.
+- **σ_overall** — the total sample SD, used for Pp/Ppk.
+
+When σ_between is close to zero, the B/W path collapses to the plain normal
+path. When σ_between is large relative to σ_within, the B/W Cp/Cpk will be
+lower than the plain Cp/Cpk — a honest correction.
+
+### 8.2 B/W Sixpack
+
+```{r bw-plot-full, fig.width=12, fig.height=16}
+print(task_bw$plot(type = "full"))
+```
+
+### 8.3 Normal vs Between/Within comparison
+
+```{r compare-normal-bw}
+comparison <- data.frame(
+  Path = c("Normal (within σ)", "Between/Within (B/W σ)"),
+  Cp  = c(stats$cp,  stats_bw$cp),
+  Cpk = c(stats$cpk, stats_bw$cpk),
+  Pp  = c(stats$pp,  stats_bw$pp),
+  Ppk = c(stats$ppk, stats_bw$ppk)
+)
+comparison
+```
+
+**Interpretation:** If the B/W Cpk is materially lower than the normal Cpk,
+the process has significant between-subgroup variation that the plain within σ
+hides. Investigate the subgroup means on the trend panel and address the
+upstream source of drift (tooling, setup SOP, operator training) rather than
+reporting the inflated within-only Cpk.
+
+## 9. Confidence Intervals via Bootstrap
+
+For defensible uncertainty quantification on the indices, enable the
+bootstrap. This is the JMP-style approach (analytical CIs à la Bissell are on
+the roadmap).
+
+```{r normal-bootstrap}
+task_boot <- capability_normal(
+  data = df, measurement = "measurement",
+  lsl = 44, usl = 56, target = 50, subgroup = "subgroup",
+  use_bootstrap = TRUE, bootstrap_samples = 500
+)
+task_boot$results$data_tables$bootstrap_ci
+```
+
+The bootstrap CI table reports the lower and upper bounds for each index at
+the configured `conf_level` (default 0.95). If the lower bound of Cpk is
+below 1.33, the process is *not* statistically proven capable even if the
+point estimate looks fine.
+
+## 10. Box-Cox / Johnson Transformation Path
+
+When the normality diagnostic fails (Shapiro-Wilk p < 0.05) but the data is
+the kind that *can* be normalised (positive, monotone), you can request a
+transform. The analyzer fits the transform, transforms both the data **and**
+the spec limits with the same parameters, runs the normal analysis on the
+transformed scale, and annotates every panel so you know the indices are
+reported on the transformed scale.
+
+```{r normal-transform, eval = FALSE}
+# Example: a right-skewed dimension that needs Box-Cox
+task_bc <- capability_normal(
+  data = df_skewed, measurement = "measurement",
+  lsl = 5, usl = 80,
+  transform = "box_cox"   # or "johnson", or "auto"
+)
+```
+
+See `vignette("capa-nonnormal")` for a full worked example — the
+transformation path is documented there because it competes with the
+non-normal parametric path.
+
+## 11. Report Export
+
+```{r normal-report}
+xlsx_path <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+data.frame(
+  Format = "excel",
+  Path = basename(xlsx_path),
+  Exists = file.exists(xlsx_path),
+  Size_KB = round(file.size(xlsx_path) / 1024, 1)
+)
+```
+
+The Excel report mirrors the Sixpack layout: Overview, Indices, Judgment,
+PPM (within & overall), Diagnostics, Warnings, Advice, Bootstrap CI, and
+Raw Data sheets.
+
+## 12. Common Pitfalls
+
+1. **No subgroup column** — `capability_normal()` without `subgroup` uses MSSD
+   for σ_within (individuals logic). This is correct for I-MR data but you
+   lose the within/overall distinction if the data was actually subgrouped.
+2. **Ignoring normality** — always check the Q-Q panel and the Shapiro-Wilk
+   p-value. If p < 0.05, switch to the non-normal or non-parametric path.
+3. **Reporting Cpk without Cpm** — a process can have Cpk = 1.5 but be
+   off-target, hurting the customer. Always report Cpm when a target exists.
+4. **Confusing within and overall PPM** — within PPM is the *potential*;
+   overall PPM is the *reality*. A 10× gap means instability.
+5. **B/W when subgroups are not rational** — σ_between only makes sense if
+   subgroups represent logical production units. Random subgroups inflate
+   σ_between artificially.
+
+## 13. References
+
+1. Montgomery, D. C. (2013). *Introduction to Statistical Quality Control*
+   (7th ed.). Wiley. — Cp/Cpk, Pp/Ppk, σ decomposition.
+2. AIAG (2005). *Statistical Process Control (SPC) Reference Manual* (2nd
+   ed.). — Within vs. overall σ, rational subgroups.
+3. Minitab LLC. *Between/Within Capability documentation*, v21.
+4. `iQualityR.stat::sigma_decomposition` — σ estimator backend.
+5. `iQualityR.stat::capability_interpret` — verdict thresholds.

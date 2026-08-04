@@ -28,11 +28,14 @@ target, subgroup column, and analysis type.
 
 \item{\code{bootstrap_samples}}{Number of bootstrap replications.}
 
-\item{\code{analysis_type}}{Analysis type: \code{"normal"}, \code{"nonnormal"}, or \code{"nonparametric"}.}
+\item{\code{analysis_type}}{Analysis type: \code{"normal"}, \code{"between_within"}, \code{"nonnormal"}, or \code{"nonparametric"}.}
 
 \item{\code{distribution}}{Distribution name for non-normal analysis, or \code{"auto"}.}
 
 \item{\code{nonparametric_method}}{Non-parametric method: \code{"kernel"} or \code{"empirical"}.}
+
+\item{\code{transform}}{Optional normality transformation for the normal path:
+one of \code{"box_cox"}, \code{"johnson"}, \code{"auto"}, or \code{NULL} (no transform).}
 }
 \if{html}{\out{</div>}}
 }
@@ -73,6 +76,7 @@ Create a new CapabilityPlan object
   analysis_type = "normal",
   distribution = NULL,
   nonparametric_method = "kernel",
+  transform = NULL,
   task_tag = "capability",
   ...
 )}\if{html}{\out{</div>}}
@@ -97,11 +101,14 @@ Create a new CapabilityPlan object
 
 \item{\code{bootstrap_samples}}{Number of Bootstrap replications.}
 
-\item{\code{analysis_type}}{Analysis type string.}
+\item{\code{analysis_type}}{Analysis type string: \code{"normal"}, \code{"between_within"}, \code{"nonnormal"}, or \code{"nonparametric"}.}
 
 \item{\code{distribution}}{Distribution name or "auto".}
 
 \item{\code{nonparametric_method}}{Non-parametric method string.}
+
+\item{\code{transform}}{Optional transform for the normal path
+(\code{"box_cox"}, \code{"johnson"}, \code{"auto"}, or \code{NULL}).}
 
 \item{\code{task_tag}}{Task tag.}
 

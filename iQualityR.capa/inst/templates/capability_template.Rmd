@@ -1,0 +1,251 @@
+---
+title: "Process Capability Analysis Report"
+subtitle: "`r params$analysis_label %||% 'Capability Study'`"
+date: "`r params$timestamp %||% Sys.time()`"
+output:
+  html_document:
+    theme: readable
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    number_sections: true
+params:
+  results: NULL
+  plan: NULL
+  theme_obj: NULL
+  timestamp: NULL
+  statistics: NULL
+  diagnostics: NULL
+  data_tables: NULL
+  analysis_label: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, warning = FALSE, message = FALSE,
+  fig.width = 10, fig.height = 6, fig.align = "center"
+)
+
+# Local helpers (kept self-contained so the template does not depend on rlang
+# being attached at render time).
+`%||%` <- function(x, y) if (is.null(x)) y else x
+fmt_num <- function(x, digits = 4) {
+  if (is.null(x) || length(x) == 0 || all(is.na(x))) return("NA")
+  sprintf(paste0("%.", digits, "f"), x)
+}
+fmt_sci <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x)) return("NA")
+  if (x < 0.001 && x > 0) formatC(x, format = "e", digits = 2) else sprintf("%.4f", x)
+}
+round_df <- function(x, digits = 4) {
+  if (is.null(x) || !is.data.frame(x) || nrow(x) == 0) return(x)
+  for (nm in names(x)) if (is.numeric(x[[nm]])) x[[nm]] <- round(x[[nm]], digits)
+  x
+}
+
+results    <- params$results
+plan       <- params$plan
+theme_obj  <- params$theme_obj
+stats      <- params$statistics  %||% results$statistics
+diag       <- params$diagnostics %||% results$diagnostics
+data_tbls  <- params$data_tables %||% results$data_tables
+
+# Detect analysis type from plan or diagnostics.
+analysis_type <- if (!is.null(plan) && !is.null(plan$analysis_type)) {
+  plan$analysis_type
+} else if (!is.null(diag$distribution)) {
+  "nonnormal"
+} else if (!is.null(diag$method) && diag$method %in% c("kernel", "empirical")) {
+  "nonparametric"
+} else {
+  "normal"
+}
+analysis_label <- switch(analysis_type,
+  normal       = "Normal Capability Analysis",
+  nonnormal    = "Non-Normal Capability Analysis",
+  nonparametric= "Non-Parametric Capability Analysis",
+  "Capability Analysis"
+)
+```
+
+# Study Overview
+
+| Item | Value |
+|---|---|
+| Analysis type | `r analysis_label` |
+| Specification LSL | `r fmt_num(plan$lsl)` |
+| Specification USL | `r fmt_num(plan$usl)` |
+| Target | `r fmt_num(plan$target %||% NA)` |
+| Sample size (n) | `r stats$n` |
+| Process mean | `r fmt_num(stats$mean)` |
+| StdDev (Within)  | `r if (is.null(stats$sd_within)) "N/A" else fmt_num(stats$sd_within)` |
+| StdDev (Overall) | `r fmt_num(stats$sd_overall)` |
+| Confidence level | `r fmt_num(plan$conf_level)` |
+
+```{r overview-note, results='asis'}
+if (analysis_type == "nonnormal") {
+  cat(sprintf(
+    "Non-normal analysis fits a parametric distribution (**%s**) to the data and computes capability from the 0.135%% / 99.865%% quantiles (equivalent to $\\pm 3\\sigma$ for a normal distribution).\n",
+    diag$distribution %||% "auto-selected"
+  ))
+} else if (analysis_type == "nonparametric") {
+  cat(sprintf(
+    "Non-parametric analysis uses the empirical distribution (method: **%s\"). Capability indices are based on empirical quantiles; no distributional assumption is made.\n",
+    diag$method %||% "empirical"
+  ))
+} else {
+  cat("Normal analysis assumes the data follow a normal distribution. Within-subgroup sigma is used for Cp/Cpk; overall sigma is used for Pp/Ppk.\n")
+}
+```
+
+# Capability Indices
+
+```{r indices-table}
+idx_rows <- list(
+  Index = c("Cp", "Cpk", "Cpl", "Cpu"),
+  Value = c(stats$cp, stats$cpk, stats$cpl, stats$cpu)
+)
+if (analysis_type == "normal") {
+  idx_rows$Index <- c(idx_rows$Index, "Pp", "Ppk", "Ppl", "Ppu")
+  idx_rows$Value <- c(idx_rows$Value, stats$pp, stats$ppk, stats$ppl, stats$ppu)
+} else {
+  idx_rows$Index <- c(idx_rows$Index, "Pp", "Ppk", "Ppl", "Ppu")
+  idx_rows$Value <- c(idx_rows$Value, stats$pp, stats$ppk, stats$ppl, stats$ppu)
+}
+if (!is.null(stats$cpm)) {
+  idx_rows$Index <- c(idx_rows$Index, "Cpm (Taguchi)")
+  idx_rows$Value <- c(idx_rows$Value, stats$cpm)
+}
+idx_df <- data.frame(Index = idx_rows$Index, Value = round(idx_rows$Value, 4),
+                     stringsAsFactors = FALSE)
+knitr::kable(idx_df, caption = "Capability indices summary")
+```
+
+## Capability Judgment
+
+```{r judgment}
+judgment <- diag$capability_judgment
+if (!is.null(judgment)) {
+  j_df <- data.frame(
+    Metric = c("Cpk status", "Ppk status", "Cp status", "Pp status", "Overall verdict"),
+    Status = c(judgment$cpk_status, judgment$ppk_status,
+               judgment$cp_status,  judgment$pp_status,
+               judgment$overall_verdict)
+  )
+  knitr::kable(j_df, caption = "Capability judgment")
+}
+```
+
+# Expected Non-Conforming Rate (PPM)
+
+```{r ppm-table}
+if (!is.null(data_tbls$ppm_within) && nrow(data_tbls$ppm_within) > 0) {
+  knitr::kable(round_df(data_tbls$ppm_within, 2),
+               caption = "Expected PPM (within-subgroup, normal only)")
+}
+if (!is.null(data_tbls$ppm_overall) && nrow(data_tbls$ppm_overall) > 0) {
+  knitr::kable(round_df(data_tbls$ppm_overall, 2),
+               caption = "Expected PPM (overall)")
+}
+```
+
+# Diagnostics
+
+```{r diagnostics, results='asis'}
+if (analysis_type == "normal") {
+  method <- diag$normality_method %||% "Normality test"
+  p_val  <- diag$normality_p_value
+  if (is.null(p_val) || is.na(p_val)) {
+    cat(sprintf("- Normality test: **%s** (p-value not computed, possibly large n)\n", method))
+  } else {
+    verdict <- if (p_val < 0.05) "rejected (data non-normal)" else "not rejected (data consistent with normality)"
+    cat(sprintf("- Normality test: **%s** (p = %s) -> %s\n", method, fmt_sci(p_val), verdict))
+  }
+} else if (analysis_type == "nonnormal") {
+  cat(sprintf("- Fitted distribution: **%s**\n", diag$distribution))
+  if (!is.null(diag$aic)) cat(sprintf("- AIC: %.2f\n", diag$aic))
+  if (!is.null(diag$bic)) cat(sprintf("- BIC: %.2f\n", diag$bic))
+  if (!is.null(diag$ks_p_value)) {
+    ks_verdict <- if (diag$ks_p_value < 0.05) "poor fit" else "acceptable fit"
+    cat(sprintf("- Kolmogorov-Smirnov test: D = %.4f, p = %s -> %s\n",
+                diag$ks_statistic, fmt_sci(diag$ks_p_value), ks_verdict))
+  }
+} else {
+  cat(sprintf("- Method: **%s** (no distributional assumption)\n", diag$method))
+  cat(sprintf("- Sample size: %d\n", diag$sample_size %||% stats$n))
+}
+```
+
+```{r warnings, results='asis'}
+if (length(diag$warnings) > 0) {
+  cat("## Warnings\n\n")
+  for (w in diag$warnings) cat(sprintf("- %s\n", w))
+}
+```
+
+# Process Advice
+
+```{r advice, results='asis'}
+advice <- diag$process_advice
+if (!is.null(advice) && length(advice) > 0) {
+  for (a in advice) cat(sprintf("- %s\n", a))
+} else {
+  cat("- No specific advice; process is performing within expectations.\n")
+}
+```
+
+# Visual Diagnostics
+
+## Process Capability Sixpack
+
+```{r sixpack, fig.width=12, fig.height=10}
+if (!is.null(results) && !is.null(theme_obj)) {
+  plotter <- iQualityR.capa::CapabilityPlotter$new()
+  p <- plotter$render(results, theme_obj, type = "full", plan = plan)
+  print(p)
+} else {
+  cat("Sixpack plot not available (results or theme missing).\n")
+}
+```
+
+## Histogram
+
+```{r histogram, fig.width=8, fig.height=5}
+if (!is.null(results) && !is.null(theme_obj)) {
+  plotter <- iQualityR.capa::CapabilityPlotter$new()
+  print(plotter$render(results, theme_obj, type = "basic", plan = plan))
+}
+```
+
+## Q-Q Plot
+
+```{r qq, fig.width=8, fig.height=5}
+if (!is.null(results) && !is.null(theme_obj)) {
+  plotter <- iQualityR.capa::CapabilityPlotter$new()
+  print(plotter$render(results, theme_obj, type = "qq", plan = plan))
+}
+```
+
+## Capability Indices Bar Chart
+
+```{r capbar, fig.width=8, fig.height=5}
+if (!is.null(results) && !is.null(theme_obj)) {
+  plotter <- iQualityR.capa::CapabilityPlotter$new()
+  print(plotter$render(results, theme_obj, type = "capbar", plan = plan))
+}
+```
+
+# Bootstrap Confidence Intervals
+
+```{r bootstrap-ci}
+boot <- data_tbls$bootstrap_ci
+if (!is.null(boot) && nrow(boot) > 0) {
+  knitr::kable(round_df(boot, 4), caption = "Bootstrap confidence intervals")
+} else {
+  cat("Bootstrap CI not computed (disabled or insufficient samples).\n")
+}
+```
+
+---
+
+Report generated by `iQualityR.capa` at `r format(params$timestamp %||% Sys.time(), "%Y-%m-%d %H:%M:%S")`.

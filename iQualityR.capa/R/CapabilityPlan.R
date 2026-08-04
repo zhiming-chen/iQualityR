@@ -16,9 +16,11 @@
 #' @field sixpack Logical; whether to generate Sixpack diagnostic plots.
 #' @field use_bootstrap Logical; whether to compute bootstrap confidence intervals.
 #' @field bootstrap_samples Number of bootstrap replications.
-#' @field analysis_type Analysis type: `"normal"`, `"nonnormal"`, or `"nonparametric"`.
+#' @field analysis_type Analysis type: `"normal"`, `"between_within"`, `"nonnormal"`, or `"nonparametric"`.
 #' @field distribution Distribution name for non-normal analysis, or `"auto"`.
 #' @field nonparametric_method Non-parametric method: `"kernel"` or `"empirical"`.
+#' @field transform Optional normality transformation for the normal path:
+#'   one of `"box_cox"`, `"johnson"`, `"auto"`, or `NULL` (no transform).
 #'
 #' @param lsl Lower specification limit.
 #' @param usl Upper specification limit.
@@ -28,9 +30,11 @@
 #' @param sixpack Logical; whether to generate Sixpack.
 #' @param use_bootstrap Logical; whether to use Bootstrap.
 #' @param bootstrap_samples Number of Bootstrap replications.
-#' @param analysis_type Analysis type string.
+#' @param analysis_type Analysis type string: `"normal"`, `"between_within"`, `"nonnormal"`, or `"nonparametric"`.
 #' @param distribution Distribution name or `"auto"`.
 #' @param nonparametric_method Non-parametric method string.
+#' @param transform Optional transform for the normal path
+#'   (`"box_cox"`, `"johnson"`, `"auto"`, or `NULL`).
 #' @param task_tag Task tag (default `"capability"`).
 #' @param ... Additional arguments passed to `IqrPlanBase$initialize()`.
 #'
@@ -48,6 +52,7 @@ CapabilityPlan <- R6::R6Class("CapabilityPlan",
     analysis_type = "normal",
     distribution = NULL,
     nonparametric_method = "kernel",
+    transform = NULL,
 
     #' @description Create a new CapabilityPlan object
     #' @param lsl Lower specification limit.
@@ -58,9 +63,11 @@ CapabilityPlan <- R6::R6Class("CapabilityPlan",
     #' @param sixpack Logical; whether to generate Sixpack.
     #' @param use_bootstrap Logical; whether to use Bootstrap.
     #' @param bootstrap_samples Number of Bootstrap replications.
-    #' @param analysis_type Analysis type string.
+    #' @param analysis_type Analysis type string: `"normal"`, `"between_within"`, `"nonnormal"`, or `"nonparametric"`.
     #' @param distribution Distribution name or "auto".
     #' @param nonparametric_method Non-parametric method string.
+    #' @param transform Optional transform for the normal path
+    #'   (`"box_cox"`, `"johnson"`, `"auto"`, or `NULL`).
     #' @param task_tag Task tag.
     #' @param ... Additional arguments.
     initialize = function(lsl, usl, target = NULL, subgroup = NULL,
@@ -68,9 +75,18 @@ CapabilityPlan <- R6::R6Class("CapabilityPlan",
                           use_bootstrap = FALSE, bootstrap_samples = 1000,
                           analysis_type = "normal", distribution = NULL,
                           nonparametric_method = "kernel",
+                          transform = NULL,
                           task_tag = "capability", ...) {
       super$initialize(task_tag = task_tag, conf_level = conf_level, ...)
       if (lsl >= usl) stop("lsl must be less than usl", call. = FALSE)
+      if (!is.null(transform)) {
+        valid_transforms <- c("box_cox", "johnson", "auto")
+        if (!transform %in% valid_transforms) {
+          stop(sprintf("transform must be one of %s or NULL",
+                       paste(shQuote(valid_transforms), collapse = ", ")),
+               call. = FALSE)
+        }
+      }
       self$lsl <- lsl
       self$usl <- usl
       self$target <- target
@@ -81,6 +97,7 @@ CapabilityPlan <- R6::R6Class("CapabilityPlan",
       self$analysis_type <- analysis_type
       self$distribution <- distribution
       self$nonparametric_method <- nonparametric_method
+      self$transform <- transform
       # Set default judgment criteria (can be overridden)
       self$set_criteria(cpk = 1.33, ppk = 1.33)
       invisible(self)
@@ -102,6 +119,7 @@ CapabilityPlan <- R6::R6Class("CapabilityPlan",
       base_list$analysis_type <- self$analysis_type
       base_list$distribution <- self$distribution
       base_list$nonparametric_method <- self$nonparametric_method
+      base_list$transform <- self$transform
       base_list
     }
   )

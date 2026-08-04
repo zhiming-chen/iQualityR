@@ -1,0 +1,405 @@
+---
+title: "Non-Parametric Capability & Multi-Variable Considerations"
+subtitle: "Distribution-free capability and handling multiple CTQs"
+author: "iQualityR capa Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    fig_width: 7
+    fig_height: 5
+vignette: >
+  %\VignetteIndexEntry{Non-Parametric Capability}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7, fig.height = 4.5, fig.align = "center",
+  warning = FALSE, message = FALSE
+)
+
+options(iqr.default_theme = "academic")
+library(iQualityR.capa)
+library(ggplot2)
+
+fmt4 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+fmt2 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+```
+
+## 1. When to Use This Path
+
+Use **non-parametric capability** when:
+
+1. No parametric distribution fits the data (KS p < 0.05 for every candidate
+   in `capability_nonnormal()`).
+2. The sample is small and fitting a parametric family would be unstable.
+3. The data is multi-modal, mixture-distributed, or has a shape no standard
+   distribution captures.
+4. You need the *observed* defect rate rather than a model-based prediction.
+
+The non-parametric path makes **no distributional assumption**: the
+empirical (or kernel-smoothed) CDF is the model. The trade-off is that you
+lose the within/overall σ distinction and the Cpm/Cpmk indices (which require
+a parametric mean / target relationship), and the PPM is the **observed**
+exceedance rate, which is only meaningful when the sample is large enough to
+contain out-of-spec observations.
+
+## 2. Method and Formulas
+
+### 2.1 Capability indices (empirical quantile method)
+
+The non-parametric path estimates the distribution quantiles directly from
+the data via `stats::quantile()` (type 7, the default) or via a
+kernel-smoothed CDF, then applies the same quantile-method formulas as the
+non-normal path:
+
+$$
+\sigma_{eq} = \frac{Q_{0.99865} - Q_{0.00135}}{6}
+$$
+
+$$
+P_p = \frac{USL - LSL}{6\sigma_{eq}}, \quad
+P_{pk} = \min\left(\frac{USL - Q_{0.5}}{3\sigma_{eq}}, \frac{Q_{0.5} - LSL}{3\sigma_{eq}}\right)
+$$
+
+where $Q_{0.00135}$, $Q_{0.5}$, $Q_{0.99865}$ are the empirical quantiles.
+
+### 2.2 PPM (observed)
+
+$$
+PPM_{observed} = \frac{\#\{x < LSL\} + \#\{x > USL\}}{n} \times 10^6
+$$
+
+This is the **actual observed** defect rate, not a model-based prediction.
+It is therefore a *lower bound* on the true PPM (you only see what happened
+in the sample). For small samples with no out-of-spec observations, the
+observed PPM will be 0 — which means "no observed defects", not "process is
+defect-free".
+
+### 2.3 Two methods
+
+| Method | How Q_p is estimated | Best for |
+|---|---|---|
+| `"empirical"` | `stats::quantile(x, p)` (plain order statistics) | Discrete data, small samples, or when you want no smoothing. |
+| `"kernel"` | Kernel-smoothed CDF (`stats::density` + integrate) | Continuous data; smoother quantiles at extreme tail probabilities. |
+
+The default is `"kernel"` because the 0.135% / 99.865% quantiles are extreme
+tail probabilities where plain order statistics are unstable; kernel smoothing
+borrows strength from neighbouring observations.
+
+## 3. Data Preparation
+
+We reuse the bundled right-skewed dataset. The same data is used in
+`vignette("capa-nonnormal")` where a Weibull fits it well — here we run the
+non-parametric path to show how the two paths compare on the same data.
+
+```{r load-data}
+df <- read.csv(
+  system.file("extdata", "capability_nonnormal_weibull.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+str(df)
+```
+
+## 4. Non-Parametric Capability — Quick Start
+
+```{r np-quick}
+task <- capability_nonparametric(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  nonparametric_method = "kernel"
+)
+task$summary()
+```
+
+## 5. Inspecting the Results
+
+### 5.1 Capability indices
+
+```{r np-indices}
+stats <- task$results$statistics
+data.frame(
+  Index = c("Cp (= Pp)", "Cpk (= Ppk)", "Cpl", "Cpu", "Mean", "n"),
+  Value = c(stats$cp, stats$cpk, stats$cpl, stats$cpu, stats$mean, stats$n)
+)
+```
+
+### 5.2 PPM (observed)
+
+```{r np-ppm}
+task$results$data_tables$ppm_overall
+```
+
+The PPM here is the **observed** exceedance rate. Compare with the model-based
+PPM from the non-normal path on the same data (see
+`vignette("capa-nonnormal")`). If the two agree, the fitted distribution is a
+good model; if they differ widely, the parametric model is mis-specified.
+
+### 5.3 Diagnostics
+
+```{r np-diag}
+diag <- task$results$diagnostics
+data.frame(
+  Metric = c("Method", "Sample size", "Verdict"),
+  Value = c(diag$method, diag$sample_size,
+            diag$capability_judgment$overall_verdict)
+)
+```
+
+## 6. Visualization
+
+### 6.1 The non-parametric Sixpack
+
+```{r np-plot-full, fig.width=10, fig.height=8}
+print(task$plot(type = "full"))
+```
+
+The non-parametric Sixpack differs from the normal Sixpack in the Q-Q panel:
+instead of a normal Q-Q or a fitted-distribution Q-Q, it shows an **empirical
+Q-Q (rankit plot)** — sample order statistics against expected normal order
+statistics. This verifies whether the empirical shape deviates from normality
+without committing to any parametric family. A straight line means the data
+is already normal (and you should have used the normal path); curvature
+confirms non-normality, and the non-parametric indices are the honest report.
+
+### 6.2 Empirical Q-Q plot
+
+```{r np-plot-qq}
+print(task$plot(type = "qq"))
+```
+
+### 6.3 Histogram with density
+
+```{r np-plot-basic}
+print(task$plot(type = "basic"))
+```
+
+## 7. Empirical vs Kernel Method
+
+```{r np-method-compare}
+task_emp <- capability_nonparametric(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  nonparametric_method = "empirical"
+)
+
+data.frame(
+  Method = c("kernel", "empirical"),
+  Cp  = c(task$results$statistics$cp,  task_emp$results$statistics$cp),
+  Cpk = c(task$results$statistics$cpk, task_emp$results$statistics$cpk),
+  PPM_total = c(task$results$data_tables$ppm_overall$PPM[3],
+                task_emp$results$data_tables$ppm_overall$PPM[3])
+)
+```
+
+For continuous data the two methods usually agree closely. Use `"empirical"`
+when you want the pure order-statistic answer (no smoothing artefacts at
+all); use `"kernel"` when the data is continuous and you want smoother
+extreme-tail quantiles.
+
+## 8. Bootstrap Confidence Intervals
+
+Non-parametric capability benefits particularly from the bootstrap, because
+the empirical quantiles at 0.135% / 99.865% are noisy in finite samples.
+
+```{r np-bootstrap}
+task_boot <- capability_nonparametric(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  nonparametric_method = "kernel",
+  use_bootstrap = TRUE, bootstrap_samples = 200
+)
+task_boot$results$data_tables$bootstrap_ci
+```
+
+## 9. Multi-Variable Capability Considerations
+
+Real products have **multiple CTQs** (critical-to-quality characteristics):
+a shaft has diameter, surface roughness, and length; a circuit board has
+thickness, impedance, and solder volume. The question "is this product
+capable?" requires assessing all CTQs together, not just one at a time.
+
+### 9.1 The practical approach: per-CTQ capability + a summary view
+
+The standard industrial workflow (and the JMP Process Capability platform's
+default) is:
+
+1. Run a univariate capability analysis on each CTQ.
+2. Collect each CTQ's `Ppk` (the long-term, centering-aware index).
+3. Visualise all CTQs on a single **Ppk bar chart** or **Goal Plot** to see
+   which CTQs are capable and which are not.
+
+This is a *multi-variable* (multiple univariate) analysis, not a
+*multivariate* (joint distribution) analysis — it treats CTQs as independent.
+When CTQs are correlated (they usually are), this is conservative but
+defensible for routine reporting.
+
+#### Worked example: two CTQs
+
+We analyse two CTQs from the bundled data: the normal-shaft diameter and the
+non-normal surface roughness. Each gets its own capability path.
+
+```{r multi-var-setup}
+df_n <- read.csv(
+  system.file("extdata", "capability_normal_subgroup.csv", package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+df_nn <- read.csv(
+  system.file("extdata", "capability_nonnormal_weibull.csv", package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+
+# CTQ 1: shaft diameter (normal, subgrouped)
+task_diameter <- capability_normal(
+  data = df_n, measurement = "measurement",
+  lsl = 44, usl = 56, target = 50, subgroup = "subgroup"
+)
+
+# CTQ 2: surface roughness (non-normal)
+task_roughness <- capability_nonnormal(
+  data = df_nn, measurement = "measurement",
+  lsl = 5, usl = 80, distribution = "auto"
+)
+```
+
+#### The multi-CTQ summary table
+
+```{r multi-var-summary}
+multi_summary <- data.frame(
+  CTQ = c("Diameter (mm)", "Surface roughness (µm)"),
+  Path = c("Normal", paste0("Non-normal (",
+           task_roughness$results$diagnostics$distribution, ")")),
+  Cp  = c(task_diameter$results$statistics$cp,
+          task_roughness$results$statistics$cp),
+  Cpk = c(task_diameter$results$statistics$cpk,
+          task_roughness$results$statistics$cpk),
+  Ppk = c(task_diameter$results$statistics$ppk,
+          task_roughness$results$statistics$ppk),
+  PPM_overall = c(task_diameter$results$data_tables$ppm_overall$PPM[3],
+                  task_roughness$results$data_tables$ppm_overall$PPM[3]),
+  Verdict = c(task_diameter$results$diagnostics$capability_judgment$overall_verdict,
+              task_roughness$results$diagnostics$capability_judgment$overall_verdict)
+)
+multi_summary
+```
+
+#### The multi-CTQ Ppk bar chart (poor-man's Goal Plot)
+
+```{r multi-var-goal-plot, fig.width=7, fig.height=4}
+goal_df <- data.frame(
+  CTQ = c("Diameter", "Surface roughness"),
+  Ppk = c(task_diameter$results$statistics$ppk,
+          task_roughness$results$statistics$ppk),
+  Cp  = c(task_diameter$results$statistics$cp,
+          task_roughness$results$statistics$cp)
+)
+goal_df$Status <- ifelse(goal_df$Ppk >= 1.33, "pass",
+                         ifelse(goal_df$Ppk >= 1.00, "watch", "fail"))
+
+ggplot(goal_df, aes(x = reorder(CTQ, Ppk), y = Ppk, fill = Status)) +
+  geom_col(show.legend = FALSE) +
+  geom_hline(yintercept = c(1.00, 1.33), linetype = "dashed", color = "grey50") +
+  geom_text(aes(label = sprintf("%.2f", Ppk)), vjust = -0.5) +
+  scale_fill_manual(values = c(pass = "#2E7D32", watch = "#F9A825", fail = "#C62828")) +
+  labs(title = "Multi-CTQ Capability Summary",
+       subtitle = "Dashed lines: 1.00 (marginal) and 1.33 (acceptable)",
+       x = NULL, y = "Ppk (long-term)") +
+  coord_flip() +
+  theme_minimal()
+```
+
+This bar chart is the simplest multi-variable summary: the product is only as
+capable as its weakest CTQ. If any CTQ is red, the product is not capable —
+even if the others are green.
+
+### 9.2 The JMP Goal Plot
+
+JMP's signature multi-variable view is the **Goal Plot**: a scatter of
+process spread (vertical, 3σ as a fraction of half-tolerance) vs. mean
+shift (horizontal, |μ − T| as a fraction of half-tolerance). CTQs in the
+lower-left "goal box" are well-centred and capable; CTQs in the top-right
+are off-target and/or too variable. This separates "off-target" problems
+from "too much variation" problems at a glance — information the per-CTQ
+Ppk bar above cannot convey.
+
+`iQualityR.plot` now ships `plot_goal_plot()` (plus the faceted
+`plot_capability_snapshot()` for per-CTQ mini-histograms). Both are
+demonstrated in `vignette("capa-advanced")` §4.10.
+
+### 9.3 When CTQs are correlated
+
+The per-CTQ approach treats CTQs as independent. When CTQs are correlated
+(e.g. diameter and length on the same shaft), the joint defect probability is
+*not* the product of the marginal probabilities. Two ways to handle this:
+
+1. **Conservative (default)** — report the worst marginal Ppk. This
+   over-estimates the joint defect rate but is safe.
+2. **Joint modelling (roadmap)** — fit a multivariate normal (or copula) to
+   the CTQ vector and compute the joint probability of falling outside the
+   spec hyper-rectangle. This is the multivariate capability problem.
+
+## 10. Multivariate Capability Indices (see `vignette("capa-advanced")`)
+
+True multivariate capability indices quantify how well a *vector* of CTQs
+fits inside a *region* of acceptance. The three families in the literature
+are:
+
+| Index | Author | Idea |
+|---|---|---|
+| **MCPV** (Multivariate Capability Process Vector) | Taam et al. (1993) | Ratio of the volume of the modified spec region (shrunk for centering) to the volume of the 99.73% probability ellipsoid of the process. |
+| **HPCI** (Hotelling $T^2$ Process Capability Index) | Shahriari et al. (1995) | A three-component vector: (1) ratio of spec volume to process volume, (2) Hotelling $T^2$ test for centering, (3) tail-area test for shape. |
+| **MCpm** | Taam / Pearn-Kotz | Multivariate extension of Cpm using a target vector. |
+
+### Status in `iQualityR.capa`
+
+MCPV (Taam) and HPCI (Shahriari) **are now implemented** — see
+`vignette("capa-advanced")` for the full worked example with engine
+cylinder bore & stroke data. The implementation uses `mvtnorm::pmvnorm`
+for the joint probability content of the spec hyper-rectangle and a
+regularized covariance inverse (SVD trick from `iQualityR.spc`) for robust
+Mahalanobis distances.
+
+This fills a gap that **even Minitab v21 and JMP v19 do not fully cover** —
+neither ships dedicated MCPV / HPCI indices as capability outputs.
+
+For the simpler multi-variable (multiple univariate) view used by JMP's Goal
+Plot, see §9 above — it treats CTQs as independent and is the routine
+fallback when you only need a multi-CTQ summary, not a joint verdict.
+
+## 11. Common Pitfalls
+
+1. **Reporting observed PPM = 0 as "zero defects"** — it means "no defects
+   *observed in this sample*", not "process is defect-free". Use the
+   bootstrap CI to bound the true PPM.
+2. **Small samples** — non-parametric quantiles at 0.135% / 99.865% need
+   n ≥ 100 to be stable; below that, prefer the bootstrap or report only
+   the observed PPM.
+3. **Using non-parametric when a parametric fit is available** — the
+   parametric path is more efficient. Reserve non-parametric for when no
+   distribution fits.
+4. **Treating CTQs as independent when they are not** — see §9.3. The
+   conservative worst-CTQ rule is safe but may over-state defect rates.
+5. **Confusing multi-variable with multivariate** — multiple univariate
+   analyses (§9) is *multi-variable*; a joint distribution analysis (§10) is
+   *multivariate*. The former is routine; the latter is research-grade.
+
+## 12. References
+
+1. Conover, W. J. (1999). *Practical Nonparametric Statistics* (3rd ed.).
+   Wiley. — Empirical quantiles, kernel CDF.
+2. Silverman, B. W. (1986). *Density Estimation for Statistics and Data
+   Analysis*. Chapman & Hall. — Kernel smoothing.
+3. Taam, W., Subbaiah, P., & Liddy, J. W. (1993). *A note on multivariate
+   capability indices*. Journal of Applied Statistics, 20(3), 339–351. — MCPV.
+4. Shahriari, H., Hubele, N. F., & Lawrence, F. P. (1995). *A multivariate
+   process capability vector*. Proc. IIE Annual Conference, 304–309. — HPCI.
+5. Pearn, W. L., & Kotz, S. (2006). *Encyclopedia and Handbook of Process
+   Capability Indices*. World Scientific. — Multivariate indices survey.
+6. JMP. *Process Capability platform: Goal Plot*, v19.
+7. `iQualityR.stat::capability_to_ppm` — PPM computation backend.

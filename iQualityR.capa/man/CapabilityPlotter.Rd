@@ -4,10 +4,14 @@
 \alias{CapabilityPlotter}
 \title{CapabilityPlotter}
 \description{
-Capability analysis plot executor. Inherits from \code{IqrPlotterBase}
-and uses standalone functions from the \code{iQualityR.plot} package to build
-histograms, Q-Q plots, capability index bar charts, and combined
-"Sixpack" views for process capability analysis.
+Thin delegation plotter for process capability analysis.
+Inherits \code{IqrPlotterBase} and dispatches every panel to the matching
+\verb{iQualityR.plot::plot_capability_*} function. The Sixpack layout follows
+the Minitab 3x2 convention (stability row, capability row, indices row).
+
+All visualization logic (geom composition, color resolution, reference
+lines) lives in \code{iQualityR.plot}; this class only extracts data from the
+\code{results} object and forwards it with a resolved theme.
 }
 \details{
 CapabilityPlotter
@@ -19,16 +23,54 @@ CapabilityPlotter
 \subsection{Public methods}{
 \itemize{
 \item \href{#method-CapabilityPlotter-render}{\code{CapabilityPlotter$render()}}
+\item \href{#method-CapabilityPlotter-.plot_sixpack}{\code{CapabilityPlotter$.plot_sixpack()}}
+\item \href{#method-CapabilityPlotter-.plot_individual}{\code{CapabilityPlotter$.plot_individual()}}
+\item \href{#method-CapabilityPlotter-.plot_xbar}{\code{CapabilityPlotter$.plot_xbar()}}
+\item \href{#method-CapabilityPlotter-.plot_moving_range}{\code{CapabilityPlotter$.plot_moving_range()}}
+\item \href{#method-CapabilityPlotter-.plot_r_chart}{\code{CapabilityPlotter$.plot_r_chart()}}
+\item \href{#method-CapabilityPlotter-.plot_capability_forest}{\code{CapabilityPlotter$.plot_capability_forest()}}
 \item \href{#method-CapabilityPlotter-.plot_histogram}{\code{CapabilityPlotter$.plot_histogram()}}
 \item \href{#method-CapabilityPlotter-.plot_qq}{\code{CapabilityPlotter$.plot_qq()}}
-\item \href{#method-CapabilityPlotter-.plot_capability_bar}{\code{CapabilityPlotter$.plot_capability_bar()}}
+\item \href{#method-CapabilityPlotter-.plot_trend}{\code{CapabilityPlotter$.plot_trend()}}
+\item \href{#method-CapabilityPlotter-.plot_process_table}{\code{CapabilityPlotter$.plot_process_table()}}
+\item \href{#method-CapabilityPlotter-.build_process_table_stats}{\code{CapabilityPlotter$.build_process_table_stats()}}
+\item \href{#method-CapabilityPlotter-.detect_analysis_type}{\code{CapabilityPlotter$.detect_analysis_type()}}
+\item \href{#method-CapabilityPlotter-.effective_specs}{\code{CapabilityPlotter$.effective_specs()}}
+\item \href{#method-CapabilityPlotter-.build_fitted_curve}{\code{CapabilityPlotter$.build_fitted_curve()}}
+\item \href{#method-CapabilityPlotter-.build_ci_df}{\code{CapabilityPlotter$.build_ci_df()}}
+\item \href{#method-CapabilityPlotter-.build_qq_subtitle}{\code{CapabilityPlotter$.build_qq_subtitle()}}
+\item \href{#method-CapabilityPlotter-.build_histogram_subtitle}{\code{CapabilityPlotter$.build_histogram_subtitle()}}
+\item \href{#method-CapabilityPlotter-.build_sixpack_subtitle}{\code{CapabilityPlotter$.build_sixpack_subtitle()}}
+\item \href{#method-CapabilityPlotter-.build_transform_note}{\code{CapabilityPlotter$.build_transform_note()}}
 \item \href{#method-CapabilityPlotter-clone}{\code{CapabilityPlotter$clone()}}
 }
 }
+\if{html}{\out{
+<details><summary>Inherited methods</summary>
+<ul>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".contrast_text"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.contrast_text'><code>iQualityR.core::IqrPlotterBase$.contrast_text()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".pal_discrete"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.pal_discrete'><code>iQualityR.core::IqrPlotterBase$.pal_discrete()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".pal_diverging"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.pal_diverging'><code>iQualityR.core::IqrPlotterBase$.pal_diverging()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".pal_semantic"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.pal_semantic'><code>iQualityR.core::IqrPlotterBase$.pal_semantic()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".pal_sequential"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.pal_sequential'><code>iQualityR.core::IqrPlotterBase$.pal_sequential()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".pal_ui"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.pal_ui'><code>iQualityR.core::IqrPlotterBase$.pal_ui()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_color_discrete"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_color_discrete'><code>iQualityR.core::IqrPlotterBase$.scale_color_discrete()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_color_diverging"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_color_diverging'><code>iQualityR.core::IqrPlotterBase$.scale_color_diverging()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_color_semantic"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_color_semantic'><code>iQualityR.core::IqrPlotterBase$.scale_color_semantic()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_color_sequential"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_color_sequential'><code>iQualityR.core::IqrPlotterBase$.scale_color_sequential()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_fill_color_paired"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_fill_color_paired'><code>iQualityR.core::IqrPlotterBase$.scale_fill_color_paired()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_fill_discrete"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_fill_discrete'><code>iQualityR.core::IqrPlotterBase$.scale_fill_discrete()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_fill_diverging"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_fill_diverging'><code>iQualityR.core::IqrPlotterBase$.scale_fill_diverging()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_fill_semantic"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_fill_semantic'><code>iQualityR.core::IqrPlotterBase$.scale_fill_semantic()</code></a></span></li>
+<li><span class="pkg-link" data-pkg="iQualityR.core" data-topic="IqrPlotterBase" data-id=".scale_fill_sequential"><a href='../../iQualityR.core/html/IqrPlotterBase.html#method-IqrPlotterBase-.scale_fill_sequential'><code>iQualityR.core::IqrPlotterBase$.scale_fill_sequential()</code></a></span></li>
+</ul>
+</details>
+}}
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-CapabilityPlotter-render"></a>}}
 \if{latex}{\out{\hypertarget{method-CapabilityPlotter-render}{}}}
 \subsection{Method \code{render()}}{
+Render a plot by type.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$render(results, theme_obj, type = "full", plan = NULL, ...)}\if{html}{\out{</div>}}
 }
@@ -36,25 +78,138 @@ CapabilityPlotter
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
+\item{\code{results}}{Analysis results list.}
+
+\item{\code{theme_obj}}{IqrTheme object.}
+
+\item{\code{type}}{Plot type (see class description).}
+
+\item{\code{plan}}{CapabilityPlan object.}
+
+\item{\code{...}}{Additional arguments (unused).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_sixpack"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_sixpack}{}}}
+\subsection{Method \code{.plot_sixpack()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_sixpack(results, theme_obj, plan, analysis_type)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
 \item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
-Expected to contain \code{data_tables$raw_data}, \code{statistics}, and
-\code{diagnostics} elements.}
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
 
-\item{\code{theme_obj}}{An \code{IqrTheme} object used to style the generated plots.
-May be \code{NULL}, in which case a default ggplot2 theme is used.}
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
 
-\item{\code{type}}{Plot type to render. One of:
-\itemize{
-\item \code{"basic"} - histogram with density and specification limits
-\item \code{"qq"} - normal Q-Q plot
-\item \code{"full"} - combined "Sixpack" view (histogram, Q-Q, capability bar)
-}}
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_individual"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_individual}{}}}
+\subsection{Method \code{.plot_individual()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_individual(results, theme_obj, plan)}\if{html}{\out{</div>}}
+}
 
-\item{\code{plan}}{A \code{CapabilityPlan} object providing specification limits
-(\code{lsl}, \code{usl}) used by the histogram layers. May be \code{NULL}.}
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
 
-\item{\code{...}}{Additional arguments passed to downstream helpers (currently
-unused).}
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
+
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_xbar"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_xbar}{}}}
+\subsection{Method \code{.plot_xbar()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_xbar(results, theme_obj, plan)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
+
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_moving_range"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_moving_range}{}}}
+\subsection{Method \code{.plot_moving_range()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_moving_range(results, theme_obj)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_r_chart"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_r_chart}{}}}
+\subsection{Method \code{.plot_r_chart()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_r_chart(results, theme_obj)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_capability_forest"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_capability_forest}{}}}
+\subsection{Method \code{.plot_capability_forest()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_capability_forest(results, theme_obj)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
 }
 \if{html}{\out{</div>}}
 }
@@ -64,21 +219,24 @@ unused).}
 \if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_histogram}{}}}
 \subsection{Method \code{.plot_histogram()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_histogram(results, theme_obj, plan)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_histogram(
+  results,
+  theme_obj,
+  plan,
+  analysis_type = NULL
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
 \item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
-Expected to contain \code{data_tables$raw_data}, \code{statistics}, and
-\code{diagnostics} elements.}
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
 
-\item{\code{theme_obj}}{An \code{IqrTheme} object used to style the generated plots.
-May be \code{NULL}, in which case a default ggplot2 theme is used.}
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
 
-\item{\code{plan}}{A \code{CapabilityPlan} object providing specification limits
-(\code{lsl}, \code{usl}) used by the histogram layers. May be \code{NULL}.}
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
 }
 \if{html}{\out{</div>}}
 }
@@ -88,39 +246,200 @@ May be \code{NULL}, in which case a default ggplot2 theme is used.}
 \if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_qq}{}}}
 \subsection{Method \code{.plot_qq()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_qq(results, theme_obj)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_qq(results, theme_obj, analysis_type = NULL)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
 \item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
-Expected to contain \code{data_tables$raw_data}, \code{statistics}, and
-\code{diagnostics} elements.}
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
 
-\item{\code{theme_obj}}{An \code{IqrTheme} object used to style the generated plots.
-May be \code{NULL}, in which case a default ggplot2 theme is used.}
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
 }
 \if{html}{\out{</div>}}
 }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-CapabilityPlotter-.plot_capability_bar"></a>}}
-\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_capability_bar}{}}}
-\subsection{Method \code{.plot_capability_bar()}}{
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_trend"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_trend}{}}}
+\subsection{Method \code{.plot_trend()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_capability_bar(results, theme_obj)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_trend(results, theme_obj, plan)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
 \item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
-Expected to contain \code{data_tables$raw_data}, \code{statistics}, and
-\code{diagnostics} elements.}
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
 
-\item{\code{theme_obj}}{An \code{IqrTheme} object used to style the generated plots.
-May be \code{NULL}, in which case a default ggplot2 theme is used.}
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
+
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.plot_process_table"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.plot_process_table}{}}}
+\subsection{Method \code{.plot_process_table()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.plot_process_table(results, theme_obj)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{theme_obj}}{An \code{IqrTheme} object (or NULL for the global default).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_process_table_stats"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_process_table_stats}{}}}
+\subsection{Method \code{.build_process_table_stats()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_process_table_stats(results)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.detect_analysis_type"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.detect_analysis_type}{}}}
+\subsection{Method \code{.detect_analysis_type()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.detect_analysis_type(results, plan)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.effective_specs"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.effective_specs}{}}}
+\subsection{Method \code{.effective_specs()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.effective_specs(results, plan)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+
+\item{\code{plan}}{A \code{CapabilityPlan} object providing spec limits and
+\code{analysis_type}. May be NULL (type is auto-detected from diagnostics).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_fitted_curve"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_fitted_curve}{}}}
+\subsection{Method \code{.build_fitted_curve()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_fitted_curve(values, dist_name, params, fitter)}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_ci_df"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_ci_df}{}}}
+\subsection{Method \code{.build_ci_df()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_ci_df(results, indices_df)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_qq_subtitle"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_qq_subtitle}{}}}
+\subsection{Method \code{.build_qq_subtitle()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_qq_subtitle(diag, analysis_type)}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_histogram_subtitle"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_histogram_subtitle}{}}}
+\subsection{Method \code{.build_histogram_subtitle()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_histogram_subtitle(results, analysis_type, hist_data)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_sixpack_subtitle"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_sixpack_subtitle}{}}}
+\subsection{Method \code{.build_sixpack_subtitle()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_sixpack_subtitle(results, analysis_type)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-CapabilityPlotter-.build_transform_note"></a>}}
+\if{latex}{\out{\hypertarget{method-CapabilityPlotter-.build_transform_note}{}}}
+\subsection{Method \code{.build_transform_note()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{CapabilityPlotter$.build_transform_note(results)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{results}}{Analysis results list returned by \code{CapabilityAnalyzer}.
+Must contain \code{data_tables$sixpack}, \code{statistics}, \code{diagnostics}.}
 }
 \if{html}{\out{</div>}}
 }

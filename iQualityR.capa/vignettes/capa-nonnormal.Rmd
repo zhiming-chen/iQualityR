@@ -1,0 +1,403 @@
+---
+title: "Non-Normal Capability"
+subtitle: "Parametric capability analysis for skewed and bounded data"
+author: "iQualityR capa Team"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    fig_width: 7
+    fig_height: 5
+vignette: >
+  %\VignetteIndexEntry{Non-Normal Capability}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7, fig.height = 4.5, fig.align = "center",
+  warning = FALSE, message = FALSE
+)
+
+options(iqr.default_theme = "academic")
+library(iQualityR.capa)
+
+fmt4 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 4))
+fmt2 <- function(x) ifelse(is.na(x), "NA", formatC(as.numeric(x), format = "f", digits = 2))
+```
+
+## 1. When to Use This Path
+
+Use **non-normal capability** when the data is clearly non-normal *and* a
+parametric non-normal distribution fits it well. Typical cases:
+
+- **Cycle time, service time, repair time** — right-skewed; Weibull, Gamma,
+  or Lognormal.
+- **Surface roughness, particle counts** — right-skewed with a natural zero
+  bound; Weibull or Exponential.
+- **Tensile strength, breaking load** — left-skewed; smallest extreme value.
+- **Bounded proportions** — data in (0, 1); Beta.
+
+The non-normal path is *not* appropriate when:
+
+- The data *is* normal — use `capability_normal()` (see
+  `vignette("capa-normal")`). The normal path gives tighter, more efficient
+  estimates when its assumption holds.
+- No parametric distribution fits (KS p < 0.05 for all candidates) — use
+  `capability_nonparametric()` (see `vignette("capa-nonparametric")`).
+- You can normalise the data with Box-Cox/Johnson and report on the
+  transformed scale — see §6 below for the transformation path, which is a
+  legitimate alternative to the quantile method.
+
+This vignette covers both the **quantile method** (the Minitab non-normal
+path) and the **transformation path** (Box-Cox / Johnson), because the two
+compete for the same use case and the analyst must choose between them.
+
+## 2. Method and Formulas
+
+### 2.1 The quantile method (Clements / Minitab convention)
+
+When the data follows a non-normal distribution with CDF $F$ and quantile
+function $Q = F^{-1}$, capability is computed from the distribution
+quantiles rather than the mean/SD:
+
+$$
+\sigma_{eq} = \frac{Q_{0.99865} - Q_{0.00135}}{6}
+$$
+
+where $Q_{0.00135}$ and $Q_{0.99865}$ are the 0.135% and 99.865% quantiles of
+the fitted distribution (the same tail probabilities a ±3σ normal would
+cover). The indices are then:
+
+$$
+P_p = \frac{USL - LSL}{6\sigma_{eq}}, \quad
+P_{pk} = \min\left(\frac{USL - Q_{0.5}}{3\sigma_{eq}}, \frac{Q_{0.5} - LSL}{3\sigma_{eq}}\right)
+$$
+
+For non-normal data there is **no within/overall distinction** (there are no
+subgroups in this path), so `Cp = Pp` and `Cpk = Ppk`.
+
+### 2.2 PPM (non-normal)
+
+PPM is computed from the fitted distribution's tail areas:
+
+$$
+PPM_{below} = F(LSL) \cdot 10^6, \quad
+PPM_{above} = (1 - F(USL)) \cdot 10^6
+$$
+
+This is delegated to `iQualityR.stat::capability_to_ppm` with the fitted
+distribution function, so the arithmetic is identical across the ecosystem.
+
+### 2.3 Distribution selection
+
+The auto-fitter (`distribution = "auto"`) compares candidate distributions by
+**AIC** and reports the winner. The candidate set is: **Weibull, Lognormal,
+Gamma, Exponential, Logistic**. Goodness-of-fit is verified with the
+**Kolmogorov-Smirnov** test (delegated to `iQualityR.stat::fit_distribution`).
+
+If you know the distribution from domain knowledge (e.g. Weibull for
+strength), pass it explicitly with `distribution = "weibull"`.
+
+### 2.4 The transformation path (alternative)
+
+Instead of the quantile method, you can transform the data to normality with
+Box-Cox or Johnson, run the normal analysis on the transformed scale, and
+report the indices on that scale. The spec limits are transformed with the
+**same** fitted parameters so the indices remain comparable.
+
+| Aspect | Quantile method | Transformation path |
+|---|---|---|
+| Output scale | Original (mm, s, MPa) | Transformed (dimensionless) |
+| Within/overall split | No | Yes (if subgrouped) |
+| Best when | A specific non-normal family fits well | Data is positive and monotone-normalisable |
+| Downside | No within σ; no Cpm/Cpmk | Indices on unfamiliar scale; harder to communicate |
+
+`iQualityR.capa` supports both. Use the quantile method when you need to
+report on the original scale; use the transformation path when you need the
+within/overall distinction or Cpm.
+
+## 3. Data Preparation
+
+The bundled `capability_nonnormal_weibull.csv` is a right-skewed
+surface-roughness sample (Ra, µm) with a natural lower bound at 0. The
+engineering specification is **LSL = 5 µm, USL = 80 µm** (no target).
+
+```{r load-data}
+df <- read.csv(
+  system.file("extdata", "capability_nonnormal_weibull.csv",
+              package = "iQualityR.capa"),
+  fileEncoding = "UTF-8"
+)
+str(df)
+summary(df$measurement)
+```
+
+The summary already hints at skewness: the mean exceeds the median, and the
+range is asymmetric.
+
+## 4. Non-Normal Capability — Quick Start
+
+```{r nonnormal-quick}
+task <- capability_nonnormal(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  distribution = "auto"
+)
+task$summary()
+```
+
+## 5. Distribution Diagnostics
+
+### 5.1 Selected distribution and goodness-of-fit
+
+```{r nonnormal-diag}
+diag <- task$results$diagnostics
+data.frame(
+  Metric = c("Selected distribution", "AIC", "BIC",
+             "KS statistic", "KS p-value", "Verdict"),
+  Value = c(diag$distribution,
+            round(diag$aic, 2),
+            round(diag$bic, 2),
+            fmt4(diag$ks_statistic),
+            fmt4(diag$ks_p_value),
+            diag$capability_judgment$overall_verdict)
+)
+```
+
+**Decision rule:** If `KS p-value ≥ 0.05`, the selected distribution is an
+acceptable fit and the quantile-method indices are defensible. If
+`KS p-value < 0.05`, no candidate fits — fall back to
+`capability_nonparametric()`.
+
+### 5.2 Capability indices
+
+```{r nonnormal-indices}
+stats <- task$results$statistics
+data.frame(
+  Index = c("Cp (= Pp)", "Cpk (= Ppk)", "Cpl", "Cpu", "Mean", "n"),
+  Value = c(stats$cp, stats$cpk, stats$cpl, stats$cpu, stats$mean, stats$n)
+)
+```
+
+Note: for non-normal capability there is no within/overall distinction, so
+`Cp = Pp` and `Cpk = Ppk`. The single-sided `Cpl`/`Cpu` use the 0.5 and
+tail quantiles of the fitted distribution.
+
+### 5.3 PPM (observed vs expected)
+
+```{r nonnormal-ppm}
+task$results$data_tables$ppm_overall
+```
+
+The PPM here is **model-based** (computed from the fitted distribution's tail
+areas), not the raw observed exceedance rate. Compare with the
+non-parametric path's observed PPM to sanity-check the fit.
+
+## 6. Visualization
+
+### 6.1 The non-normal Sixpack
+
+```{r nonnormal-plot-full, fig.width=10, fig.height=8}
+print(task$plot(type = "full"))
+```
+
+The non-normal Sixpack differs from the normal Sixpack in two panels:
+
+- **Histogram (middle-left)** overlays the fitted distribution density in red,
+  so you can visually verify the fit.
+- **Q-Q plot (middle-right)** is a *fitted-distribution* Q-Q: theoretical
+  quantiles come from the fitted distribution (not standard normal). Points
+  hugging the y = x line confirm the fit.
+
+### 6.2 The fitted-distribution Q-Q plot
+
+```{r nonnormal-plot-qq}
+print(task$plot(type = "qq"))
+```
+
+The subtitle reports the selected distribution and KS p-value. If you see
+systematic curvature (e.g. S-shape, bowing), the distribution is wrong even
+if KS passes — try another candidate or move to the non-parametric path.
+
+### 6.3 Histogram with fitted density overlay
+
+```{r nonnormal-plot-basic}
+print(task$plot(type = "basic"))
+```
+
+## 7. Specifying a Distribution Explicitly
+
+If domain knowledge dictates a particular distribution, pass it explicitly.
+This bypasses AIC selection and reports the fit quality for that single
+distribution.
+
+```{r nonnormal-explicit}
+task_lognormal <- capability_nonnormal(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  distribution = "lognormal"
+)
+diag_ln <- task_lognormal$results$diagnostics
+data.frame(
+  Metric = c("Distribution", "AIC", "KS p-value"),
+  Value = c(diag_ln$distribution,
+            round(diag_ln$aic, 2),
+            fmt4(diag_ln$ks_p_value))
+)
+```
+
+Comparing the explicit-Weibull, explicit-Lognormal, and auto-selected fits
+side-by-side is the recommended way to choose a defensible model — do not
+blindly trust AIC alone, always inspect the Q-Q plot.
+
+## 8. The Box-Cox / Johnson Transformation Path
+
+When the data is positive and monotone-normalisable, the transformation path
+is a legitimate alternative to the quantile method. `capability_normal()`
+with a `transform` argument fits the transform, transforms data **and** spec
+limits with the same parameters, runs the normal analysis on the transformed
+scale, and annotates every panel.
+
+### 8.1 Box-Cox
+
+```{r transform-boxcox}
+task_bc <- capability_normal(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  transform = "box_cox"
+)
+task_bc$summary()
+```
+
+### 8.2 Transform diagnostics
+
+```{r transform-diag}
+diag_bc <- task_bc$results$diagnostics
+data.frame(
+  Metric = c("Transform applied", "Lambda", "Normality before (p)",
+             "Normality after (p)", "Transformed LSL", "Transformed USL"),
+  Value = c(diag_bc$transform_applied,
+            fmt4(diag_bc$transform_lambda),
+            fmt4(diag_bc$transform_normality_before),
+            fmt4(diag_bc$transform_normality_after),
+            fmt4(diag_bc$transformed_lsl),
+            fmt4(diag_bc$transformed_usl))
+)
+```
+
+A successful transform shows `normality_after` ≫ `normality_before` (both are
+p-values). If `normality_after < 0.05`, the transform did not achieve
+normality — abandon this path and use the quantile method or the
+non-parametric path.
+
+### 8.3 Transformed-scale Sixpack
+
+```{r transform-plot-full, fig.width=10, fig.height=8}
+print(task_bc$plot(type = "full"))
+```
+
+Note that every panel's subtitle annotates the transform (`Box-Cox
+(lambda = …)`) and the spec labels show the **transformed** spec values
+(formatted to 4 significant digits). This makes it unambiguous that the
+reported indices are on the transformed scale.
+
+### 8.4 Johnson transform
+
+The Johnson family (SU / SB / SL) handles a wider range of shapes than
+Box-Cox, including bounded data. Use `transform = "johnson"`:
+
+```{r transform-johnson, eval = FALSE}
+task_jh <- capability_normal(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  transform = "johnson"
+)
+```
+
+Use `transform = "auto"` to let the analyzer pick the best of Box-Cox /
+Johnson / Yeo-Johnson / log / sqrt / reciprocal (delegated to
+`iQualityR.stat::auto_transform`).
+
+## 9. Bootstrap Confidence Intervals
+
+For defensible uncertainty quantification on the non-normal indices, enable
+the bootstrap:
+
+```{r nonnormal-bootstrap}
+task_boot <- capability_nonnormal(
+  data = df, measurement = "measurement",
+  lsl = 5, usl = 80,
+  distribution = "auto",
+  use_bootstrap = TRUE, bootstrap_samples = 200
+)
+task_boot$results$data_tables$bootstrap_ci
+```
+
+The bootstrap re-fits the distribution on each resample, so it captures both
+the parameter-estimation uncertainty and the index-estimation uncertainty.
+
+## 10. Quantile Method vs Transformation Path — How to Choose
+
+| Criterion | Choose quantile method | Choose transformation path |
+|---|---|---|
+| Need to report on original scale | ✓ | |
+| Need within/overall split | | ✓ (if subgrouped) |
+| Need Cpm / Cpmk | | ✓ (requires target) |
+| Data is bounded (0, 1) | Beta | Johnson SB |
+| Data is right-skewed, positive | Weibull/Gamma/Lognormal | Box-Cox |
+| Data is heavily skewed | | Johnson SU |
+| Distribution must be defensible to auditor | KS test on original scale | Normality test on transformed scale |
+
+A common workflow is to run both and compare: if the two give materially
+different Cpk, investigate which assumption is weaker (the distribution fit
+or the transform's normality).
+
+## 11. Report Export
+
+```{r nonnormal-report}
+xlsx_path <- tempfile(fileext = ".xlsx")
+task$report(format = "excel", path = xlsx_path)
+
+data.frame(
+  Format = "excel",
+  Path = basename(xlsx_path),
+  Exists = file.exists(xlsx_path),
+  Size_KB = round(file.size(xlsx_path) / 1024, 1)
+)
+```
+
+The Excel report adds a Diagnostics sheet with the selected distribution,
+AIC/BIC, and KS results, so the choice of distribution is auditable.
+
+## 12. Common Pitfalls
+
+1. **Trusting AIC alone** — a distribution can win on AIC but still fail KS.
+   Always check the KS p-value and the Q-Q plot.
+2. **Forgetting the natural bound** — surface roughness, time, and counts have
+   a natural zero; fitting a normal (or a Lognormal without shift) is wrong.
+3. **Reporting transformed-scale indices without annotation** — always keep
+   the transform note in the subtitle; auditors must know the scale.
+4. **Using non-normal when normal is fine** — the normal path is more
+   efficient. Only switch when normality genuinely fails.
+5. **Small samples** — non-normal fitting needs n ≥ 50 to be stable; below
+   that, prefer the non-parametric path.
+
+## 13. References
+
+1. Clements, J. A. (1989). *Process capability calculations for non-normal
+   distributions*. Quality Progress, 22(9), 95–100. — Quantile method.
+2. Kotz, S., & Lovelace, N. L. (1998). *Process Capability Indices in Theory
+   and Practice*. Arnold. — Non-normal capability.
+3. Box, G. E. P., & Cox, D. R. (1964). *An analysis of transformations*.
+   JRSS-B, 26(2), 211–252. — Box-Cox.
+4. Johnson, N. L. (1949). *Systems of frequency curves generated by methods
+   of translation*. Biometrika, 36(1/2), 149–176. — Johnson family.
+5. Minitab LLC. *Nonnormal Capability documentation*, v21.
+6. `iQualityR.stat::fit_distribution` — distribution fitting backend.
+7. `iQualityR.stat::box_cox_transform` / `johnson_transform` /
+   `auto_transform` — transformation backends.
