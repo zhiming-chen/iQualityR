@@ -342,99 +342,34 @@ plot_capability_trend <- function(trend_data, specs = NULL, theme = NULL) {
 }
 
 # =============================================================================
-# Unified Patchwork Annotation Theme
+# Combined-layout annotation helper
 # =============================================================================
 
-#' Patchwork Annotation Theme
+#' Build a Unified Annotation Theme for Combined (patchwork) Plots
 #'
-#' Returns a consistent ggplot2 theme for use with \code{patchwork::plot_annotation()}
-#' across all combined-plot functions. Derives font sizes from the active
-#' IqrTheme's base font size, ensuring consistent title/subtitle appearance
-#' in every composite layout (Sixpack, ANOVA summary, multivariate panels, etc.).
+#' Creates a ggplot2 theme object suitable for \code{patchwork::plot_annotation()}
+#' that sizes the title, subtitle, and caption consistently with the active
+#' IqrTheme. Panel spacing is controlled via the returned theme's margins.
 #'
-#' @param theme Theme spec (NULL / string / function / IqrTheme).
-#' @param title_size Numeric. Title font size in pt. If NULL (default),
-#'   auto-derived from the theme's base font size (base_size * 1.2).
-#' @param subtitle_size Numeric. Subtitle font size in pt. If NULL (default),
-#'   auto-derived from the theme's base font size (base_size * 0.85).
-#' @return A ggplot2 theme object suitable for \code{plot_annotation(theme = ...)}.
-#' @export
-patchwork_annotation_theme <- function(theme = NULL, title_size = NULL,
-                                        subtitle_size = NULL) {
+#' @param theme Theme spec (NULL / string / IqrTheme).
+#' @param title_size Base title font size (default 14).
+#' @param subtitle_size Base subtitle font size (default 10).
+#' @return A ggplot2 theme object.
+#' @keywords internal
+.patchwork_annotation_theme <- function(theme = NULL,
+                                        title_size = 14,
+                                        subtitle_size = 10) {
   c <- .iqr_aes(theme)
-
-  # Derive base font size from theme; fall back to 12 (ggplot2 default).
-  base_size <- tryCatch(
-    .iqr_plotter$.pal_ui(c$theme_obj, "base_font_size", default = 12) %||% 12,
-    error = function(e) 12
-  )
-  if (!is.numeric(base_size) || base_size < 6) base_size <- 12
-
-  if (is.null(title_size))    title_size    <- base_size * 1.2
-  if (is.null(subtitle_size)) subtitle_size <- base_size * 0.85
-
   ggplot2::theme(
     plot.title    = ggplot2::element_text(
-      face   = "bold",
-      size   = title_size,
-      color  = c$text,
-      margin = ggplot2::margin(b = 4)
-    ),
+      face = "bold", size = title_size, color = c$text,
+      margin = ggplot2::margin(b = 4)),
     plot.subtitle = ggplot2::element_text(
-      size   = subtitle_size,
-      color  = c$muted,
-      margin = ggplot2::margin(b = 8)
-    ),
+      size = subtitle_size, color = c$muted,
+      margin = ggplot2::margin(b = 8)),
     plot.caption  = ggplot2::element_text(
-      size  = base_size * 0.7,
-      color = c$muted
-    ),
+      size = 8, color = c$muted),
     plot.margin   = ggplot2::margin(t = 6, r = 8, b = 4, l = 8)
-  )
-}
-
-#' Patchwork Panel Theme (for sub-panels in combined plots)
-#'
-#' Returns a consistent ggplot2 theme to be applied to all sub-panels in a
-#' patchwork combined plot via the \code{&} operator. Controls axis text size,
-#' axis title size, strip text size, and panel margins to ensure uniform
-#' appearance across every composite layout.
-#'
-#' Font sizes are derived from the active IqrTheme's base font size, so they
-#' scale proportionally with the annotation theme.
-#'
-#' @param theme Theme spec (NULL / string / function / IqrTheme).
-#' @param axis_text_size Numeric. Axis tick-label font size in pt. If NULL
-#'   (default), auto-derived from the theme's base font size (base_size * 0.7).
-#' @param axis_title_size Numeric. Axis title font size in pt. If NULL
-#'   (default), auto-derived from the theme's base font size (base_size * 0.8).
-#' @param strip_text_size Numeric. Facet strip text size in pt. If NULL
-#'   (default), auto-derived from the theme's base font size (base_size * 0.75).
-#' @return A ggplot2 theme object suitable for \code{& theme(...)}.
-#' @export
-patchwork_panel_theme <- function(theme = NULL,
-                                   axis_text_size  = NULL,
-                                   axis_title_size = NULL,
-                                   strip_text_size = NULL) {
-  c <- .iqr_aes(theme)
-
-  base_size <- tryCatch(
-    .iqr_plotter$.pal_ui(c$theme_obj, "base_font_size", default = 12) %||% 12,
-    error = function(e) 12
-  )
-  if (!is.numeric(base_size) || base_size < 6) base_size <- 12
-
-  if (is.null(axis_text_size))  axis_text_size  <- base_size * 0.70
-  if (is.null(axis_title_size)) axis_title_size <- base_size * 0.80
-  if (is.null(strip_text_size)) strip_text_size <- base_size * 0.75
-
-  ggplot2::theme(
-    axis.text       = ggplot2::element_text(size = axis_text_size),
-    axis.title      = ggplot2::element_text(size = axis_title_size),
-    strip.text      = ggplot2::element_text(size = strip_text_size),
-    plot.margin     = ggplot2::margin(t = 2, r = 4, b = 2, l = 4),
-    legend.text     = ggplot2::element_text(size = axis_text_size),
-    legend.title    = ggplot2::element_text(size = axis_title_size)
   )
 }
 
@@ -459,12 +394,14 @@ patchwork_panel_theme <- function(theme = NULL,
 #' @export
 plot_capability_sixpack <- function(panels, title = "Process Capability Sixpack",
                                     subtitle = NULL, theme = NULL) {
+  c <- .iqr_aes(theme)
+
   # When process_table is provided, use 6+1 layout (4 rows, table spans full width)
   if (!is.null(panels$process_table)) {
     # Use design syntax: A-F = 6 plot panels, G = table (spans 2 cols)
     # Row 1: A B | Row 2: C D | Row 3: E F | Row 4: G G
-    # The table row gets proportionally more height (1.4) because it contains
-    # a multi-row summary table that needs vertical space to be readable.
+    # Heights: equal weight for plot rows, 0.85 for the table row.
+    # Previously 0.6 was too cramped — now the table gets ~22% of total height.
     design <- "
 AABB
 CCDD
@@ -475,19 +412,21 @@ GGGG
               panels$histogram + panels$qq +
               panels$index_bar + panels$trend +
               patchwork::wrap_elements(panels$process_table)) +
-      patchwork::plot_layout(design = design, heights = c(1, 1, 1, 1.4))
+      patchwork::plot_layout(design = design, heights = c(1, 1, 1, 0.85))
   } else {
     # 6-panel base layout (3 rows x 2 cols)
     layout <- (panels$individual | panels$moving_range) /
               (panels$histogram    | panels$qq) /
               (panels$index_bar    | panels$trend)
   }
+
+  # Unified annotation theme with controlled title/subtitle sizing and margins.
+  # Also collect guides and place legend at bottom for a cleaner look.
   layout + patchwork::plot_annotation(
     title = title, subtitle = subtitle,
-    theme = patchwork_annotation_theme(theme)
-  ) + patchwork::plot_layout(guides = "collect") +
-    patchwork::plot_spacing(grid::unit(0.3, "cm")) &
-    patchwork_panel_theme(theme) &
+    theme = .patchwork_annotation_theme(theme)
+  ) +
+    patchwork::plot_layout(guides = "collect") &
     ggplot2::theme(legend.position = "bottom")
 }
 
@@ -811,11 +750,7 @@ plot_capability_distid_matrix <- function(values, candidates, fitter,
     patchwork::plot_annotation(
       title = "Distribution Identification Matrix",
       subtitle = "P-P plots for candidate distributions (lower AD = better fit)",
-      theme = patchwork_annotation_theme(theme)
-    ) + patchwork::plot_layout(guides = "collect") +
-    patchwork::plot_spacing(grid::unit(0.3, "cm")) &
-    patchwork_panel_theme(theme) &
-    ggplot2::theme(legend.position = "bottom")
+      theme = .patchwork_annotation_theme(theme))
 }
 
 #' Johnson Transformation Diagnostic Plot
@@ -864,11 +799,8 @@ plot_capability_sixpack_nonnormal <- function(panels,
             (panels$capbar | panels$trend)
   layout + patchwork::plot_annotation(
     title = title, subtitle = subtitle,
-    theme = patchwork_annotation_theme(theme)
-  ) + patchwork::plot_layout(guides = "collect") +
-    patchwork::plot_spacing(grid::unit(0.3, "cm")) &
-    patchwork_panel_theme(theme) &
+    theme = .patchwork_annotation_theme(theme)
+  ) +
+    patchwork::plot_layout(guides = "collect") &
     ggplot2::theme(legend.position = "bottom")
 }
-
-
